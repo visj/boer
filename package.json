@@ -1,0 +1,17 @@
+{
+  "name": "boer",
+  "version": "0.1",
+  "description": "",
+  "main": "dist/boer.cjs",
+	"module": "dist/boer.mjs",
+	"types": "lib.d.ts",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "node test/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
