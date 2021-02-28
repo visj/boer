@@ -1,17 +1,22 @@
 {
   "name": "boer",
   "version": "0.1.0",
-  "description": "",
+  "description": "A simple Javascript test framework.",
   "main": "dist/boer.cjs",
-	"module": "dist/boer.mjs",
-	"types": "lib.d.ts",
-  "directories": {
-    "test": "test"
-  },
+  "module": "dist/boer.mjs",
+  "types": "lib.d.ts",
   "scripts": {
     "test": "node test/index.js"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC"
+  "author": "Vilhelm Sjölund",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/visj/boer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/visj/boer/issues"
+  },
+  "homepage": "https://github.com/visj/boer#readme"
 }
