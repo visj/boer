@@ -1,6 +1,6 @@
 {
   "name": "boer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A simple Javascript test framework.",
   "main": "dist/boer.cjs",
   "module": "dist/boer.mjs",
