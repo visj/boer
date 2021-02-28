@@ -28,10 +28,10 @@ export interface Lifecycle {
 }
 
 export interface Report {
-	onInit(): void;
+	onInit(test: Suite): void;
 	onTestInit(test: Suite): void;
 	onTestExit(test: Suite): void;
-	onExit(): void;
+	onExit(test: Suite): void;
 }
 
 export interface Scope {

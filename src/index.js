@@ -110,9 +110,9 @@ Suite.prototype.asserts;
 function Report() {}
 
 /**
- * 
+ * @param {Suite}
  */
-Report.prototype.onInit = function () {}
+Report.prototype.onInit = function (suite) {}
 
 /**
  * 
@@ -127,9 +127,9 @@ Report.prototype.onTestInit = function (suite) {}
 Report.prototype.onTestExit = function (suite) {}
 
 /**
- * 
+ * @param {Suite} suite
  */
-Report.prototype.onExit = function () {}
+Report.prototype.onExit = function (suite) {}
 
 function Result() {
 	this.pass = 0;
@@ -152,9 +152,9 @@ function Reporter() {
 }
 
 /**
- * 
+ * @param {Suite} suite
  */
-Reporter.prototype.onInit = function () {
+Reporter.prototype.onInit = function (suite) {
 	console.log('TAP version 13');
 }
 
@@ -174,10 +174,11 @@ Reporter.prototype.onTestExit = function (suite) {
 }
 
 /**
+ * @param {Suite} suite
  */
-Reporter.prototype.onExit = function () {
+Reporter.prototype.onExit = function (suite) {
 	console.log(
-		'\n# ' + (this.opts.fail > 0 ? 'not ok' : 'ok') +
+		'\n# ' + (this.opts.fail > 0 ? 'not ok ' : 'ok ') + suite.duration + 'ms' +
 		'\n# pass: ' + this.opts.pass +
 		'\n# fail: ' + this.opts.fail +
 		'\n# skip: ' + this.opts.skip +
@@ -536,7 +537,8 @@ Test.prototype.run = function () {
 		this.runTests();
 	}
 	if (this.flag & Flag.Root) {
-		this._reporter.onExit();
+		this.duration = this.duration - new Date().valueOf();
+		this._reporter.onExit(this);
 	}
 	this.duration = new Date().valueOf() - this.duration;
 }
@@ -546,7 +548,8 @@ Test.prototype.run = function () {
  */
 Test.prototype.runScope = function () {
 	if (this.flag & Flag.Root) {
-		this._reporter.onInit();
+		this.duration = new Date().valueOf();
+		this._reporter.onInit(this);
 	} else {
 		this._reporter.onTestInit(this);
 		try {
