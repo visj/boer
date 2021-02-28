@@ -10,6 +10,13 @@ t.test('test 1', t => {
 	t.throws(() => { throw new Error('throws'); });
 	t.not.throws(() => { });
 	t.not.throws(() => { throw new Error('not throws'); });
+	t.test('test 2', t => {
+		t.test('test 3', t => {
+			t.assert(true);
+		});
+
+		t.assert(false);
+	});
 });
 /**
 t.test('test 2', t => {

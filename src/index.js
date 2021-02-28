@@ -231,15 +231,11 @@ function print(suite, opts, lines, flag) {
 		}
 		lines.push(str);
 	}
-	opts.indent = opts.indent.slice(0, -4);
 	if (suite.tests.length > 0) {
-		opts.indent += '    ';
 		for (i = 0; i < suite.tests.length; i++) {
 			pass = print(suite.tests[i], opts, lines, flag) && pass;
 		}
-		opts.indent = opts.indent.slice(0, -4);
 	}
-	opts.indent += '    ';
 	lines.push(opts.indent + '1..' + suite.asserts.length);
 	opts.indent = opts.indent.slice(0, -4);
 	if (pass) {
