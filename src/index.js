@@ -537,7 +537,7 @@ Test.prototype.run = function () {
 		this.runTests();
 	}
 	if (this.flag & Flag.Root) {
-		this.duration = this.duration - new Date().valueOf();
+		this.duration = new Date().valueOf() - this.duration;
 		this._reporter.onExit(this);
 	}
 	this.duration = new Date().valueOf() - this.duration;
