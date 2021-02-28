@@ -3,6 +3,7 @@ export interface Assert {
 	pass(message?: string): void;
 	assert(condition: boolean, msg?: string): void;
 	equal(actual: any, expected: any, msg?: string): void;
+	throws(fn: Function, message?: string): void;
 }
 
 export interface Assertion {
@@ -15,8 +16,15 @@ export interface Assertion {
 }
 
 export interface Async {
+	ctx: any;
 	end(): void;
 	wait(): void;
+}
+
+export interface Lifecycle {
+	setup(fn: (t: Async) => void): void;
+	teardown(fn: (t: Async) => void): void;
+	cleanup(fn: (t: Async) => void): void;
 }
 
 export interface Report {
@@ -40,7 +48,7 @@ export interface Suite {
 	readonly asserts: Assertion[];
 }
 
-export interface Test extends Assert, Async, Scope {
+export interface Test extends Assert, Async, Lifecycle, Scope {
 	
 	readonly not: Assert;
 
@@ -56,7 +64,7 @@ export interface Test extends Assert, Async, Scope {
 }
 
 export interface TestPrototype {
-	assertion(operator: string, actual?: any, expected?: any, message?: string): void;
+	assertion(flag: number, operator: string, actual?: any, expected?: any, message?: string): void;
 }
 
 export interface TestConstructor {
@@ -72,7 +80,13 @@ export const enum Flag {
 	Skip = 16,
 	Todo = 32,
 	Serial = 64,
-	Root = 128
+	Root = 128,
+	Init = 256,
+	Assert = 512,
+	Exit = 1024,
+	Debug = 2048,
+	Wait = 4096,
+	Pending = 8192
 }
 
 export const Asserts: { [operator: string]: string };

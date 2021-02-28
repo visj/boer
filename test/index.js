@@ -1,58 +1,40 @@
 const fs = require('fs');
 const path = require('path');
-const { Test } = require('../src/boer');
+const { Test } = require('../src');
 
-const tests = fs.readdirSync(path.join(__dirname, 'tests'));
+const t = new Test();
 
-function setup() {
-	const obj = { buffer: '', test: new Test() };
-	obj.test.pipe(function (msg) {
-		obj.buffer += msg;
-	});
-	return obj;
-}
-
-let errors = 0;
-
-for (var i = 0; i < tests.length; i++) {
-	execute(path.join(__dirname, 'tests', tests[i]));
-}
-
+t.test('test 1', t => {
+  t.not.assert(false);
+	t.throws(() => { });
+	t.throws(() => { throw new Error('throws'); });
+	t.not.throws(() => { });
+	t.not.throws(() => { throw new Error('not throws'); });
+});
 /**
- * 
- * @param {string} file 
- */
-function execute(file) {
-	const specs = require(file);
-	specs.forEach(spec => {
-		const t = setup();
-		let expected = spec(t.test).join('\n');
-		t.test.run(() => {
-			expected = expected.replace(/\d+ms/g, '');
-			t.buffer = t.buffer.replace(/\d+ms/g, '');
-			if (expected !== t.buffer) {
-				errors++;
-				console.log('error in file ' + tests[i]);
-				console.log('  ---');
-				console.log('  actual:');
-				if (t.buffer) {
-					t.buffer.split('\n').forEach(line => console.log('    ' + line));
-				}
-				console.log('  expected:')
-				if (expected) {
-					expected.split('\n').forEach(line => console.log('    ' + line));
-				}
-				console.log('  ---')
-			}
+t.test('test 2', t => {
+	t.assert(true);
+
+	t.equal(1,1);
+	t.equal(2,2, 'custom equal message');
+});
+
+t.skip.test('test 3', t => {
+	t.test('test 3.1', t => {
+		t.test('test 3.1.1', t => {
+			t.assert(true);
 		});
 	});
 
-}
-
-process.on('exit', function () {
-	if (errors === 0) {
-		console.log('Ok');
-	} else {
-		console.error(errors + ' errors in total');
-	}
+	t.equal(1,2);
 });
+
+t.todo.test('test 4', t => {
+	t.assert(true);
+});
+
+t.skip.test('test 5', t => {
+	t.assert(false);
+});
+*/
+t.run();

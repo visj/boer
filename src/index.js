@@ -12,6 +12,7 @@ var Asserts = {
 	fail: 'should not fail',
 	equal: 'should be equal',
 	assert: 'should be truthy',
+	throws: 'should throw',
 };
 
 /**
@@ -23,7 +24,8 @@ var Negates = {
 	fail: 'should fail',
 	equal: 'should not be equal',
 	assert: 'should not be truthy',
-}
+	throws: 'should not throw',
+};
 
 /**
  * @const
@@ -49,7 +51,28 @@ var Flag = {
 /**
  * @interface
  */
-function Suite() { }
+function Async() { }
+
+/**
+ * @type {*}
+ */
+Async.prototype.ctx;
+
+/**
+ *
+ */
+Async.prototype.end = function() { }
+
+/**
+ *
+ */
+Async.prototype.wait = function() { }
+
+
+/**
+ * @interface
+ */
+function Suite() {}
 
 /**
  * @type {number}
@@ -84,29 +107,29 @@ Suite.prototype.asserts;
 /**
  * @interface
  */
-function Report() { }
+function Report() {}
 
 /**
  * 
  */
-Report.prototype.onInit = function () { }
+Report.prototype.onInit = function () {}
 
 /**
  * 
  * @param {Suite} suite 
  */
-Report.prototype.onTestInit = function (suite) { }
+Report.prototype.onTestInit = function (suite) {}
 
 /**
  * 
  * @param {Suite} suite
  */
-Report.prototype.onTestExit = function (suite) { }
+Report.prototype.onTestExit = function (suite) {}
 
 /**
  * 
  */
-Report.prototype.onExit = function () { }
+Report.prototype.onExit = function () {}
 
 function Result() {
 	this.pass = 0;
@@ -139,7 +162,7 @@ Reporter.prototype.onInit = function () {
  * 
  * @param {Suite} suite
  */
-Reporter.prototype.onTestInit = function (suite) { }
+Reporter.prototype.onTestInit = function (suite) {}
 
 /**
  * @param {Suite} suite
@@ -154,10 +177,10 @@ Reporter.prototype.onTestExit = function (suite) {
  */
 Reporter.prototype.onExit = function () {
 	console.log(
-		'\n# ' + (this.opts.fail > 0 ? 'not ok' : 'ok') +  
+		'\n# ' + (this.opts.fail > 0 ? 'not ok' : 'ok') +
 		'\n# pass: ' + this.opts.pass +
-		'\n# fail: ' + this.opts.fail + 
-		'\n# skip: ' + this.opts.skip + 
+		'\n# fail: ' + this.opts.fail +
+		'\n# skip: ' + this.opts.skip +
 		'\n# todo: ' + this.opts.todo
 	);
 }
@@ -177,9 +200,9 @@ function print(suite, opts, lines, flag) {
 	for (var i = 0; i < suite.asserts.length; i++) {
 		var assert = suite.asserts[i];
 		if (assert.flag & Flag.Pass || assert.flag & Flag.Skip || flag & Flag.Skip) {
-			str = opts.indent + 'ok ' + opts.seed++ + ' - ' + 
+			str = opts.indent + 'ok ' + opts.seed++ + ' - ' +
 				(assert.message != null ? assert.message : (assert.flag & Flag.Not ? Negates[assert.operator] : Asserts[assert.operator])
-			);
+				);
 			if (assert.flag & Flag.Skip || flag & Flag.Skip) {
 				opts.skip++;
 				str += ' # SKIP';
@@ -191,13 +214,13 @@ function print(suite, opts, lines, flag) {
 			}
 		} else {
 			pass = false;
-			str = opts.indent + 'not ok ' + opts.seed++ + ' - ' + 
+			str = opts.indent + 'not ok ' + opts.seed++ + ' - ' +
 				(assert.message != null ? assert.message : (assert.flag & Flag.Not ? Negates[assert.operator] : Asserts[assert.operator])
 				) + (flag & Flag.Todo ? ' # TODO' : '') +
 				'\n' + opts.indent + '  ---' +
-				'\n' + opts.indent + '  wanted: ' + assert.expected +
-				'\n' + opts.indent + '  found: ' + assert.actual +
-				'\n' + opts.indent + '  at: ' + assert.trace + 
+				'\n' + opts.indent + '  expected: ' + assert.expected +
+				'\n' + opts.indent + '  actual: ' + assert.actual +
+				'\n' + opts.indent + '  at: ' + assert.trace +
 				'\n' + opts.indent + '  operator: ' + assert.operator +
 				'\n' + opts.indent + '  ...';
 			if (flag & Flag.Todo) {
@@ -222,7 +245,7 @@ function print(suite, opts, lines, flag) {
 	if (pass) {
 		str = opts.indent + 'ok - ' + suite.message + ' # ' + suite.duration + 'ms';
 	} else {
-	  str = opts.indent + 'not ok - ' + suite.message + ' # ' + suite.duration + 'ms';
+		str = opts.indent + 'not ok - ' + suite.message + ' # ' + suite.duration + 'ms';
 	}
 	lines.push(str);
 	return pass;
@@ -231,19 +254,21 @@ function print(suite, opts, lines, flag) {
 function getStackTrace() {
 	var trace = new Error().stack;
 	if (trace != null) {
-		var lines = trace.split('\n').filter((f,i) => i > 0);
+		var lines = trace.split('\n').filter((f, i) => i > 0);
 		var line = lines.filter(f => f.indexOf('boer.js') === -1)[0];
 		var file = /\((.*)\)/.exec(line)[1];
 		try {
 			return file.replace(__dirname, '');
-		} catch(err) {
+		} catch (err) {
 			return file;
 		}
 	}
 }
 
+
 /**
  * @constructor
+ * @implements {Async}
  * @implements {Suite}
  * @param {Report=} reporter
  */
@@ -296,7 +321,7 @@ function Test(reporter) {
 	/**
 	 * @public
 	 * @type {number}
-	 */ 
+	 */
 	this.duration = -1;
 	/**
 	 * @type {Test|null}
@@ -397,20 +422,10 @@ function Assertion(flag, message, operator, actual, expected, trace) {
 
 /**
  * @protected
- * @param {string} operator
- * @param {*} actual
- * @param {*} expected
- * @param {string|void} message
+ * @param {number} flag
  * @returns {boolean}
  */
-Test.prototype.assertion = function (operator, actual, expected, message) {
-	var flag = this.flag;
-	var equal = isEqual(actual, expected);
-	if ((flag & Flag.Not) === 0) {
-		flag |= (equal ? Flag.Pass : Flag.Fail);
-	} else {
-		flag |= (equal ? Flag.Fail : Flag.Pass);
-	}
+Test.prototype.assertion = function(flag, operator, actual, expected, message) {
 	if ((flag & (Flag.Pass | Flag.Debug)) === Flag.Pass) {
 		this.asserts.push(new Assertion(flag, message, operator));
 	} else {
@@ -426,7 +441,12 @@ Test.prototype.assertion = function (operator, actual, expected, message) {
  * @returns {boolean}
  */
 Test.prototype.assert = function (condition, message) {
-	return this.assertion('assert', condition, true, message);
+	var flag = this.flag;
+	if (flag & Flag.Not) {
+		return this.assertion(flag | (condition ? Flag.Fail : Flag.Pass), 'assert', condition, false, message);
+	} else {
+		return this.assertion(flag | (condition ? Flag.Pass : Flag.Fail), 'assert', condition, true, message); 
+	}
 }
 
 /**
@@ -435,7 +455,12 @@ Test.prototype.assert = function (condition, message) {
  * @returns {boolean}
  */
 Test.prototype.fail = function (message) {
-	return this.assertion('fail', true, (this._flag & Flag.Not) !== 0, message);
+	var flag = this.flag;
+	if (flag & Flag.Not) {
+		return this.assertion(flag | Flag.Pass, 'fail', 'not fail called', 'not fail called', message); 
+	} else {
+		return this.assertion(flag | Flag.Fail, 'fail', 'fail called', 'fail not called', message);
+	}
 }
 
 /**
@@ -444,7 +469,12 @@ Test.prototype.fail = function (message) {
  * @returns {boolean}
  */
 Test.prototype.pass = function (message) {
-	return this.assertion('pass', true, (this._flag & Flag.Not) === 0, message);
+	var flag = this.flag;
+	if (flag & Flag.Not) {
+		return this.assertion(flag | Flag.Fail, 'pass', 'pass called', 'not pass called', message);
+	} else {
+		return this.assertion(flag | Flag.Pass, 'pass', 'pass called', 'pass called', message); 
+	}
 }
 
 /**
@@ -455,7 +485,34 @@ Test.prototype.pass = function (message) {
  * @returns {boolean}
  */
 Test.prototype.equal = function (actual, expected, message) {
-	return this.assertion('equal', actual, expected, message);
+	var flag = this.flag;
+	var equal = isEqual(actual, expected);
+	if (flag & Flag.Not) {
+		return this.assertion(flag | (equal ? Flag.Fail : Flag.Pass), 'equal', actual, expected, message);
+	} else {
+		return this.assertion(flag | (equal ? Flag.Pass : Flag.Fail), 'equal', actual, expected, message);
+	}
+}
+
+/**
+ * @param {Function} fn
+ * @param {string=} message
+ */
+Test.prototype.throws = function(fn, message) { 
+	var caught;
+	var flag = this.flag;
+	try {
+		fn();
+	} catch(err) {
+		caught = { error: err };
+	}
+	if (this.flag & Flag.Not) {
+		return this.assertion(flag | (caught === void 0 ? Flag.Pass : Flag.Fail), 'throws', 
+			caught === void 0 ? void 0 : caught.error, 'error not thrown', message);
+	} else {
+		return this.assertion(flag | (caught === void 0 ? Flag.Fail : Flag.Pass), 'throws', 
+			caught === void 0 ? void 0 : caught.error, 'error thrown', message);
+	}
 }
 
 /**
@@ -476,67 +533,104 @@ Test.prototype.test = function (message, scope) {
  * 
  */
 Test.prototype.run = function () {
-	var flag = this.flag;
-	var reporter = this._reporter;
-	if (flag & Flag.Init) {
-		if (flag & Flag.Root) {
-			reporter.onInit();
-		} else {
-			reporter.onTestInit(this);
-			if (this._scope !== null) {
-				try {
-					this.flag |= Flag.Assert;
-					this.flag &= ~Flag.Init;
-					this.duration = new Date().valueOf();
-					this._scope(this);
-				} catch(err) {
-					this.fail(String(err));
-				} finally {
-					this.flag |= Flag.Exit;
-					this.flag &= ~Flag.Assert;
-				}
-			}
-		}
+	if (this.flag & Flag.Init) {
+		this.runScope();
 	}
-	var tests = this.tests;
-	while (this._index < tests.length) {
-		var test = tests[this._index++];
-		test.run();
-		if (flag & Flag.Root) {
-			reporter.onTestExit(test);
-		}
+	if (this.tests.length > 0) {
+		this.runTests();
 	}
-	if (flag & Flag.Root) {
-		reporter.onExit();
+	if (this.flag & Flag.Root) {
+		this._reporter.onExit();
 	}
 	this.duration = new Date().valueOf() - this.duration;
 }
 
 /**
- *
+ * @private
  */
-Test.prototype.wait = function() {
+Test.prototype.runScope = function () {
+	if (this.flag & Flag.Root) {
+		this._reporter.onInit();
+	} else {
+		this._reporter.onTestInit(this);
+		try {
+			this.flag |= Flag.Assert;
+			this.flag &= ~Flag.Init;
+			this.duration = new Date().valueOf();
+			this._scope(this);
+		} catch (err) {
+			this.fail(String(err));
+		} finally {
+			this.flag |= Flag.Exit;
+			this.flag &= ~Flag.Assert;
+		}
+	}
+}
+
+/**
+ * @private
+ */
+Test.prototype.runTests = function () {
+	var flag = this.flag;
+	var tests = this.tests;
+	for (; this._index < tests.length; this._index++) {
+		tests[this._index].run();
+		if (flag & Flag.Root) {
+			this._reporter.onTestExit(tests[this._index]);
+		}
+	}
+}
+
+/**
+ * # TODO
+ * @param {function(Async): void} fn
+ */
+Test.prototype.setup = function(fn) {
+
+}
+
+/**
+ * # TODO
+ * @param {function(Async): void} fn
+ */
+Test.prototype.teardown = function(fn) {
+
+}
+
+/**
+ * # TODO
+ * @param {function(Async): void} fn
+ */
+Test.prototype.cleanup = function(fn) {
+
+}
+
+/**
+ * # TODO
+ */
+Test.prototype.wait = function () {
 	this.flag |= Flag.Wait;
 }
 
 /**
- *
+ * # TODO
  */
-Test.prototype.end = function() {
+Test.prototype.end = function () {
 
 }
 
 /**
+ * # TODO
  * @param {number} count
  */
-Test.prototype.plan = function(count) {
+Test.prototype.plan = function (count) {
 	this.planned = count;
 }
 
 /**
  *
  */
-Test.prototype.serial = function() {
+Test.prototype.serial = function () {
 	this.flag |= Flag.Serial;
 }
 
@@ -576,4 +670,4 @@ function isEqual(a, b) {
 	return a !== a && b !== b;
 }
 
-module.exports = { Flag: Flag, Asserts: Asserts, Negates: Negates, Test: Test }; 
+module.exports = {Flag: Flag, Asserts: Asserts, Negates: Negates, Test: Test}; 
