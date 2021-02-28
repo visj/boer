@@ -1,6 +1,6 @@
 {
   "name": "boer",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "A simple Javascript test framework.",
   "main": "dist/boer.cjs",
   "module": "dist/boer.mjs",
@@ -8,6 +8,11 @@
   "scripts": {
     "test": "node test/index.js"
   },
+	"files": [
+		"lib.d.ts",
+		"dist/boer.cjs",
+		"dist/boer.mjs"
+	],
   "keywords": [],
   "author": "Vilhelm Sjölund",
   "license": "MIT",
