@@ -634,7 +634,8 @@ Test.prototype.serial = function () {
 }
 
 /**
- * 
+ * @author {epoberezkin}
+ * Copied from https://github.com/epoberezkin/fast-deep-equal
  * @param {*} a 
  * @param {*} b 
  * @returns {boolean}
@@ -643,15 +644,12 @@ function isEqual(a, b) {
 	if (a === b) {
 		return true;
 	}
-
 	if (a && b && typeof a === 'object' && typeof b === 'object') {
 		if (a.constructor !== b.constructor) {
 			return false;
 		}
-		/** @type {number} */
 		var i;
 		var keys;
-		/** @type {number} */
 		var length;
 		if (Array.isArray(a)) {
 			length = a.length;
@@ -659,12 +657,38 @@ function isEqual(a, b) {
 				return false;
 			}
 			for (i = 0; i < length; i++) {
-				if (!equal(a[i], b[i])) {
+				if (!isEqual(a[i], b[i])) {
 					return false;
 				}
 			}
 			return true;
 		}
+		if (a.constructor === RegExp) {
+			return a.source === b.source && a.flags === b.flags;
+		}
+		if (a.valueOf !== Object.prototype.valueOf) {
+			return a.valueOf() === b.valueOf();
+		}
+		if (a.toString !== Object.prototype.toString) {
+			return a.toString() === b.toString();
+		}
+		keys = Object.keys(a);
+		length = keys.length;
+		if (length !== Object.keys(b).length) {
+			return false;
+		}
+		for (i = 0; i < length; i++) {
+			if (!Object.prototype.hasOwnProperty.call(b, keys[i])) {
+				return false;
+			}
+		}
+		for (i = 0; i < length; i++) {
+			var key = keys[i];
+			if (!isEqual(a[key], b[key])) {
+				return false;
+			}
+		}
+		return true;
 	}
 	return a !== a && b !== b;
 }
