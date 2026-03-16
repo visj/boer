@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, BOOLEAN, NUMBER, STRING, DATE, URI,
-    object, array, union, conform, check, explain
+    object, array, union, conform, check, diagnose
 } from '../';
 
 describe('object: inline nesting', () => {
@@ -127,7 +127,7 @@ describe('real-world: API response schema', () => {
             ],
             meta: { page: 1, perPage: 20, total: 'many', hasNext: false }
         };
-        let errs = explain(response, PaginatedResponse);
+        let errs = diagnose(response, PaginatedResponse);
         // id is string instead of number, total is string instead of number
         expect(errs.length).toBeGreaterThanOrEqual(2);
     });
@@ -306,11 +306,11 @@ describe('cross-function: validate vs parse vs cast consistency', () => {
 
         let valid = { a: 'x', b: null };
         expect(check(valid, schema)).toBe(true);
-        expect(explain(valid, schema)).toEqual([]);
+        expect(diagnose(valid, schema)).toEqual([]);
 
         let invalid = { a: 42, b: 'wrong' };
         expect(check(invalid, schema)).toBe(false);
-        expect(explain(invalid, schema).length).toBeGreaterThan(0);
+        expect(diagnose(invalid, schema).length).toBeGreaterThan(0);
     });
 });
 

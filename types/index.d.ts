@@ -12,7 +12,6 @@ export const BIGINT: Type<bigint>;
 export const DATE: Type<Date>;
 export const URI: Type<URL>;
 
-
 export const ARRAY: number;
 export const UNION: number;
 export const VALUE: Type<boolean> | Type<number> | Type<string> | Type<bigint> | Type<Date> | Type<URL>;
@@ -102,4 +101,4 @@ export interface PathError {
  * @param json 
  * @param typedef 
  */
-export function explain(json: any, typedef: number): PathError[];
+export function diagnose(json: any, typedef: number): PathError[];
