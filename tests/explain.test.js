@@ -1,0 +1,320 @@
+import { describe, test, expect } from 'bun:test';
+import {
+    UNDEFINED, NULL, BOOLEAN, NUMBER,
+    STRING, BIGINT, DATE, URI,
+    object, array, union, explain
+} from '../';
+
+describe('explain: primitives', () => {
+    test('no errors for matching type', () => {
+        expect(explain('hello', STRING)).toEqual([]);
+        expect(explain(42, NUMBER)).toEqual([]);
+        expect(explain(true, BOOLEAN)).toEqual([]);
+        expect(explain(BigInt(1), BIGINT)).toEqual([]);
+        expect(explain(new Date(), DATE)).toEqual([]);
+        expect(explain(new URL('https://vilhelm.se'), URI)).toEqual([]);
+    });
+
+    test('error for mismatched type', () => {
+        let errs = explain(42, STRING);
+        expect(errs.length).toBe(1);
+        expect(errs[0].path).toBe('');
+        expect(errs[0].message).toContain('string');
+        expect(errs[0].message).toContain('number');
+    });
+
+    test('error for null on non-nullable', () => {
+        let errs = explain(null, STRING);
+        expect(errs.length).toBe(1);
+        expect(errs[0].message).toContain('null');
+    });
+
+    test('error for undefined on non-optional', () => {
+        let errs = explain(undefined, STRING);
+        expect(errs.length).toBe(1);
+        expect(errs[0].message).toContain('undefined');
+    });
+
+    test('no error for null on nullable', () => {
+        expect(explain(null, STRING | NULL)).toEqual([]);
+    });
+
+    test('no error for undefined on optional', () => {
+        expect(explain(undefined, STRING | UNDEFINED)).toEqual([]);
+    });
+});
+
+describe('explain: type unions', () => {
+    test('no error when value matches any type in union', () => {
+        expect(explain('hello', STRING | NUMBER)).toEqual([]);
+        expect(explain(42, STRING | NUMBER)).toEqual([]);
+    });
+
+    test('error mentions all expected types', () => {
+        let errs = explain(true, STRING | NUMBER);
+        expect(errs.length).toBe(1);
+        expect(errs[0].message).toContain('string');
+        expect(errs[0].message).toContain('number');
+    });
+
+    test('error for wrong type in triple union', () => {
+        let errs = explain([], STRING | NUMBER | BOOLEAN);
+        expect(errs.length).toBe(1);
+        expect(errs[0].message).toContain('string');
+        expect(errs[0].message).toContain('number');
+        expect(errs[0].message).toContain('boolean');
+    });
+});
+
+describe('explain: objects', () => {
+    test('no errors for valid object', () => {
+        let schema = object({ name: STRING, age: NUMBER });
+        expect(explain({ name: 'Alice', age: 30 }, schema)).toEqual([]);
+    });
+
+    test('error with field path for wrong type', () => {
+        let schema = object({ name: STRING, age: NUMBER });
+        let errs = explain({ name: 'Alice', age: '30' }, schema);
+        expect(errs.length).toBe(1);
+        expect(errs[0].path).toBe('age');
+        expect(errs[0].message).toContain('number');
+    });
+
+    test('multiple field errors', () => {
+        let schema = object({ a: STRING, b: NUMBER, c: BOOLEAN });
+        let errs = explain({ a: 42, b: 'wrong', c: 'wrong' }, schema);
+        expect(errs.length).toBe(3);
+        expect(errs.map(e => e.path).sort()).toEqual(['a', 'b', 'c']);
+    });
+
+    test('error for null field without NULL', () => {
+        let schema = object({ name: STRING });
+        let errs = explain({ name: null }, schema);
+        expect(errs.length).toBe(1);
+        expect(errs[0].path).toBe('name');
+        expect(errs[0].message).toContain('null');
+    });
+
+    test('error for missing field without UNDEFINED', () => {
+        let schema = object({ name: STRING, age: NUMBER });
+        let errs = explain({ name: 'Alice' }, schema);
+        expect(errs.length).toBe(1);
+        expect(errs[0].path).toBe('age');
+        expect(errs[0].message).toContain('undefined');
+    });
+
+    test('no error for null field with NULL', () => {
+        let schema = object({ name: STRING | NULL });
+        expect(explain({ name: null }, schema)).toEqual([]);
+    });
+
+    test('no error for missing field with UNDEFINED', () => {
+        let schema = object({ name: STRING | UNDEFINED });
+        expect(explain({}, schema)).toEqual([]);
+    });
+
+    test('error for non-object', () => {
+        let schema = object({ a: STRING });
+        let errs = explain('string', schema);
+        expect(errs.length).toBe(1);
+        expect(errs[0].message).toContain('object');
+    });
+
+    test('error for array instead of object', () => {
+        let schema = object({ a: STRING });
+        let errs = explain([], schema);
+        expect(errs.length).toBe(1);
+        expect(errs[0].message).toContain('object');
+    });
+
+    test('nested object errors have dot paths', () => {
+        let schema = object({
+            user: {
+                name: STRING,
+                address: {
+                    city: STRING
+                }
+            }
+        });
+        let errs = explain({ user: { name: 'Alice', address: { city: 42 } } }, schema);
+        expect(errs.length).toBe(1);
+        expect(errs[0].path).toBe('user.address.city');
+    });
+
+    test('deeply nested missing field', () => {
+        let schema = object({ a: { b: { c: NUMBER } } });
+        let errs = explain({ a: { b: {} } }, schema);
+        expect(errs.length).toBe(1);
+        expect(errs[0].path).toBe('a.b.c');
+        expect(errs[0].message).toContain('undefined');
+    });
+});
+
+describe('explain: arrays', () => {
+    test('no errors for valid array', () => {
+        expect(explain([1, 2, 3], array(NUMBER))).toEqual([]);
+    });
+
+    test('error for non-array', () => {
+        let errs = explain('not-array', array(NUMBER));
+        expect(errs.length).toBe(1);
+        expect(errs[0].message).toContain('array');
+    });
+
+    test('error for null array without NULL', () => {
+        let errs = explain(null, array(NUMBER));
+        expect(errs.length).toBe(1);
+        expect(errs[0].message).toContain('null');
+    });
+
+    test('no error for null array with NULL', () => {
+        expect(explain(null, array(NUMBER) | NULL)).toEqual([]);
+    });
+
+    test('element error has bracket path', () => {
+        let errs = explain([1, 'two', 3], array(NUMBER));
+        expect(errs.length).toBe(1);
+        expect(errs[0].path).toBe('[1]');
+    });
+
+    test('multiple element errors', () => {
+        let errs = explain([1, 'two', true], array(NUMBER));
+        expect(errs.length).toBe(2);
+        expect(errs[0].path).toBe('[1]');
+        expect(errs[1].path).toBe('[2]');
+    });
+
+    test('null element error when element not nullable', () => {
+        let errs = explain([1, null, 3], array(NUMBER));
+        expect(errs.length).toBe(1);
+        expect(errs[0].path).toBe('[1]');
+        expect(errs[0].message).toContain('null');
+    });
+
+    test('no error for null element when nullable', () => {
+        expect(explain([1, null, 3], array(NUMBER | NULL))).toEqual([]);
+    });
+
+    test('nested array errors have nested paths', () => {
+        let errs = explain([[1, 2], [3, 'four']], array(array(NUMBER)));
+        expect(errs.length).toBe(1);
+        expect(errs[0].path).toBe('[1][1]');
+    });
+
+    test('array of objects errors have combined paths', () => {
+        let Item = object({ name: STRING, val: NUMBER });
+        let errs = explain([
+            { name: 'ok', val: 1 },
+            { name: 'bad', val: 'wrong' }
+        ], array(Item));
+        expect(errs.length).toBe(1);
+        expect(errs[0].path).toBe('[1].val');
+    });
+});
+
+describe('explain: unions', () => {
+    let ShapeUnion = union('type', {
+        circle: object({ type: STRING, radius: NUMBER }),
+        rect: object({ type: STRING, w: NUMBER, h: NUMBER })
+    });
+
+    test('no errors for valid variant', () => {
+        expect(explain({ type: 'circle', radius: 5 }, ShapeUnion)).toEqual([]);
+    });
+
+    test('error for missing discriminator', () => {
+        let errs = explain({ radius: 5 }, ShapeUnion);
+        expect(errs.length).toBe(1);
+        expect(errs[0].message).toContain('discriminator');
+    });
+
+    test('error for unknown discriminator value', () => {
+        let errs = explain({ type: 'triangle' }, ShapeUnion);
+        expect(errs.length).toBe(1);
+        expect(errs[0].message).toContain('triangle');
+    });
+
+    test('error for non-object union input', () => {
+        let errs = explain('circle', ShapeUnion);
+        expect(errs.length).toBe(1);
+        expect(errs[0].message).toContain('object');
+    });
+
+    test('error for wrong field type inside matched variant', () => {
+        let errs = explain({ type: 'circle', radius: 'five' }, ShapeUnion);
+        expect(errs.length).toBe(1);
+        expect(errs[0].path).toBe('radius');
+    });
+
+    test('null union error when not nullable', () => {
+        let errs = explain(null, ShapeUnion);
+        expect(errs.length).toBe(1);
+        expect(errs[0].message).toContain('null');
+    });
+
+    test('no error for null union when nullable', () => {
+        expect(explain(null, ShapeUnion | NULL)).toEqual([]);
+    });
+
+    test('array of unions explains each bad element', () => {
+        let errs = explain([
+            { type: 'circle', radius: 5 },
+            { type: 'circle', radius: 'wrong' },
+            { type: 'unknown' }
+        ], array(ShapeUnion));
+        expect(errs.length).toBe(2);
+        // First error: wrong field type in [1]
+        expect(errs[0].path).toBe('[1].radius');
+        // Second error: unknown discriminator in [2]
+        expect(errs[1].path).toBe('[2].type');
+    });
+});
+
+describe('explain: complex nested scenarios', () => {
+    test('deeply nested object in array in object', () => {
+        let Schema = object({
+            users: array(object({
+                name: STRING,
+                tags: array(STRING)
+            }))
+        });
+        let errs = explain({
+            users: [
+                { name: 'Alice', tags: ['a', 'b'] },
+                { name: 'Bob', tags: ['c', 42] }
+            ]
+        }, Schema);
+        expect(errs.length).toBe(1);
+        expect(errs[0].path).toBe('users[1].tags[1]');
+    });
+
+    test('nullable array of nullable union objects', () => {
+        let MsgUnion = union('kind', {
+            text: object({ kind: STRING, body: STRING }),
+            img: object({ kind: STRING, src: STRING })
+        });
+
+        let Schema = object({
+            messages: array(MsgUnion | NULL) | NULL
+        });
+
+        // Valid
+        expect(explain({ messages: null }, Schema)).toEqual([]);
+        expect(explain({ messages: [null, { kind: 'text', body: 'hi' }] }, Schema)).toEqual([]);
+
+        // Invalid element
+        let errs = explain({ messages: [{ kind: 'text', body: 42 }] }, Schema);
+        expect(errs.length).toBe(1);
+        expect(errs[0].path).toBe('messages[0].body');
+    });
+
+    test('error count accumulates across multiple fields and elements', () => {
+        let Schema = object({
+            a: STRING,
+            b: NUMBER,
+            c: array(BOOLEAN)
+        });
+        let errs = explain({ a: 42, b: 'wrong', c: [true, 'x', 'y'] }, Schema);
+        expect(errs.length).toBe(4); // a wrong, b wrong, c[1] wrong, c[2] wrong
+    });
+});
