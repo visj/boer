@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, BOOLEAN, NUMBER,
-    STRING, BIGINT, DATE, URI, ARRAY,
+    STRING, BIGINT, DATE, URI,
     object, array, union, conform, check
 } from '../';
 
@@ -10,8 +10,8 @@ describe('array: schema builder', () => {
         expect(typeof array(NUMBER)).toBe('number');
     });
 
-    test('has ARRAY bit set', () => {
-        expect((array(NUMBER) & ARRAY) === ARRAY).toBe(true);
+    test('returns a complex typedef (bit 31 set)', () => {
+        expect(array(NUMBER) >>> 31).toBe(1);
     });
 
     test('throws on non-number element type', () => {

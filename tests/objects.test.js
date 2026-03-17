@@ -120,9 +120,9 @@ describe('validate: objects', () => {
     test('object with nullable nested object', () => {
         let Inner = object({ x: NUMBER });
         let Outer = object({ inner: Inner | NULL });
-        // Inner is a registered object ID (small number in ID_MASK range).
-        // NULL is a high bit (1 << 30). OR-ing them together gives a typedef
-        // that has both the object ID and the NULL flag — this works correctly.
+        // Inner is a complex typedef (COMPLEX bit set + KIND index).
+        // NULL sets the NULLABLE bit (1 << 30). OR-ing them together works
+        // because NULLABLE is independent of COMPLEX and the KIND index.
         expect(check({ inner: { x: 5 } }, Outer)).toBe(true);
         expect(check({ inner: null }, Outer)).toBe(true);
         expect(check({ inner: { x: 'wrong' } }, Outer)).toBe(false);

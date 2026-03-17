@@ -3,8 +3,8 @@ export type Type<T> = number & { readonly __phantom?: T };
 
 export type Infer<T> = T extends Type<infer U> ? U : never;
 
-export const UNDEFINED: Type<undefined>;
 export const NULL: Type<null>;
+export const UNDEFINED: Type<undefined>;
 export const BOOLEAN: Type<boolean>;
 export const NUMBER: Type<number>;
 export const STRING: Type<string>;
@@ -12,10 +12,10 @@ export const BIGINT: Type<bigint>;
 export const DATE: Type<Date>;
 export const URI: Type<URL>;
 
-export const ARRAY: number;
-export const UNION: number;
 export const VALUE: Type<boolean> | Type<number> | Type<string> | Type<bigint> | Type<Date> | Type<URL>;
 
+export function nullable<T>(typedef: Type<T>): Type<T | null>;
+export function optional<T>(typedef: Type<T>): Type<T | undefined>;
 
 export interface Schema {
     [key: string]: number | Type<any> | Schema;
@@ -41,16 +41,16 @@ export function object<T extends Schema>(
 
 /**
  * Defines an array type
- * @param itemType The type, like Array<Type> 
+ * @param itemType The type, like Array<Type>
  */
 export function array<T>(
     itemType: Type<T>
 ): Type<T[]>;
 
 /**
- * 
- * @param discriminator 
- * @param variants 
+ *
+ * @param discriminator
+ * @param variants
  */
 export function union<T extends Record<string, Type<any>>, D extends string>(
     discriminator: D,
@@ -69,15 +69,15 @@ export function guard<T>(data: any, typedef: Type<T>): asserts json is T;
 
 /**
  * Validate that `data` conforms to the schema
- * 
+ *
  */
 export function check<T>(data: any, typedef: Type<T>): json is T;
 
 /**
  * Parses `data` in-place. Validates JSON-native types strictly,
  * but hydrates rich types (Date, URL, BigInt) from strings/numbers.
- * @param data 
- * @param typedef 
+ * @param data
+ * @param typedef
  */
 export function conform<T>(data: any, typedef: Type<T>): json is T;
 
@@ -97,8 +97,8 @@ export interface PathError {
 }
 
 /**
- * 
- * @param json 
- * @param typedef 
+ *
+ * @param json
+ * @param typedef
  */
 export function diagnose(json: any, typedef: Type<number>): PathError[];

@@ -1,21 +1,36 @@
 /// <reference path="../types/types.d.ts" />
 
-export const UNDEFINED = (1 << 31) >>> 0;
-export const NULL = (1 << 30) >>> 0;
-export const BOOLEAN = (1 << 29) >>> 0;
-export const NUMBER = (1 << 28) >>> 0;
-export const STRING = (1 << 27) >>> 0;
-export const ARRAY = (1 << 23) >>> 0;
-export const OBJECT = (1 << 22) >>> 0;
+// --- BIT LAYOUT ---
+// Bit 31:  COMPLEX (0 = primitive typedef, 1 = complex typedef)
+// Bit 30:  NULLABLE (typedef accepts null)
+// Bit 29:  OPTIONAL (typedef accepts undefined)
+// Bits 0-28:
+//   If COMPLEX=0: primitive type flags (up to 29 type slots)
+//   If COMPLEX=1: index into KIND table
 
-// Move these to extended #TODO
-export const BIGINT = (1 << 26) >>> 0;
-export const DATE = (1 << 25) >>> 0;
-export const URI = (1 << 24) >>> 0;
-export const UNION = (1 << 21) >>> 0;
+const COMPLEX  = (1 << 31) >>> 0;
+const NULLABLE = (1 << 30) >>> 0;
+const OPTIONAL = (1 << 29) >>> 0;
+
+export const BOOLEAN = 1 << 0;
+export const NUMBER  = 1 << 1;
+export const STRING  = 1 << 2;
+export const BIGINT  = 1 << 3;
+export const DATE    = 1 << 4;
+export const URI     = 1 << 5;
 
 export const VALUE = (BOOLEAN | NUMBER | STRING | BIGINT | DATE | URI);
-export const ID_MASK = 0x001FFFFF;
+const PRIM_MASK = 0x1FFFFFFF;
+const KIND_MASK = 0x1FFFFFFF;
+
+// Backward-compatible aliases — these work for both primitive and complex
+// typedefs because bits 30/29 are independent of bit 31 and bits 0-28.
+export { NULLABLE as NULL, OPTIONAL as UNDEFINED };
+
+// Complex kind enum (not bit flags)
+const K_OBJECT = 0;
+const K_ARRAY  = 1;
+const K_UNION  = 2;
 
 export const STRIP = true;
 export const PLAIN = true;
@@ -34,19 +49,19 @@ const U32 = 2;
 var PTR = 0;
 var SLAB_LEN = 16384;
 /**
- * @type {!Uint32Array} 
+ * @type {!Uint32Array}
  */
 var SLAB = new Uint32Array(SLAB_LEN);
 
 var OBJ_LEN = 4096;
 var OBJ_TYPE = U16;
 var OBJ_COUNT = 0;
-/** 
+/**
  * @type {!Uint16Array | !Uint32Array}
  */
 var OBJECTS = new Uint16Array(OBJ_LEN);
 var ARR_LEN = 256;
-/** 
+/**
  * @type {!Uint32Array}
  */
 var ARRAYS = new Uint32Array(ARR_LEN);
@@ -54,22 +69,41 @@ var ARR_COUNT = 0;
 
 var UNION_LEN = 128;
 var UNION_TYPE = U16;
-/** 
+/**
  * V8 inline small Typed Arrays on-heap
  * https://chromium.googlesource.com/v8/v8/+/refs/heads/7.6-lkgr/BUILD.gn
  * The size limit is 64 bytes (unrelated to DISC_LEN...)
  * Most unions should fit inside this threshold, so we likely don't need
  * to manage yet another continous memory block
- * @const 
+ * @const
  * @type {!Array<!Uint32Array>}
  */
 var DISC_UNIONS = [];
 /** @type {!Uint16Array | !Uint32Array} */
 var UNIONS = new Uint16Array(UNION_LEN);
 
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
+// --- KIND TABLE ---
+var KIND_LEN = 1024;
+var KIND_COUNT = 0;
+/** @type {!Uint32Array} */
+var KINDS = new Uint32Array(KIND_LEN * 2);
+
+/**
+ * @param {number} complexType
+ * @param {number} registryIndex
+ * @returns {number}
+ */
+function allocKind(complexType, registryIndex) {
+    let id = KIND_COUNT++;
+    if (id * 2 >= KIND_LEN * 2) {
+        let buffer = new Uint32Array((KIND_LEN *= 2) * 2);
+        buffer.set(KINDS);
+        KINDS = buffer;
+    }
+    KINDS[id * 2] = complexType;
+    KINDS[id * 2 + 1] = registryIndex;
+    return id;
+}
 
 /**
  * @param {string} key
@@ -97,9 +131,9 @@ function lookup(key) {
 function checkNullish(raw, type) {
     return (
         raw === void 0
-            ? ((type & UNDEFINED) ? 1 : 0) // raw is undefined, return bit check
+            ? ((type & OPTIONAL) ? 1 : 0)
             : raw === null
-                ? ((type & NULL) ? 1 : 0)  // raw is null, return bit check
+                ? ((type & NULLABLE) ? 1 : 0)
                 : -1
     );
 }
@@ -112,18 +146,39 @@ function checkNullish(raw, type) {
 function describeType(type) {
     /** @type {!Array<string>} */
     let parts = [];
-    if (type & UNDEFINED) parts.push('undefined');
-    if (type & NULL) parts.push('null');
-    if (type & BOOLEAN) parts.push('boolean');
-    if (type & NUMBER) parts.push('number');
-    if (type & STRING) parts.push('string');
-    if (type & BIGINT) parts.push('bigint');
-    if (type & DATE) parts.push('Date');
-    if (type & URI) parts.push('URL');
-    if (type & ARRAY) parts.push('Array');
-    if (type & UNION) parts.push('Union');
-    if (type & OBJECT) parts.push('Object');
+    if (type & OPTIONAL) parts.push('undefined');
+    if (type & NULLABLE) parts.push('null');
+    if (type & COMPLEX) {
+        let ki = type & KIND_MASK;
+        let ct = KINDS[ki * 2];
+        if (ct === K_ARRAY) parts.push('Array');
+        if (ct === K_UNION) parts.push('Union');
+        if (ct === K_OBJECT) parts.push('Object');
+    } else {
+        if (type & BOOLEAN) parts.push('boolean');
+        if (type & NUMBER) parts.push('number');
+        if (type & STRING) parts.push('string');
+        if (type & BIGINT) parts.push('bigint');
+        if (type & DATE) parts.push('Date');
+        if (type & URI) parts.push('URL');
+    }
     return parts.join(' | ') || 'unknown';
+}
+
+/**
+ * @param {number} typedef
+ * @returns {number}
+ */
+export function nullable(typedef) {
+    return (typedef | NULLABLE) >>> 0;
+}
+
+/**
+ * @param {number} typedef
+ * @returns {number}
+ */
+export function optional(typedef) {
+    return (typedef | OPTIONAL) >>> 0;
 }
 
 /**
@@ -189,7 +244,8 @@ export function object(definition) {
     OBJECTS[id * 2] = offset;
     OBJECTS[id * 2 + 1] = count;
     PTR += required;
-    return (OBJECT | id) >>> 0;
+    let kindId = allocKind(K_OBJECT, id);
+    return (COMPLEX | kindId) >>> 0;
 }
 
 /**
@@ -208,7 +264,8 @@ export function array(elemType) {
         ARRAYS = buffer;
     }
     ARRAYS[index] = elemType >>> 0;
-    return (ARRAY | index) >>> 0;
+    let kindId = allocKind(K_ARRAY, index);
+    return (COMPLEX | kindId) >>> 0;
 }
 
 /**
@@ -255,13 +312,14 @@ export function union(discriminator, variants) {
         UNION_TYPE = U32;
     }
     UNIONS[index] = id;
-    return (UNION | index) >>> 0;
+    let kindId = allocKind(K_UNION, index);
+    return (COMPLEX | kindId) >>> 0;
 }
 
-/** 
+/**
  * @const
  * @type {symbol}
- * Use this to cvercome that javascript
+ * Use this to overcome that javascript
  * doesn't support free tuple return types, like Go (res, err)
  */
 var FAIL = Symbol('FAIL');
@@ -358,9 +416,24 @@ function checkValue(raw, mask) {
 }
 
 /**
+ * @param {*} raw
+ * @param {number} type
+ * @returns {boolean}
+ */
+function _checkSlot(raw, type) {
+    return (
+        raw === void 0 ? (type & OPTIONAL) !== 0 :
+            raw === null ? (type & NULLABLE) !== 0 :
+                (type & COMPLEX) ? check(raw, type) :
+                    (type & VALUE) ? checkValue(raw, type & PRIM_MASK) :
+                        false
+    );
+}
+
+/**
  * @throws
- * @param {*} json 
- * @param {number} typedef 
+ * @param {*} json
+ * @param {number} typedef
  * @returns {void}
  */
 export function guard(json, typedef) {
@@ -376,77 +449,67 @@ export function guard(json, typedef) {
  */
 export function check(json, typedef) {
     if (json === void 0) {
-        return (typedef & UNDEFINED) !== 0;
+        return (typedef & OPTIONAL) !== 0;
     }
     if (json === null) {
-        return (typedef & NULL) !== 0;
+        return (typedef & NULLABLE) !== 0;
     }
-    if (typedef & ARRAY) {
-        if (!Array.isArray(json)) {
-            return false;
-        }
-        let innerType = ARRAYS[typedef & ID_MASK];
-        let length = json.length;
-        for (let i = 0; i < length; i++) {
-            let raw = json[i];
-            if (
-                raw === void 0 ? (innerType & UNDEFINED) === 0 :
-                    raw === null ? (innerType & NULL) === 0 :
-                        (innerType & (ARRAY | UNION | OBJECT)) ? !check(raw, innerType) :
-                            (innerType & VALUE) ? !checkValue(raw, innerType & VALUE) :
-                                true // true as in, truly invalid...
-            ) {
+    if (typedef & COMPLEX) {
+        let ki = typedef & KIND_MASK;
+        let ct = KINDS[ki * 2];
+        let ri = KINDS[ki * 2 + 1];
+        if (ct === K_ARRAY) {
+            if (!Array.isArray(json)) {
                 return false;
             }
-        }
-        return true;
-    }
-    if (typedef & UNION) {
-        let id = typedef & ID_MASK;
-        let discKey = KEY_INDEX.get(UNIONS[id]);
-        if (discKey === void 0) {
-            return false;
-        }
-        if (typeof json !== 'object' || json === null || Array.isArray(json)) {
-            return false;
-        }
-        let valueId = KEY_DICT.get(json[discKey]);
-        let variants = DISC_UNIONS[id];
-        let length = variants.length;
-        for (let i = 0; i < length; i += 2) {
-            if (variants[i] === valueId) {
-                return check(json, variants[i + 1]);
+            let innerType = ARRAYS[ri];
+            let length = json.length;
+            for (let i = 0; i < length; i++) {
+                if (!_checkSlot(json[i], innerType)) {
+                    return false;
+                }
             }
+            return true;
+        }
+        if (ct === K_UNION) {
+            let discKey = KEY_INDEX.get(UNIONS[ri]);
+            if (discKey === void 0) {
+                return false;
+            }
+            if (typeof json !== 'object' || json === null || Array.isArray(json)) {
+                return false;
+            }
+            let valueId = KEY_DICT.get(json[discKey]);
+            let variants = DISC_UNIONS[ri];
+            let length = variants.length;
+            for (let i = 0; i < length; i += 2) {
+                if (variants[i] === valueId) {
+                    return check(json, variants[i + 1]);
+                }
+            }
+            return false;
+        }
+        if (ct === K_OBJECT) {
+            if (typeof json !== 'object' || json === null || Array.isArray(json)) {
+                return false;
+            }
+            let offset = OBJECTS[ri * 2];
+            let length = OBJECTS[ri * 2 + 1];
+            for (let i = 0; i < length; i++) {
+                let key = KEY_INDEX.get(SLAB[offset + (i * 2)]);
+                if (key === void 0) {
+                    return false;
+                }
+                let type = SLAB[offset + (i * 2) + 1];
+                if (!_checkSlot(json[key], type)) {
+                    return false;
+                }
+            }
+            return true;
         }
         return false;
     }
-    if (typedef & OBJECT) {
-        if (typeof json !== 'object' || json === null || Array.isArray(json)) {
-            return false;
-        }
-        let id = typedef & ID_MASK;
-        let offset = OBJECTS[id * 2];
-        let length = OBJECTS[id * 2 + 1];
-        for (let i = 0; i < length; i++) {
-            let key = KEY_INDEX.get(SLAB[offset + (i * 2)]);
-            if (key === void 0) {
-                return false;
-            }
-            let type = SLAB[offset + (i * 2) + 1];
-            let raw = json[key];
-            if (
-                raw === void 0 ? (type & UNDEFINED) === 0 :
-                    raw === null ? (type & NULL) === 0 :
-                        (type & (ARRAY | UNION | OBJECT)) ? !check(raw, type) :
-                            (type & VALUE) ? !checkValue(raw, type & VALUE) :
-                                true // true as in, truly invalid...
-            ) {
-                return false;
-            }
-        }
-        return true;
-    }
-    let valueMask = typedef & VALUE;
+    let valueMask = typedef & PRIM_MASK;
     if (valueMask === 0) {
         return false;
     }
@@ -474,61 +537,65 @@ export function _conform(json, typedef, reify) {
     if (nc !== -1) {
         return nc === 1;
     }
-    if (typedef & ARRAY) {
-        if (!Array.isArray(json)) {
-            return false;
-        }
-        let elemType = ARRAYS[typedef & ID_MASK];
-        let length = json.length;
-        for (let i = 0; i < length; i++) {
-            if (!_parseSlot(json, i, elemType, reify)) {
+    if (typedef & COMPLEX) {
+        let ki = typedef & KIND_MASK;
+        let ct = KINDS[ki * 2];
+        let ri = KINDS[ki * 2 + 1];
+        if (ct === K_ARRAY) {
+            if (!Array.isArray(json)) {
                 return false;
             }
-        }
-        return true;
-    }
-    if (typedef & UNION) {
-        let id = typedef & ID_MASK;
-        let discKey = KEY_INDEX.get(UNIONS[id]);
-        if (discKey === void 0) {
-            return false;
-        }
-        if (typeof json !== 'object' || json === null || Array.isArray(json)) {
-            return false;
-        }
-        let valueId = KEY_DICT.get(json[discKey]);
-        if (valueId === void 0) {
-            return false;
-        }
-        let variants = DISC_UNIONS[id];
-        let count = variants.length;
-        for (let i = 0; i < count; i += 2) {
-            if (variants[i] === valueId) {
-                return _conform(json, variants[i + 1], reify);
+            let elemType = ARRAYS[ri];
+            let length = json.length;
+            for (let i = 0; i < length; i++) {
+                if (!_parseSlot(json, i, elemType, reify)) {
+                    return false;
+                }
             }
+            return true;
+        }
+        if (ct === K_UNION) {
+            let discKey = KEY_INDEX.get(UNIONS[ri]);
+            if (discKey === void 0) {
+                return false;
+            }
+            if (typeof json !== 'object' || json === null || Array.isArray(json)) {
+                return false;
+            }
+            let valueId = KEY_DICT.get(json[discKey]);
+            if (valueId === void 0) {
+                return false;
+            }
+            let variants = DISC_UNIONS[ri];
+            let count = variants.length;
+            for (let i = 0; i < count; i += 2) {
+                if (variants[i] === valueId) {
+                    return _conform(json, variants[i + 1], reify);
+                }
+            }
+            return false;
+        }
+        if (ct === K_OBJECT) {
+            if (typeof json !== 'object' || Array.isArray(json)) {
+                return false;
+            }
+            let offset = OBJECTS[ri * 2];
+            let length = OBJECTS[ri * 2 + 1];
+            for (let i = 0; i < length; i++) {
+                let key = KEY_INDEX.get(SLAB[offset + (i * 2)]);
+                if (key === void 0) {
+                    return false;
+                }
+                let type = SLAB[offset + (i * 2) + 1];
+                if (!_parseSlot(json, key, type, reify)) {
+                    return false;
+                }
+            }
+            return true;
         }
         return false;
     }
-    if (typedef & OBJECT) {
-        if (typeof json !== 'object' || Array.isArray(json)) {
-            return false;
-        }
-        let id = typedef & ID_MASK;
-        let offset = OBJECTS[id * 2];
-        let length = OBJECTS[id * 2 + 1];
-        for (let i = 0; i < length; i++) {
-            let key = KEY_INDEX.get(SLAB[offset + (i * 2)]);
-            if (key === void 0) {
-                return false;
-            }
-            let type = SLAB[offset + (i * 2) + 1];
-            if (!_parseSlot(json, key, type, reify)) {
-                return false;
-            }
-        }
-        return true;
-    }
-    let valueMask = typedef & VALUE;
+    let valueMask = typedef & PRIM_MASK;
     if (valueMask === 0) {
         return false;
     }
@@ -553,10 +620,10 @@ function _parseSlot(holder, slot, type, reify) {
     if (nc === 1) {
         return true;
     }
-    if (type & (ARRAY | UNION | OBJECT)) {
+    if (type & COMPLEX) {
         return _conform(raw, type, reify);
     }
-    let vm = type & VALUE;
+    let vm = type & PRIM_MASK;
     if (vm !== 0) {
         let result = parseValue(raw, vm, reify);
         if (result === FAIL) return false;
@@ -577,29 +644,35 @@ export function strict(json, typedef, strip) {
         // Primitives, null, undefined — delegate to check.
         return check(json, typedef);
     }
-    if (typedef & ARRAY) {
+    if (!(typedef & COMPLEX)) {
+        return check(json, typedef);
+    }
+    let ki = typedef & KIND_MASK;
+    let ct = KINDS[ki * 2];
+    let ri = KINDS[ki * 2 + 1];
+    if (ct === K_ARRAY) {
         if (!Array.isArray(json)) {
             return false;
         }
-        let innerType = ARRAYS[typedef & ID_MASK];
+        let innerType = ARRAYS[ri];
         let length = json.length;
         for (let i = 0; i < length; i++) {
             let raw = json[i];
             if (raw == null) {
-                if ((innerType & (raw === null ? NULL : UNDEFINED)) === 0) {
+                if ((raw === null ? (innerType & NULLABLE) : (innerType & OPTIONAL)) === 0) {
                     return false;
                 }
                 continue;
             }
             // Recurse into structural elements
-            if (innerType & (ARRAY | UNION | OBJECT)) {
+            if (innerType & COMPLEX) {
                 if (!strict(raw, innerType, strip)) {
                     return false;
                 }
                 continue;
             }
             if (innerType & VALUE) {
-                if (!checkValue(raw, innerType & VALUE)) {
+                if (!checkValue(raw, innerType & PRIM_MASK)) {
                     return false;
                 }
                 continue;
@@ -609,9 +682,8 @@ export function strict(json, typedef, strip) {
         }
         return true;
     }
-    if (typedef & UNION) {
-        let id = typedef & ID_MASK;
-        let discKey = KEY_INDEX.get(UNIONS[id]);
+    if (ct === K_UNION) {
+        let discKey = KEY_INDEX.get(UNIONS[ri]);
         if (discKey === void 0) {
             return false;
         }
@@ -619,7 +691,7 @@ export function strict(json, typedef, strip) {
             return false;
         }
         let valueId = KEY_DICT.get(json[discKey]);
-        let variants = DISC_UNIONS[id];
+        let variants = DISC_UNIONS[ri];
         let length = variants.length;
         for (let i = 0; i < length; i += 2) {
             if (variants[i] === valueId) {
@@ -628,13 +700,12 @@ export function strict(json, typedef, strip) {
         }
         return false;
     }
-    if (typedef & OBJECT) {
+    if (ct === K_OBJECT) {
         if (Array.isArray(json)) {
             return false;
         }
-        let id = typedef & ID_MASK;
-        let offset = OBJECTS[id * 2];
-        let length = OBJECTS[id * 2 + 1];
+        let offset = OBJECTS[ri * 2];
+        let length = OBJECTS[ri * 2 + 1];
         for (let i = 0; i < length; i++) {
             let key = KEY_INDEX.get(SLAB[offset + (i * 2)]);
             if (key === void 0) {
@@ -643,20 +714,20 @@ export function strict(json, typedef, strip) {
             let type = SLAB[offset + (i * 2) + 1];
             let raw = json[key];
             if (raw == null) {
-                if ((type & (raw === null ? NULL : UNDEFINED)) === 0) {
+                if ((raw === null ? (type & NULLABLE) : (type & OPTIONAL)) === 0) {
                     return false;
                 }
                 continue;
             }
             // Recurse into structural fields
-            if (type & (ARRAY | UNION | OBJECT)) {
+            if (type & COMPLEX) {
                 if (!strict(raw, type, strip)) {
                     return false;
                 }
                 continue;
             }
             if (type & VALUE) {
-                if (!checkValue(raw, type & VALUE)) {
+                if (!checkValue(raw, type & PRIM_MASK)) {
                     return false;
                 }
                 continue;
@@ -693,7 +764,7 @@ export function strict(json, typedef, strip) {
         }
         return true;
     }
-    return check(json, typedef);
+    return false;
 }
 
 /** @typedef {{path: string, message: string}} */
@@ -720,77 +791,82 @@ export function diagnose(json, typedef) {
  */
 function _diagnose(json, typedef, path, errors) {
     if (json === void 0) {
-        if (!(typedef & UNDEFINED)) {
+        if (!(typedef & OPTIONAL)) {
             errors.push({ path, message: 'unexpected undefined, expected ' + describeType(typedef) });
         }
         return;
     }
     if (json === null) {
-        if (!(typedef & NULL)) {
+        if (!(typedef & NULLABLE)) {
             errors.push({ path, message: 'unexpected null, expected ' + describeType(typedef) });
         }
         return;
     }
-    if (typedef & ARRAY) {
-        if (!Array.isArray(json)) {
-            errors.push({ path, message: 'expected array, got ' + typeof json });
-            return;
-        }
-        let itemType = ARRAYS[typedef & ID_MASK];
-        let length = json.length;
-        for (let i = 0; i < length; i++) {
-            _diagnose(json[i], itemType, path + '[' + i + ']', errors);
-        }
-        return;
-    }
-    if (typedef & UNION) {
-        let id = typedef & ID_MASK;
-        let discKey = KEY_INDEX.get(UNIONS[id]);
-        if (discKey === void 0) {
-            errors.push({ path, message: '!! CRITICAL ERROR !! Please file an issue at Github' });
-            return;
-        }
-        if (typeof json !== 'object' || json === null || Array.isArray(json)) {
-            errors.push({ path, message: 'expected object for discriminated union, got ' + typeof json });
-            return;
-        }
-        if (!(discKey in json)) {
-            errors.push({ path, message: 'missing discriminator key "' + discKey + '"' });
-            return;
-        }
-        let valueId = KEY_DICT.get(json[discKey]);
-        let arr = DISC_UNIONS[id];
-        let length = arr.length;
-        for (let i = 0; i < length; i += 2) {
-            if (arr[i] === valueId) {
-                _diagnose(json, arr[i + 1], path, errors);
+    if (typedef & COMPLEX) {
+        let ki = typedef & KIND_MASK;
+        let ct = KINDS[ki * 2];
+        let ri = KINDS[ki * 2 + 1];
+        if (ct === K_ARRAY) {
+            if (!Array.isArray(json)) {
+                errors.push({ path, message: 'expected array, got ' + typeof json });
                 return;
             }
-        }
-        errors.push({ path: path + (path ? '.' : '') + discKey, message: 'unknown discriminator value "' + json[discKey] + '"' });
-        return;
-    }
-    if (typedef & OBJECT) {
-        if (typeof json !== 'object' || json === null || Array.isArray(json)) {
-            errors.push({ path, message: 'expected object, got ' + typeof json });
+            let itemType = ARRAYS[ri];
+            let length = json.length;
+            for (let i = 0; i < length; i++) {
+                _diagnose(json[i], itemType, path + '[' + i + ']', errors);
+            }
             return;
         }
-        let id = typedef & ID_MASK;
-        let offset = OBJECTS[id * 2];
-        let length = OBJECTS[id * 2 + 1];
-        for (let i = 0; i < length; i++) {
-            let key = KEY_INDEX.get(SLAB[offset + (i * 2)]);
-            if (key === void 0) {
+        if (ct === K_UNION) {
+            let discKey = KEY_INDEX.get(UNIONS[ri]);
+            if (discKey === void 0) {
                 errors.push({ path, message: '!! CRITICAL ERROR !! Please file an issue at Github' });
                 return;
             }
-            let type = SLAB[offset + (i * 2) + 1];
-            let fieldPath = path + (path ? '.' : '') + key;
-            _diagnose(json[key], type, fieldPath, errors);
+            if (typeof json !== 'object' || json === null || Array.isArray(json)) {
+                errors.push({ path, message: 'expected object for discriminated union, got ' + typeof json });
+                return;
+            }
+            if (!(discKey in json)) {
+                errors.push({ path, message: 'missing discriminator key "' + discKey + '"' });
+                return;
+            }
+            let valueId = KEY_DICT.get(json[discKey]);
+            let arr = DISC_UNIONS[ri];
+            let length = arr.length;
+            for (let i = 0; i < length; i += 2) {
+                if (arr[i] === valueId) {
+                    _diagnose(json, arr[i + 1], path, errors);
+                    return;
+                }
+            }
+            errors.push({ path: path + (path ? '.' : '') + discKey, message: 'unknown discriminator value "' + json[discKey] + '"' });
+            return;
         }
+        if (ct === K_OBJECT) {
+            if (typeof json !== 'object' || json === null || Array.isArray(json)) {
+                errors.push({ path, message: 'expected object, got ' + typeof json });
+                return;
+            }
+            let offset = OBJECTS[ri * 2];
+            let length = OBJECTS[ri * 2 + 1];
+            for (let i = 0; i < length; i++) {
+                let key = KEY_INDEX.get(SLAB[offset + (i * 2)]);
+                if (key === void 0) {
+                    errors.push({ path, message: '!! CRITICAL ERROR !! Please file an issue at Github' });
+                    return;
+                }
+                let type = SLAB[offset + (i * 2) + 1];
+                let fieldPath = path + (path ? '.' : '') + key;
+                _diagnose(json[key], type, fieldPath, errors);
+            }
+            return;
+        }
+        errors.push({ path, message: 'invalid type definition (unknown complex kind)' });
         return;
     }
-    let valueMask = typedef & VALUE;
+    let valueMask = typedef & PRIM_MASK;
     if (valueMask === 0) {
         errors.push({ path, message: 'invalid type definition (no type bits set)' });
         return;

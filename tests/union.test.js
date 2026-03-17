@@ -1,14 +1,14 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    UNDEFINED, NULL, NUMBER, STRING, DATE, UNION,
+    UNDEFINED, NULL, NUMBER, STRING, DATE,
     object, array, union, conform, check
 } from '../dist';
 
 describe('discriminated: schema builder', () => {
-    test('returns a number with DISCRIMINATED bit set', () => {
+    test('returns a complex typedef (bit 31 set)', () => {
         let t = union('kind', { a: object({ kind: STRING }), b: object({ kind: STRING }) });
         expect(typeof t).toBe('number');
-        expect(t & UNION).toBeTruthy();
+        expect(t >>> 31).toBe(1);
     });
 
     test('throws on null variants', () => {
