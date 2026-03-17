@@ -46,16 +46,51 @@ type InferSchema<T extends Schema> = {
 };
 
 // ---------------------------------------------------------------------------
+// Validator Options
+// ---------------------------------------------------------------------------
+
+export interface StringValidators {
+    minLength?: number;
+    maxLength?: number;
+    pattern?: RegExp | string;
+}
+
+export interface NumberValidators {
+    minimum?: number;
+    maximum?: number;
+    exclusiveMinimum?: number;
+    exclusiveMaximum?: number;
+    multipleOf?: number;
+}
+
+export interface ArrayValidators {
+    minItems?: number;
+    maxItems?: number;
+    uniqueItems?: boolean;
+}
+
+export interface ObjectValidators {
+    minProperties?: number;
+    maxProperties?: number;
+}
+
+// ---------------------------------------------------------------------------
 // Schema Builder
 // ---------------------------------------------------------------------------
 
 export interface SchemaBuilder {
-    object<T extends Schema>(definition: T): Complex<InferSchema<T>>;
-    array<T>(itemType: Primitive<T>): Complex<T[]>;
+    object<T extends Schema>(definition: T, opts?: ObjectValidators): Complex<InferSchema<T>>;
+    array<T>(itemType: Primitive<T>, opts?: ArrayValidators): Complex<T[]>;
     union<T extends Record<string, Primitive<any>>, D extends string>(
         discriminator: D,
         variants: T
     ): Complex<{ [K in keyof T]: Infer<T[K]> & { [P in D]: K } }[keyof T]>;
+    string(opts?: StringValidators): Primitive<string>;
+    number(opts?: NumberValidators): Primitive<number>;
+    boolean(): Primitive<boolean>;
+    bigint(): Primitive<bigint>;
+    date(): Primitive<Date>;
+    uri(): Primitive<URL>;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,6 +110,7 @@ export interface Registry {
     conform<T>(data: any, typedef: Primitive<T>, preserve?: boolean): data is T;
     strict<T>(data: any, typedef: Primitive<T>, strip?: boolean): data is T;
     diagnose(data: any, typedef: Primitive<number>): PathError[];
+    validate<T>(data: any, typedef: Type<T>): data is T;
 }
 
 export function registry(): Registry;
@@ -85,17 +121,3 @@ export function registry(): Registry;
 
 export const t: SchemaBuilder;
 export const v: SchemaBuilder;
-
-// Backward-compatible top-level functions (from default instance)
-export function object<T extends Schema>(definition: T): Primitive<InferSchema<T>>;
-export function array<T>(itemType: Primitive<T>): Primitive<T[]>;
-export function union<T extends Record<string, Primitive<any>>, D extends string>(
-    discriminator: D,
-    variants: T
-): Primitive<{ [K in keyof T]: Infer<T[K]> & { [P in D]: K } }[keyof T]>;
-
-export function guard<T>(data: any, typedef: Type<T>): asserts data is T;
-export function check<T>(data: any, typedef: Type<T>): data is T;
-export function conform<T>(data: any, typedef: Type<T>, preserve?: boolean): data is T;
-export function strict<T>(data: any, typedef: Type<T>, strip?: boolean): data is T;
-export function diagnose<T>(data: any, typedef: Type<T>): PathError[];

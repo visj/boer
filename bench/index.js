@@ -3,7 +3,7 @@ import { z } from 'zod';
 import * as v from 'valibot';
 import { Type } from '@sinclair/typebox';
 import Ajv from 'ajv';
-import * as p from '../dist/index.mjs';
+import { t, check, NUMBER, DATE, STRING, BOOLEAN, UNDEFINED, URI, registry } from '../dist/index.mjs';
 
 const rawData = {
     id: 123456,
@@ -25,30 +25,30 @@ const jsonStr = JSON.stringify(rawData);
 
 // --- SCHEMAS ---
 
-const UvdItem = p.union("type", {
-    physical: p.object({ sku: p.STRING, weight: p.NUMBER }),
-    digital: p.object({ sku: p.STRING, downloadUrl: p.URI })
+const UvdItem = t.union("type", {
+    physical: t.object({ type: STRING, sku: STRING, weight: NUMBER }),
+    digital: t.object({ type: STRING, sku: STRING, downloadUrl: URI })
 });
 
-const UvdOrder = p.object({
-    id: p.NUMBER,
-    createdAt: p.DATE,
-    status: p.STRING,
-    customer: p.object({
-        id: p.NUMBER,
-        name: p.STRING,
-        tags: p.array(p.STRING),
-        preferences: p.object({
-            newsletter: p.BOOLEAN,
-            sms: p.BOOLEAN | p.UNDEFINED
+const UvdOrder = t.object({
+    id: NUMBER,
+    createdAt: DATE,
+    status: STRING,
+    customer: t.object({
+        id: NUMBER,
+        name: STRING,
+        tags: t.array(STRING),
+        preferences: t.object({
+            newsletter: BOOLEAN,
+            sms: BOOLEAN | UNDEFINED
         })
     }),
-    items: p.array(UvdItem)
+    items: t.array(UvdItem)
 });
 
 const ZodItem = z.discriminatedUnion("type", [
     z.object({ type: z.literal("physical"), sku: z.string(), weight: z.number() }),
-    z.object({ type: z.literal("digital"), sku: z.string(), downloadUrl: z.string().url() })
+    z.object({ type: z.literal("digital"), sku: z.string(), downloadUrl: z.url() })
 ]);
 
 const ZodOrder = z.object({
@@ -115,6 +115,7 @@ const TypeBoxOrder = Type.Object({
 const ajv = new Ajv({ coerceTypes: false, formats: { uri: true, 'date-time': true } });
 const ajvValidate = ajv.compile(TypeBoxOrder);
 
+const setupRegistry = registry();
 
 group('Building schema (Setup time)', () => {
     bench('Zod', function () {
@@ -141,25 +142,26 @@ group('Building schema (Setup time)', () => {
     });
 
     bench('uvd (In-Place Bitwise)', function () {
-        const UvdItem = p.union("type", {
-            physical: p.object({ sku: p.STRING, weight: p.NUMBER }),
-            digital: p.object({ sku: p.STRING, downloadUrl: p.URI })
+        const { t } = setupRegistry;
+        const UvdItem = t.union("type", {
+            physical: t.object({ type: STRING, sku: STRING, weight: NUMBER }),
+            digital: t.object({ type: STRING, sku: STRING, downloadUrl: URI })
         });
 
-        const UvdOrder = p.object({
-            id: p.NUMBER,
-            createdAt: p.DATE,
-            status: p.STRING,
-            customer: p.object({
-                id: p.NUMBER,
-                name: p.STRING,
-                tags: p.array(p.STRING),
-                preferences: p.object({
-                    newsletter: p.BOOLEAN,
-                    sms: p.BOOLEAN | p.UNDEFINED
+        const UvdOrder = t.object({
+            id: NUMBER,
+            createdAt: DATE,
+            status: STRING,
+            customer: t.object({
+                id: NUMBER,
+                name: STRING,
+                tags: t.array(STRING),
+                preferences: t.object({
+                    newsletter: BOOLEAN,
+                    sms: BOOLEAN | UNDEFINED
                 })
             }),
-            items: p.array(UvdItem)
+            items: t.array(UvdItem)
         });
     });
 
@@ -231,7 +233,7 @@ group('Pure Parsing (Setup Time Excluded)', () => {
     bench('uvd (In-Place Bitwise)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { p.check(data, UvdOrder); }
+            bench(data) { check(data, UvdOrder); }
         };
     });
 
@@ -276,7 +278,7 @@ group('Pure Parsing (Second time after JIT is warmed up)', () => {
     bench('uvd (In-Place Bitwise)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { p.check(data, UvdOrder); }
+            bench(data) { check(data, UvdOrder); }
         };
     });
 });

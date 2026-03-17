@@ -28,10 +28,14 @@ const KIND_MASK = 0x0FFFFFFF;
 // Backward-compatible aliases
 export { NULLABLE as NULL, OPTIONAL as UNDEFINED };
 
-// Complex kind enum (not bit flags)
-const K_OBJECT = 0;
-const K_ARRAY = 1;
-const K_UNION = 2;
+// Complex kind enum (sequential, not bit flags)
+const K_PRIMITIVE = 0;
+const K_OBJECT = 1;
+const K_ARRAY = 2;
+const K_UNION = 3;
+
+const KIND_ENUM_MASK = 0xF;
+const HAS_VALIDATOR = 1 << 4;
 
 export const STRIP = true;
 export const PLAIN = true;
@@ -196,10 +200,10 @@ function registry() {
     /** @type {!Uint16Array | !Uint32Array} */
     let UNIONS = new Uint16Array(UNION_LEN);
 
-    let KIND_LEN = 1024;
-    let KIND_COUNT = 0;
+    let KIND_LEN = 2048;
+    let KIND_PTR = 0;
     /** @type {!Uint32Array} */
-    let KINDS = new Uint32Array(KIND_LEN * 2);
+    let KINDS = new Uint32Array(KIND_LEN);
 
     // --- VOLATILE STORAGE ---
     let V_PTR = 0;
@@ -225,10 +229,18 @@ function registry() {
     /** @type {!Uint16Array | !Uint32Array} */
     let V_UNIONS = new Uint16Array(V_UNION_LEN);
 
-    let V_KIND_LEN = 256;
-    let V_KIND_COUNT = 0;
+    let V_KIND_LEN = 512;
+    let V_KIND_PTR = 0;
     /** @type {!Uint32Array} */
-    let V_KINDS = new Uint32Array(V_KIND_LEN * 2);
+    let V_KINDS = new Uint32Array(V_KIND_LEN);
+
+    // --- VALIDATOR STORAGE (shared — immutable after write) ---
+    let VAL_PTR = 0;
+    let VAL_LEN = 512;
+    /** @type {!Float64Array} */
+    let VALIDATORS = new Float64Array(VAL_LEN);
+    /** @const @type {!Array<!RegExp>} */
+    let REGEX_CACHE = [];
 
     let needsWipe = false;
 
@@ -241,7 +253,7 @@ function registry() {
         V_PTR = 0;
         V_OBJ_COUNT = 0;
         V_ARR_COUNT = 0;
-        V_KIND_COUNT = 0;
+        V_KIND_PTR = 0;
         V_DISC_UNIONS.length = 0;
         needsWipe = false;
     }
@@ -266,27 +278,115 @@ function registry() {
      * @param {boolean} isVolatile
      * @returns {number}
      */
-    function allocKind(complexType, registryIndex, isVolatile) {
+    function allocKind(header, registryIndex, isVolatile, slots) {
+        if (!slots) slots = 2;
         if (isVolatile) {
-            let id = V_KIND_COUNT++;
-            if (id * 2 >= V_KIND_LEN * 2) {
-                let buffer = new Uint32Array((V_KIND_LEN *= 2) * 2);
+            let ptr = V_KIND_PTR;
+            if (ptr + slots > V_KIND_LEN) {
+                let buffer = new Uint32Array(V_KIND_LEN *= 2);
                 buffer.set(V_KINDS);
                 V_KINDS = buffer;
             }
-            V_KINDS[id * 2] = complexType;
-            V_KINDS[id * 2 + 1] = registryIndex;
-            return id;
+            V_KINDS[ptr] = header;
+            V_KINDS[ptr + 1] = registryIndex;
+            V_KIND_PTR += slots;
+            return ptr;
         }
-        let id = KIND_COUNT++;
-        if (id * 2 >= KIND_LEN * 2) {
-            let buffer = new Uint32Array((KIND_LEN *= 2) * 2);
+        let ptr = KIND_PTR;
+        if (ptr + slots > KIND_LEN) {
+            let buffer = new Uint32Array(KIND_LEN *= 2);
             buffer.set(KINDS);
             KINDS = buffer;
         }
-        KINDS[id * 2] = complexType;
-        KINDS[id * 2 + 1] = registryIndex;
-        return id;
+        KINDS[ptr] = header;
+        KINDS[ptr + 1] = registryIndex;
+        KIND_PTR += slots;
+        return ptr;
+    }
+
+    /**
+     * @param {number} vHeader
+     * @param {!Array<number>} payloads
+     * @returns {number}
+     */
+    function allocValidator(vHeader, payloads) {
+        let needed = 1 + payloads.length;
+        if (VAL_PTR + needed > VAL_LEN) {
+            let buffer = new Float64Array(VAL_LEN *= 2);
+            buffer.set(VALIDATORS);
+            VALIDATORS = buffer;
+        }
+        let ptr = VAL_PTR;
+        VALIDATORS[ptr] = vHeader;
+        for (let i = 0; i < payloads.length; i++) {
+            VALIDATORS[ptr + 1 + i] = payloads[i];
+        }
+        VAL_PTR += needed;
+        return ptr;
+    }
+
+    /**
+     * @param {number} primConst
+     * @param {!Object} opts
+     * @returns {{vHeader: number, payloads: !Array<number>}}
+     */
+    function buildValidatorPayload(primConst, opts) {
+        let vHeader = 0;
+        /** @type {!Array<number>} */
+        let payloads = [];
+        if (primConst & STRING) {
+            if (opts.minLength !== void 0) { vHeader |= 1; payloads.push(opts.minLength); }
+            if (opts.maxLength !== void 0) { vHeader |= 2; payloads.push(opts.maxLength); }
+            if (opts.pattern !== void 0) {
+                vHeader |= 4;
+                let idx = REGEX_CACHE.push(opts.pattern instanceof RegExp ? opts.pattern : new RegExp(opts.pattern)) - 1;
+                payloads.push(idx);
+            }
+        } else if (primConst & NUMBER) {
+            if (opts.minimum !== void 0) { vHeader |= 1; payloads.push(opts.minimum); }
+            if (opts.maximum !== void 0) { vHeader |= 2; payloads.push(opts.maximum); }
+            if (opts.exclusiveMinimum !== void 0) { vHeader |= 4; payloads.push(opts.exclusiveMinimum); }
+            if (opts.exclusiveMaximum !== void 0) { vHeader |= 8; payloads.push(opts.exclusiveMaximum); }
+            if (opts.multipleOf !== void 0) { vHeader |= 16; payloads.push(opts.multipleOf); }
+        }
+        return { vHeader, payloads };
+    }
+
+    /**
+     * @param {number} primConst
+     * @returns {function(!Object=): number}
+     */
+    function primitiveImpl(primConst) {
+        return function(opts) {
+            if (opts === void 0) {
+                return primConst;
+            }
+            let { vHeader, payloads } = buildValidatorPayload(primConst, opts);
+            let valIdx = allocValidator(vHeader, payloads);
+            let kindHeader = K_PRIMITIVE | HAS_VALIDATOR | primConst;
+            let ptr = allocKind(kindHeader, valIdx, false, 2);
+            return (COMPLEX | ptr) >>> 0;
+        };
+    }
+
+    /**
+     * @param {number} primConst
+     * @returns {function(!Object=): number}
+     */
+    function volatilePrimitiveImpl(primConst) {
+        return function(opts) {
+            if (opts === void 0) {
+                return primConst;
+            }
+            if (needsWipe) {
+                wipe();
+            }
+            let { vHeader, payloads } = buildValidatorPayload(primConst, opts);
+            let valIdx = allocValidator(vHeader, payloads);
+            let kindHeader = K_PRIMITIVE | HAS_VALIDATOR | primConst;
+            let ptr = allocKind(kindHeader, valIdx, true, 2);
+            return (COMPLEX | VOLATILE | ptr) >>> 0;
+        };
     }
 
     /**
@@ -300,12 +400,22 @@ function registry() {
         if (type & NULLABLE) parts.push('null');
         if (type & COMPLEX) {
             let isV = (type & VOLATILE) !== 0;
-            let ki = type & KIND_MASK;
+            let ptr = type & KIND_MASK;
             let kinds = isV ? V_KINDS : KINDS;
-            let ct = kinds[ki * 2];
-            if (ct === K_ARRAY) parts.push('Array');
-            if (ct === K_UNION) parts.push('Union');
-            if (ct === K_OBJECT) parts.push('Object');
+            let header = kinds[ptr];
+            let ct = header & KIND_ENUM_MASK;
+            if (ct === K_PRIMITIVE) {
+                let primBits = header & VALUE;
+                if (primBits & BOOLEAN) parts.push('boolean');
+                if (primBits & NUMBER) parts.push('number');
+                if (primBits & STRING) parts.push('string');
+                if (primBits & BIGINT) parts.push('bigint');
+                if (primBits & DATE) parts.push('Date');
+                if (primBits & URI) parts.push('URL');
+            }
+            else if (ct === K_ARRAY) parts.push('Array');
+            else if (ct === K_UNION) parts.push('Union');
+            else if (ct === K_OBJECT) parts.push('Object');
         } else {
             if (type & BOOLEAN) parts.push('boolean');
             if (type & NUMBER) parts.push('number');
@@ -325,7 +435,7 @@ function registry() {
      * @param {boolean} isVolatile
      * @returns {number}
      */
-    function objectImpl(definition, isVolatile) {
+    function objectImpl(definition, isVolatile, opts) {
         let keys = Object.keys(definition);
         let count = keys.length;
         let required = count * 2;
@@ -348,7 +458,7 @@ function registry() {
                     let payload = type & PRIM_MASK;
 
                     // If they OR'd a primitive, the payload will be artificially massive
-                    if (payload >= KIND_COUNT) {
+                    if (payload >= KIND_PTR) {
                         throw new Error('Object corruption at key ' + key + '. You cannot use the bitwise OR operator (|) to combine a complex type with a primitive type');
                     }
                 }
@@ -358,6 +468,16 @@ function registry() {
             }
             resolvedKeys[i] = lookup(key);
             resolvedTypes[i] = /** @type {number} */(type) >>> 0;
+        }
+        let hasVal = opts !== void 0;
+        let valIdx = 0;
+        if (hasVal) {
+            let vHeader = 0;
+            /** @type {!Array<number>} */
+            let payloads = [];
+            if (opts.minProperties !== void 0) { vHeader |= 1; payloads.push(opts.minProperties); }
+            if (opts.maxProperties !== void 0) { vHeader |= 2; payloads.push(opts.maxProperties); }
+            valIdx = allocValidator(vHeader, payloads);
         }
         if (isVolatile) {
             if (V_PTR + required > V_SLAB_LEN) {
@@ -387,8 +507,13 @@ function registry() {
             V_OBJECTS[id * 2] = offset;
             V_OBJECTS[id * 2 + 1] = count;
             V_PTR += required;
-            let kindId = allocKind(K_OBJECT, id, true);
-            return (COMPLEX | VOLATILE | kindId) >>> 0;
+            let kindHeader = hasVal ? (K_OBJECT | HAS_VALIDATOR) : K_OBJECT;
+            let slots = hasVal ? 3 : 2;
+            let kindPtr = allocKind(kindHeader, id, true, slots);
+            if (hasVal) {
+                V_KINDS[kindPtr + 2] = valIdx;
+            }
+            return (COMPLEX | VOLATILE | kindPtr) >>> 0;
         }
         // Permanent path
         if (PTR + required > SLAB_LEN) {
@@ -418,8 +543,11 @@ function registry() {
         OBJECTS[id * 2] = offset;
         OBJECTS[id * 2 + 1] = count;
         PTR += required;
-        let kindId = allocKind(K_OBJECT, id, false);
-        return (COMPLEX | kindId) >>> 0;
+        let kindHeader = hasVal ? (K_OBJECT | HAS_VALIDATOR) : K_OBJECT;
+        let slots = hasVal ? 3 : 2;
+        let kindPtr = allocKind(kindHeader, id, false, slots);
+        if (hasVal) KINDS[kindPtr + 2] = valIdx;
+        return (COMPLEX | kindPtr) >>> 0;
     }
 
     /**
@@ -428,9 +556,20 @@ function registry() {
      * @param {boolean} isVolatile
      * @returns {number}
      */
-    function arrayImpl(elemType, isVolatile) {
+    function arrayImpl(elemType, isVolatile, opts) {
         if (typeof elemType !== 'number') {
             throw new Error('array element type must be a number typedef');
+        }
+        let hasVal = opts !== void 0;
+        let valIdx = 0;
+        if (hasVal) {
+            let vHeader = 0;
+            /** @type {!Array<number>} */
+            let payloads = [];
+            if (opts.minItems !== void 0) { vHeader |= 1; payloads.push(opts.minItems); }
+            if (opts.maxItems !== void 0) { vHeader |= 2; payloads.push(opts.maxItems); }
+            if (opts.uniqueItems) { vHeader |= 4; }
+            valIdx = allocValidator(vHeader, payloads);
         }
         if (isVolatile) {
             let index = V_ARR_COUNT++;
@@ -440,8 +579,11 @@ function registry() {
                 V_ARRAYS = buffer;
             }
             V_ARRAYS[index] = elemType >>> 0;
-            let kindId = allocKind(K_ARRAY, index, true);
-            return (COMPLEX | VOLATILE | kindId) >>> 0;
+            let kindHeader = hasVal ? (K_ARRAY | HAS_VALIDATOR) : K_ARRAY;
+            let slots = hasVal ? 3 : 2;
+            let kindPtr = allocKind(kindHeader, index, true, slots);
+            if (hasVal) V_KINDS[kindPtr + 2] = valIdx;
+            return (COMPLEX | VOLATILE | kindPtr) >>> 0;
         }
         let index = ARR_COUNT++;
         if (index >= ARR_LEN) {
@@ -450,8 +592,11 @@ function registry() {
             ARRAYS = buffer;
         }
         ARRAYS[index] = elemType >>> 0;
-        let kindId = allocKind(K_ARRAY, index, false);
-        return (COMPLEX | kindId) >>> 0;
+        let kindHeader = hasVal ? (K_ARRAY | HAS_VALIDATOR) : K_ARRAY;
+        let slots = hasVal ? 3 : 2;
+        let kindPtr = allocKind(kindHeader, index, false, slots);
+        if (hasVal) KINDS[kindPtr + 2] = valIdx;
+        return (COMPLEX | kindPtr) >>> 0;
     }
 
     /**
@@ -585,10 +730,14 @@ function registry() {
         }
         if (typedef & COMPLEX) {
             let isV = (typedef & VOLATILE) !== 0;
-            let ki = typedef & KIND_MASK;
+            let ptr = typedef & KIND_MASK;
             let kinds = isV ? V_KINDS : KINDS;
-            let ct = kinds[ki * 2];
-            let ri = kinds[ki * 2 + 1];
+            let header = kinds[ptr];
+            let ct = header & KIND_ENUM_MASK;
+            let ri = kinds[ptr + 1];
+            if (ct === K_PRIMITIVE) {
+                return checkValue(data, header & VALUE);
+            }
             if (ct === K_ARRAY) {
                 if (!Array.isArray(data)) {
                     return false;
@@ -690,10 +839,15 @@ function registry() {
         }
         if (typedef & COMPLEX) {
             let isV = (typedef & VOLATILE) !== 0;
-            let ki = typedef & KIND_MASK;
+            let ptr = typedef & KIND_MASK;
             let kinds = isV ? V_KINDS : KINDS;
-            let ct = kinds[ki * 2];
-            let ri = kinds[ki * 2 + 1];
+            let header = kinds[ptr];
+            let ct = header & KIND_ENUM_MASK;
+            let ri = kinds[ptr + 1];
+            if (ct === K_PRIMITIVE) {
+                let vm = header & VALUE;
+                return vm !== 0 && parseValue(data, vm, reify) !== FAIL;
+            }
             if (ct === K_ARRAY) {
                 if (!Array.isArray(data)) {
                     return false;
@@ -786,10 +940,14 @@ function registry() {
             return _check(data, typedef);
         }
         let isV = (typedef & VOLATILE) !== 0;
-        let ki = typedef & KIND_MASK;
+        let ptr = typedef & KIND_MASK;
         let kinds = isV ? V_KINDS : KINDS;
-        let ct = kinds[ki * 2];
-        let ri = kinds[ki * 2 + 1];
+        let header = kinds[ptr];
+        let ct = header & KIND_ENUM_MASK;
+        let ri = kinds[ptr + 1];
+        if (ct === K_PRIMITIVE) {
+            return checkValue(data, header & VALUE);
+        }
         if (ct === K_ARRAY) {
             if (!Array.isArray(data)) {
                 return false;
@@ -942,10 +1100,24 @@ function registry() {
         }
         if (typedef & COMPLEX) {
             let isV = (typedef & VOLATILE) !== 0;
-            let ki = typedef & KIND_MASK;
+            let ptr = typedef & KIND_MASK;
             let kinds = isV ? V_KINDS : KINDS;
-            let ct = kinds[ki * 2];
-            let ri = kinds[ki * 2 + 1];
+            let header = kinds[ptr];
+            let ct = header & KIND_ENUM_MASK;
+            let ri = kinds[ptr + 1];
+            if (ct === K_PRIMITIVE) {
+                let primBits = header & VALUE;
+                if (primBits === 0 || !checkValue(data, primBits)) {
+                    /** @type {string} */
+                    let type = typeof data;
+                    if (type === 'object') {
+                        if (data instanceof Date) type = 'Date';
+                        else if (data instanceof URL) type = 'URL';
+                    }
+                    errors.push({ path, message: 'expected ' + describeType(typedef) + ', got ' + type });
+                }
+                return;
+            }
             if (ct === K_ARRAY) {
                 if (!Array.isArray(data)) {
                     errors.push({ path, message: 'expected array, got ' + typeof data });
@@ -1041,26 +1213,199 @@ function registry() {
         return result;
     }
 
-    // --- API OBJECTS ---
+    // --- VALIDATOR RUNNERS ---
 
+    /**
+     * @param {*} value
+     * @param {number} primBits
+     * @param {number} valIdx
+     * @returns {boolean}
+     */
+    function runPrimValidator(value, primBits, valIdx) {
+        let vHeader = VALIDATORS[valIdx] | 0;
+        let p = valIdx + 1;
+        if (primBits & STRING) {
+            if (vHeader & 1) { if ((/** @type {string} */(value)).length < VALIDATORS[p++]) return false; }
+            if (vHeader & 2) { if ((/** @type {string} */(value)).length > VALIDATORS[p++]) return false; }
+            if (vHeader & 4) { if (!REGEX_CACHE[VALIDATORS[p++] | 0].test(/** @type {string} */(value))) return false; }
+            return true;
+        }
+        if (primBits & NUMBER) {
+            if (vHeader & 1) { if (/** @type {number} */(value) < VALIDATORS[p++]) return false; }
+            if (vHeader & 2) { if (/** @type {number} */(value) > VALIDATORS[p++]) return false; }
+            if (vHeader & 4) { if (/** @type {number} */(value) <= VALIDATORS[p++]) return false; }
+            if (vHeader & 8) { if (/** @type {number} */(value) >= VALIDATORS[p++]) return false; }
+            if (vHeader & 16) { if (/** @type {number} */(value) % VALIDATORS[p++] !== 0) return false; }
+            return true;
+        }
+        return true;
+    }
+
+    /**
+     * @param {!Array} data
+     * @param {number} valIdx
+     * @returns {boolean}
+     */
+    function runArrayValidator(data, valIdx) {
+        let vHeader = VALIDATORS[valIdx] | 0;
+        let p = valIdx + 1;
+        if (vHeader & 1) { if (data.length < VALIDATORS[p++]) return false; }
+        if (vHeader & 2) { if (data.length > VALIDATORS[p++]) return false; }
+        if (vHeader & 4) {
+            let set = new Set(data);
+            if (set.size !== data.length) return false;
+        }
+        return true;
+    }
+
+    /**
+     * @param {!Object} data
+     * @param {number} valIdx
+     * @returns {boolean}
+     */
+    function runObjectValidator(data, valIdx) {
+        let vHeader = VALIDATORS[valIdx] | 0;
+        let p = valIdx + 1;
+        let keyCount = Object.keys(data).length;
+        if (vHeader & 1) { if (keyCount < VALIDATORS[p++]) return false; }
+        if (vHeader & 2) { if (keyCount > VALIDATORS[p++]) return false; }
+        return true;
+    }
+
+    /**
+     * @param {*} raw
+     * @param {number} type
+     * @returns {boolean}
+     */
+    function _validateSlot(raw, type) {
+        return (
+            raw === void 0 ? (type & OPTIONAL) !== 0 :
+                raw === null ? (type & NULLABLE) !== 0 :
+                    (type & COMPLEX) ? _validate(raw, type) :
+                        (type & VALUE) ? checkValue(raw, type & PRIM_MASK) :
+                            false
+        );
+    }
+
+    /**
+     * @param {*} data
+     * @param {number} typedef
+     * @returns {boolean}
+     */
+    function _validate(data, typedef) {
+        if (data === void 0) {
+            return (typedef & OPTIONAL) !== 0;
+        }
+        if (data === null) {
+            return (typedef & NULLABLE) !== 0;
+        }
+        if (typedef & COMPLEX) {
+            let isV = (typedef & VOLATILE) !== 0;
+            let ptr = typedef & KIND_MASK;
+            let kinds = isV ? V_KINDS : KINDS;
+            let header = kinds[ptr];
+            let ct = header & KIND_ENUM_MASK;
+            let ri = kinds[ptr + 1];
+            if (ct === K_PRIMITIVE) {
+                let primBits = header & VALUE;
+                if (!checkValue(data, primBits)) return false;
+                if (header & HAS_VALIDATOR) {
+                    return runPrimValidator(data, primBits, ri);
+                }
+                return true;
+            }
+            if (ct === K_ARRAY) {
+                if (!Array.isArray(data)) return false;
+                let arrays = isV ? V_ARRAYS : ARRAYS;
+                let innerType = arrays[ri];
+                let length = data.length;
+                for (let i = 0; i < length; i++) {
+                    if (!_validateSlot(data[i], innerType)) return false;
+                }
+                if (header & HAS_VALIDATOR) {
+                    return runArrayValidator(data, kinds[ptr + 2]);
+                }
+                return true;
+            }
+            if (ct === K_UNION) {
+                let unions = isV ? V_UNIONS : UNIONS;
+                let discUnions = isV ? V_DISC_UNIONS : DISC_UNIONS;
+                let discKey = KEY_INDEX.get(unions[ri]);
+                if (discKey === void 0) return false;
+                if (typeof data !== 'object' || data === null || Array.isArray(data)) return false;
+                let valueId = KEY_DICT.get(data[discKey]);
+                let variants = discUnions[ri];
+                let length = variants.length;
+                for (let i = 0; i < length; i += 2) {
+                    if (variants[i] === valueId) {
+                        return _validate(data, variants[i + 1]);
+                    }
+                }
+                return false;
+            }
+            if (ct === K_OBJECT) {
+                if (typeof data !== 'object' || data === null || Array.isArray(data)) return false;
+                let objects = isV ? V_OBJECTS : OBJECTS;
+                let slab = isV ? V_SLAB : SLAB;
+                let offset = objects[ri * 2];
+                let length = objects[ri * 2 + 1];
+                for (let i = 0; i < length; i++) {
+                    let key = KEY_INDEX.get(slab[offset + (i * 2)]);
+                    if (key === void 0) return false;
+                    let type = slab[offset + (i * 2) + 1];
+                    if (!_validateSlot(data[key], type)) {
+                        return false;
+                    }
+                }
+                if (header & HAS_VALIDATOR) {
+                    return runObjectValidator(data, kinds[ptr + 2]);
+                }
+                return true;
+            }
+            return false;
+        }
+        let valueMask = typedef & PRIM_MASK;
+        if (valueMask === 0) return false;
+        return checkValue(data, valueMask);
+    }
+
+    /**
+     * @param {*} data
+     * @param {number} typedef
+     * @returns {boolean}
+     */
+    function validate(data, typedef) {
+        let result = _validate(data, typedef);
+        needsWipe = true;
+        return result;
+    }
+
+    // --- API OBJECTS ---
+    // 
     const t = {
-        object: (def) => objectImpl(def, false),
-        array: (type) => arrayImpl(type, false),
+        object: (def, opts) => objectImpl(def, false, opts),
+        array: (type, opts) => arrayImpl(type, false, opts),
         union: (disc, variants) => unionImpl(disc, variants, false),
+        string: primitiveImpl(STRING),
+        number: primitiveImpl(NUMBER),
+        boolean: primitiveImpl(BOOLEAN),
+        bigint: primitiveImpl(BIGINT),
+        date: primitiveImpl(DATE),
+        uri: primitiveImpl(URI),
     };
 
     const v = {
-        object: (def) => {
+        object: (def, opts) => {
             if (needsWipe) {
                 wipe();
             }
-            return objectImpl(def, true);
+            return objectImpl(def, true, opts);
         },
-        array: (type) => {
+        array: (type, opts) => {
             if (needsWipe) {
                 wipe();
             }
-            return arrayImpl(type, true);
+            return arrayImpl(type, true, opts);
         },
         union: (disc, variants) => {
             if (needsWipe) {
@@ -1068,9 +1413,15 @@ function registry() {
             }
             return unionImpl(disc, variants, true);
         },
+        string: volatilePrimitiveImpl(STRING),
+        number: volatilePrimitiveImpl(NUMBER),
+        boolean: volatilePrimitiveImpl(BOOLEAN),
+        bigint: volatilePrimitiveImpl(BIGINT),
+        date: volatilePrimitiveImpl(DATE),
+        uri: volatilePrimitiveImpl(URI),
     };
 
-    return { t, v, check, guard, conform, strict, diagnose };
+    return { t, v, check, guard, conform, strict, diagnose, validate };
 }
 
 // ---------------------------------------------------------------------------
@@ -1085,11 +1436,9 @@ export const v = _default.v;
 export { registry };
 
 // Backward compat
-export const object = _default.t.object;
-export const array = _default.t.array;
-export const union = _default.t.union;
 export const check = _default.check;
 export const guard = _default.guard;
 export const conform = _default.conform;
 export const strict = _default.strict;
 export const diagnose = _default.diagnose;
+export const validate = _default.validate;
