@@ -234,13 +234,21 @@ function registry() {
     /** @type {!Uint32Array} */
     let V_KINDS = new Uint32Array(V_KIND_LEN);
 
-    // --- VALIDATOR STORAGE (shared — immutable after write) ---
+    // --- PERMANENT VALIDATOR STORAGE ---
     let VAL_PTR = 0;
     let VAL_LEN = 512;
     /** @type {!Float64Array} */
     let VALIDATORS = new Float64Array(VAL_LEN);
     /** @const @type {!Array<!RegExp>} */
     let REGEX_CACHE = [];
+
+    // --- VOLATILE VALIDATOR STORAGE ---
+    let V_VAL_PTR = 0;
+    let V_VAL_LEN = 128;
+    /** @type {!Float64Array} */
+    let V_VALIDATORS = new Float64Array(V_VAL_LEN);
+    /** @const @type {!Array<!RegExp>} */
+    let V_REGEX_CACHE = [];
 
     let needsWipe = false;
 
@@ -254,7 +262,9 @@ function registry() {
         V_OBJ_COUNT = 0;
         V_ARR_COUNT = 0;
         V_KIND_PTR = 0;
+        V_VAL_PTR = 0;
         V_DISC_UNIONS.length = 0;
+        V_REGEX_CACHE.length = 0;
         needsWipe = false;
     }
 
@@ -275,12 +285,12 @@ function registry() {
     /**
      * @param {number} complexType
      * @param {number} registryIndex
-     * @param {boolean} isVolatile
+     * @param {boolean} volatile
      * @returns {number}
      */
-    function allocKind(header, registryIndex, isVolatile, slots) {
+    function allocKind(header, registryIndex, volatile, slots) {
         if (!slots) slots = 2;
-        if (isVolatile) {
+        if (volatile) {
             let ptr = V_KIND_PTR;
             if (ptr + slots > V_KIND_LEN) {
                 let buffer = new Uint32Array(V_KIND_LEN *= 2);
@@ -307,10 +317,25 @@ function registry() {
     /**
      * @param {number} vHeader
      * @param {!Array<number>} payloads
+     * @param {boolean} volatile
      * @returns {number}
      */
-    function allocValidator(vHeader, payloads) {
+    function allocValidator(vHeader, payloads, volatile) {
         let needed = 1 + payloads.length;
+        if (volatile) {
+            if (V_VAL_PTR + needed > V_VAL_LEN) {
+                let buffer = new Float64Array(V_VAL_LEN *= 2);
+                buffer.set(V_VALIDATORS);
+                V_VALIDATORS = buffer;
+            }
+            let ptr = V_VAL_PTR;
+            V_VALIDATORS[ptr] = vHeader;
+            for (let i = 0; i < payloads.length; i++) {
+                V_VALIDATORS[ptr + 1 + i] = payloads[i];
+            }
+            V_VAL_PTR += needed;
+            return ptr;
+        }
         if (VAL_PTR + needed > VAL_LEN) {
             let buffer = new Float64Array(VAL_LEN *= 2);
             buffer.set(VALIDATORS);
@@ -328,9 +353,10 @@ function registry() {
     /**
      * @param {number} primConst
      * @param {!Object} opts
+     * @param {boolean} volatile
      * @returns {{vHeader: number, payloads: !Array<number>}}
      */
-    function buildValidatorPayload(primConst, opts) {
+    function buildValidatorPayload(primConst, opts, volatile) {
         let vHeader = 0;
         /** @type {!Array<number>} */
         let payloads = [];
@@ -339,7 +365,8 @@ function registry() {
             if (opts.maxLength !== void 0) { vHeader |= 2; payloads.push(opts.maxLength); }
             if (opts.pattern !== void 0) {
                 vHeader |= 4;
-                let idx = REGEX_CACHE.push(opts.pattern instanceof RegExp ? opts.pattern : new RegExp(opts.pattern)) - 1;
+                let cache = volatile ? V_REGEX_CACHE : REGEX_CACHE;
+                let idx = cache.push(opts.pattern instanceof RegExp ? opts.pattern : new RegExp(opts.pattern)) - 1;
                 payloads.push(idx);
             }
         } else if (primConst & NUMBER) {
@@ -361,8 +388,8 @@ function registry() {
             if (opts === void 0) {
                 return primConst;
             }
-            let { vHeader, payloads } = buildValidatorPayload(primConst, opts);
-            let valIdx = allocValidator(vHeader, payloads);
+            let { vHeader, payloads } = buildValidatorPayload(primConst, opts, false);
+            let valIdx = allocValidator(vHeader, payloads, false);
             let kindHeader = K_PRIMITIVE | HAS_VALIDATOR | primConst;
             let ptr = allocKind(kindHeader, valIdx, false, 2);
             return (COMPLEX | ptr) >>> 0;
@@ -381,8 +408,8 @@ function registry() {
             if (needsWipe) {
                 wipe();
             }
-            let { vHeader, payloads } = buildValidatorPayload(primConst, opts);
-            let valIdx = allocValidator(vHeader, payloads);
+            let { vHeader, payloads } = buildValidatorPayload(primConst, opts, true);
+            let valIdx = allocValidator(vHeader, payloads, true);
             let kindHeader = K_PRIMITIVE | HAS_VALIDATOR | primConst;
             let ptr = allocKind(kindHeader, valIdx, true, 2);
             return (COMPLEX | VOLATILE | ptr) >>> 0;
@@ -399,9 +426,9 @@ function registry() {
         if (type & OPTIONAL) parts.push('undefined');
         if (type & NULLABLE) parts.push('null');
         if (type & COMPLEX) {
-            let isV = (type & VOLATILE) !== 0;
+            let volatile = (type & VOLATILE) !== 0;
             let ptr = type & KIND_MASK;
-            let kinds = isV ? V_KINDS : KINDS;
+            let kinds = volatile ? V_KINDS : KINDS;
             let header = kinds[ptr];
             let ct = header & KIND_ENUM_MASK;
             if (ct === K_PRIMITIVE) {
@@ -432,10 +459,10 @@ function registry() {
     /**
      * @throws
      * @param {!Schema} definition
-     * @param {boolean} isVolatile
+     * @param {boolean} volatile
      * @returns {number}
      */
-    function objectImpl(definition, isVolatile, opts) {
+    function objectImpl(definition, volatile, opts) {
         let keys = Object.keys(definition);
         let count = keys.length;
         let required = count * 2;
@@ -464,7 +491,7 @@ function registry() {
                 }
             }
             if (isObject) {
-                type = objectImpl(/** @type {!Schema} */(type), isVolatile);
+                type = objectImpl(/** @type {!Schema} */(type), volatile);
             }
             resolvedKeys[i] = lookup(key);
             resolvedTypes[i] = /** @type {number} */(type) >>> 0;
@@ -477,9 +504,9 @@ function registry() {
             let payloads = [];
             if (opts.minProperties !== void 0) { vHeader |= 1; payloads.push(opts.minProperties); }
             if (opts.maxProperties !== void 0) { vHeader |= 2; payloads.push(opts.maxProperties); }
-            valIdx = allocValidator(vHeader, payloads);
+            valIdx = allocValidator(vHeader, payloads, volatile);
         }
-        if (isVolatile) {
+        if (volatile) {
             if (V_PTR + required > V_SLAB_LEN) {
                 let buffer = new Uint32Array(V_SLAB_LEN *= 2);
                 buffer.set(V_SLAB);
@@ -553,10 +580,10 @@ function registry() {
     /**
      * @throws
      * @param {number} elemType
-     * @param {boolean} isVolatile
+     * @param {boolean} volatile
      * @returns {number}
      */
-    function arrayImpl(elemType, isVolatile, opts) {
+    function arrayImpl(elemType, volatile, opts) {
         if (typeof elemType !== 'number') {
             throw new Error('array element type must be a number typedef');
         }
@@ -569,9 +596,9 @@ function registry() {
             if (opts.minItems !== void 0) { vHeader |= 1; payloads.push(opts.minItems); }
             if (opts.maxItems !== void 0) { vHeader |= 2; payloads.push(opts.maxItems); }
             if (opts.uniqueItems) { vHeader |= 4; }
-            valIdx = allocValidator(vHeader, payloads);
+            valIdx = allocValidator(vHeader, payloads, volatile);
         }
-        if (isVolatile) {
+        if (volatile) {
             let index = V_ARR_COUNT++;
             if (index >= V_ARR_LEN) {
                 let buffer = new Uint32Array(V_ARR_LEN *= 2);
@@ -603,10 +630,10 @@ function registry() {
      * @throws
      * @param {string} discriminator
      * @param {!IObject<string,number>} variants
-     * @param {boolean} isVolatile
+     * @param {boolean} volatile
      * @returns {number}
      */
-    function unionImpl(discriminator, variants, isVolatile) {
+    function unionImpl(discriminator, variants, volatile) {
         if (
             variants === null ||
             typeof variants !== 'object' ||
@@ -628,7 +655,7 @@ function registry() {
             storage[i * 2] = lookup(keys[i]);
             storage[i * 2 + 1] = type >>> 0;
         }
-        if (isVolatile) {
+        if (volatile) {
             let index = V_DISC_UNIONS.push(storage) - 1;
             if (index >= V_UNION_LEN) {
                 let buffer = V_UNION_TYPE === U16 ?
@@ -729,9 +756,9 @@ function registry() {
             return (typedef & NULLABLE) !== 0;
         }
         if (typedef & COMPLEX) {
-            let isV = (typedef & VOLATILE) !== 0;
+            let volatile = (typedef & VOLATILE) !== 0;
             let ptr = typedef & KIND_MASK;
-            let kinds = isV ? V_KINDS : KINDS;
+            let kinds = volatile ? V_KINDS : KINDS;
             let header = kinds[ptr];
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
@@ -742,7 +769,7 @@ function registry() {
                 if (!Array.isArray(data)) {
                     return false;
                 }
-                let arrays = isV ? V_ARRAYS : ARRAYS;
+                let arrays = volatile ? V_ARRAYS : ARRAYS;
                 let innerType = arrays[ri];
                 let length = data.length;
                 for (let i = 0; i < length; i++) {
@@ -753,8 +780,8 @@ function registry() {
                 return true;
             }
             if (ct === K_UNION) {
-                let unions = isV ? V_UNIONS : UNIONS;
-                let discUnions = isV ? V_DISC_UNIONS : DISC_UNIONS;
+                let unions = volatile ? V_UNIONS : UNIONS;
+                let discUnions = volatile ? V_DISC_UNIONS : DISC_UNIONS;
                 let discKey = KEY_INDEX.get(unions[ri]);
                 if (discKey === void 0) {
                     return false;
@@ -776,8 +803,8 @@ function registry() {
                 if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                     return false;
                 }
-                let objects = isV ? V_OBJECTS : OBJECTS;
-                let slab = isV ? V_SLAB : SLAB;
+                let objects = volatile ? V_OBJECTS : OBJECTS;
+                let slab = volatile ? V_SLAB : SLAB;
                 let offset = objects[ri * 2];
                 let length = objects[ri * 2 + 1];
                 for (let i = 0; i < length; i++) {
@@ -838,9 +865,9 @@ function registry() {
             return nc === 1;
         }
         if (typedef & COMPLEX) {
-            let isV = (typedef & VOLATILE) !== 0;
+            let volatile = (typedef & VOLATILE) !== 0;
             let ptr = typedef & KIND_MASK;
-            let kinds = isV ? V_KINDS : KINDS;
+            let kinds = volatile ? V_KINDS : KINDS;
             let header = kinds[ptr];
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
@@ -852,7 +879,7 @@ function registry() {
                 if (!Array.isArray(data)) {
                     return false;
                 }
-                let arrays = isV ? V_ARRAYS : ARRAYS;
+                let arrays = volatile ? V_ARRAYS : ARRAYS;
                 let elemType = arrays[ri];
                 let length = data.length;
                 for (let i = 0; i < length; i++) {
@@ -863,8 +890,8 @@ function registry() {
                 return true;
             }
             if (ct === K_UNION) {
-                let unions = isV ? V_UNIONS : UNIONS;
-                let discUnions = isV ? V_DISC_UNIONS : DISC_UNIONS;
+                let unions = volatile ? V_UNIONS : UNIONS;
+                let discUnions = volatile ? V_DISC_UNIONS : DISC_UNIONS;
                 let discKey = KEY_INDEX.get(unions[ri]);
                 if (discKey === void 0) {
                     return false;
@@ -889,8 +916,8 @@ function registry() {
                 if (typeof data !== 'object' || Array.isArray(data)) {
                     return false;
                 }
-                let objects = isV ? V_OBJECTS : OBJECTS;
-                let slab = isV ? V_SLAB : SLAB;
+                let objects = volatile ? V_OBJECTS : OBJECTS;
+                let slab = volatile ? V_SLAB : SLAB;
                 let offset = objects[ri * 2];
                 let length = objects[ri * 2 + 1];
                 for (let i = 0; i < length; i++) {
@@ -939,9 +966,9 @@ function registry() {
         if (!(typedef & COMPLEX)) {
             return _check(data, typedef);
         }
-        let isV = (typedef & VOLATILE) !== 0;
+        let volatile = (typedef & VOLATILE) !== 0;
         let ptr = typedef & KIND_MASK;
-        let kinds = isV ? V_KINDS : KINDS;
+        let kinds = volatile ? V_KINDS : KINDS;
         let header = kinds[ptr];
         let ct = header & KIND_ENUM_MASK;
         let ri = kinds[ptr + 1];
@@ -952,7 +979,7 @@ function registry() {
             if (!Array.isArray(data)) {
                 return false;
             }
-            let arrays = isV ? V_ARRAYS : ARRAYS;
+            let arrays = volatile ? V_ARRAYS : ARRAYS;
             let innerType = arrays[ri];
             let length = data.length;
             for (let i = 0; i < length; i++) {
@@ -980,8 +1007,8 @@ function registry() {
             return true;
         }
         if (ct === K_UNION) {
-            let unions = isV ? V_UNIONS : UNIONS;
-            let discUnions = isV ? V_DISC_UNIONS : DISC_UNIONS;
+            let unions = volatile ? V_UNIONS : UNIONS;
+            let discUnions = volatile ? V_DISC_UNIONS : DISC_UNIONS;
             let discKey = KEY_INDEX.get(unions[ri]);
             if (discKey === void 0) {
                 return false;
@@ -1003,8 +1030,8 @@ function registry() {
             if (Array.isArray(data)) {
                 return false;
             }
-            let objects = isV ? V_OBJECTS : OBJECTS;
-            let slab = isV ? V_SLAB : SLAB;
+            let objects = volatile ? V_OBJECTS : OBJECTS;
+            let slab = volatile ? V_SLAB : SLAB;
             let offset = objects[ri * 2];
             let length = objects[ri * 2 + 1];
             for (let i = 0; i < length; i++) {
@@ -1099,9 +1126,9 @@ function registry() {
             return;
         }
         if (typedef & COMPLEX) {
-            let isV = (typedef & VOLATILE) !== 0;
+            let volatile = (typedef & VOLATILE) !== 0;
             let ptr = typedef & KIND_MASK;
-            let kinds = isV ? V_KINDS : KINDS;
+            let kinds = volatile ? V_KINDS : KINDS;
             let header = kinds[ptr];
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
@@ -1123,7 +1150,7 @@ function registry() {
                     errors.push({ path, message: 'expected array, got ' + typeof data });
                     return;
                 }
-                let arrays = isV ? V_ARRAYS : ARRAYS;
+                let arrays = volatile ? V_ARRAYS : ARRAYS;
                 let itemType = arrays[ri];
                 let length = data.length;
                 for (let i = 0; i < length; i++) {
@@ -1132,8 +1159,8 @@ function registry() {
                 return;
             }
             if (ct === K_UNION) {
-                let unions = isV ? V_UNIONS : UNIONS;
-                let discUnions = isV ? V_DISC_UNIONS : DISC_UNIONS;
+                let unions = volatile ? V_UNIONS : UNIONS;
+                let discUnions = volatile ? V_DISC_UNIONS : DISC_UNIONS;
                 let discKey = KEY_INDEX.get(unions[ri]);
                 if (discKey === void 0) {
                     errors.push({ path, message: '!! CRITICAL ERROR !! Please file an issue at Github' });
@@ -1164,8 +1191,8 @@ function registry() {
                     errors.push({ path, message: 'expected object, got ' + typeof data });
                     return;
                 }
-                let objects = isV ? V_OBJECTS : OBJECTS;
-                let slab = isV ? V_SLAB : SLAB;
+                let objects = volatile ? V_OBJECTS : OBJECTS;
+                let slab = volatile ? V_SLAB : SLAB;
                 let offset = objects[ri * 2];
                 let length = objects[ri * 2 + 1];
                 for (let i = 0; i < length; i++) {
@@ -1219,23 +1246,28 @@ function registry() {
      * @param {*} value
      * @param {number} primBits
      * @param {number} valIdx
+     * @param {boolean} volatile
      * @returns {boolean}
      */
-    function runPrimValidator(value, primBits, valIdx) {
-        let vHeader = VALIDATORS[valIdx] | 0;
+    function runPrimValidator(value, primBits, valIdx, volatile) {
+        let vals = volatile ? V_VALIDATORS : VALIDATORS;
+        let vHeader = vals[valIdx] | 0;
         let p = valIdx + 1;
         if (primBits & STRING) {
-            if (vHeader & 1) { if ((/** @type {string} */(value)).length < VALIDATORS[p++]) return false; }
-            if (vHeader & 2) { if ((/** @type {string} */(value)).length > VALIDATORS[p++]) return false; }
-            if (vHeader & 4) { if (!REGEX_CACHE[VALIDATORS[p++] | 0].test(/** @type {string} */(value))) return false; }
+            if (vHeader & 1) { if ((/** @type {string} */(value)).length < vals[p++]) return false; }
+            if (vHeader & 2) { if ((/** @type {string} */(value)).length > vals[p++]) return false; }
+            if (vHeader & 4) {
+                let regexCache = volatile ? V_REGEX_CACHE : REGEX_CACHE;
+                if (!regexCache[vals[p++] | 0].test(/** @type {string} */(value))) return false;
+            }
             return true;
         }
         if (primBits & NUMBER) {
-            if (vHeader & 1) { if (/** @type {number} */(value) < VALIDATORS[p++]) return false; }
-            if (vHeader & 2) { if (/** @type {number} */(value) > VALIDATORS[p++]) return false; }
-            if (vHeader & 4) { if (/** @type {number} */(value) <= VALIDATORS[p++]) return false; }
-            if (vHeader & 8) { if (/** @type {number} */(value) >= VALIDATORS[p++]) return false; }
-            if (vHeader & 16) { if (/** @type {number} */(value) % VALIDATORS[p++] !== 0) return false; }
+            if (vHeader & 1) { if (/** @type {number} */(value) < vals[p++]) return false; }
+            if (vHeader & 2) { if (/** @type {number} */(value) > vals[p++]) return false; }
+            if (vHeader & 4) { if (/** @type {number} */(value) <= vals[p++]) return false; }
+            if (vHeader & 8) { if (/** @type {number} */(value) >= vals[p++]) return false; }
+            if (vHeader & 16) { if (/** @type {number} */(value) % vals[p++] !== 0) return false; }
             return true;
         }
         return true;
@@ -1244,13 +1276,15 @@ function registry() {
     /**
      * @param {!Array} data
      * @param {number} valIdx
+     * @param {boolean} volatile
      * @returns {boolean}
      */
-    function runArrayValidator(data, valIdx) {
-        let vHeader = VALIDATORS[valIdx] | 0;
+    function runArrayValidator(data, valIdx, volatile) {
+        let vals = volatile ? V_VALIDATORS : VALIDATORS;
+        let vHeader = vals[valIdx] | 0;
         let p = valIdx + 1;
-        if (vHeader & 1) { if (data.length < VALIDATORS[p++]) return false; }
-        if (vHeader & 2) { if (data.length > VALIDATORS[p++]) return false; }
+        if (vHeader & 1) { if (data.length < vals[p++]) return false; }
+        if (vHeader & 2) { if (data.length > vals[p++]) return false; }
         if (vHeader & 4) {
             let set = new Set(data);
             if (set.size !== data.length) return false;
@@ -1261,14 +1295,16 @@ function registry() {
     /**
      * @param {!Object} data
      * @param {number} valIdx
+     * @param {boolean} volatile
      * @returns {boolean}
      */
-    function runObjectValidator(data, valIdx) {
-        let vHeader = VALIDATORS[valIdx] | 0;
+    function runObjectValidator(data, valIdx, volatile) {
+        let vals = volatile ? V_VALIDATORS : VALIDATORS;
+        let vHeader = vals[valIdx] | 0;
         let p = valIdx + 1;
         let keyCount = Object.keys(data).length;
-        if (vHeader & 1) { if (keyCount < VALIDATORS[p++]) return false; }
-        if (vHeader & 2) { if (keyCount > VALIDATORS[p++]) return false; }
+        if (vHeader & 1) { if (keyCount < vals[p++]) return false; }
+        if (vHeader & 2) { if (keyCount > vals[p++]) return false; }
         return true;
     }
 
@@ -1300,9 +1336,9 @@ function registry() {
             return (typedef & NULLABLE) !== 0;
         }
         if (typedef & COMPLEX) {
-            let isV = (typedef & VOLATILE) !== 0;
+            let volatile = (typedef & VOLATILE) !== 0;
             let ptr = typedef & KIND_MASK;
-            let kinds = isV ? V_KINDS : KINDS;
+            let kinds = volatile ? V_KINDS : KINDS;
             let header = kinds[ptr];
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
@@ -1310,26 +1346,26 @@ function registry() {
                 let primBits = header & VALUE;
                 if (!checkValue(data, primBits)) return false;
                 if (header & HAS_VALIDATOR) {
-                    return runPrimValidator(data, primBits, ri);
+                    return runPrimValidator(data, primBits, ri, volatile);
                 }
                 return true;
             }
             if (ct === K_ARRAY) {
                 if (!Array.isArray(data)) return false;
-                let arrays = isV ? V_ARRAYS : ARRAYS;
+                let arrays = volatile ? V_ARRAYS : ARRAYS;
                 let innerType = arrays[ri];
                 let length = data.length;
                 for (let i = 0; i < length; i++) {
                     if (!_validateSlot(data[i], innerType)) return false;
                 }
                 if (header & HAS_VALIDATOR) {
-                    return runArrayValidator(data, kinds[ptr + 2]);
+                    return runArrayValidator(data, kinds[ptr + 2], volatile);
                 }
                 return true;
             }
             if (ct === K_UNION) {
-                let unions = isV ? V_UNIONS : UNIONS;
-                let discUnions = isV ? V_DISC_UNIONS : DISC_UNIONS;
+                let unions = volatile ? V_UNIONS : UNIONS;
+                let discUnions = volatile ? V_DISC_UNIONS : DISC_UNIONS;
                 let discKey = KEY_INDEX.get(unions[ri]);
                 if (discKey === void 0) return false;
                 if (typeof data !== 'object' || data === null || Array.isArray(data)) return false;
@@ -1345,8 +1381,8 @@ function registry() {
             }
             if (ct === K_OBJECT) {
                 if (typeof data !== 'object' || data === null || Array.isArray(data)) return false;
-                let objects = isV ? V_OBJECTS : OBJECTS;
-                let slab = isV ? V_SLAB : SLAB;
+                let objects = volatile ? V_OBJECTS : OBJECTS;
+                let slab = volatile ? V_SLAB : SLAB;
                 let offset = objects[ri * 2];
                 let length = objects[ri * 2 + 1];
                 for (let i = 0; i < length; i++) {
@@ -1358,7 +1394,7 @@ function registry() {
                     }
                 }
                 if (header & HAS_VALIDATOR) {
-                    return runObjectValidator(data, kinds[ptr + 2]);
+                    return runObjectValidator(data, kinds[ptr + 2], volatile);
                 }
                 return true;
             }
