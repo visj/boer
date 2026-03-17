@@ -101,4 +101,4 @@ export interface PathError {
  * @param json 
  * @param typedef 
  */
-export function diagnose(json: any, typedef: number): PathError[];
+export function diagnose(json: any, typedef: Type<number>): PathError[];

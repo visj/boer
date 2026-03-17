@@ -642,15 +642,8 @@ export function strict(json, typedef, strip) {
             }
             let type = SLAB[offset + (i * 2) + 1];
             let raw = json[key];
-            // null/undefined field check
-            if (raw === void 0) {
-                if ((type & UNDEFINED) === 0) {
-                    return false;
-                }
-                continue;
-            }
-            if (raw === null) {
-                if ((type & NULL) === 0) {
+            if (raw == null) {
+                if ((type & (raw === null ? NULL : UNDEFINED)) === 0) {
                     return false;
                 }
                 continue;
@@ -678,7 +671,6 @@ export function strict(json, typedef, strip) {
             let jsonKey = actualKeys[i];
             let keyId = KEY_DICT.get(jsonKey);
             let isKnown = false;
-
             if (keyId !== void 0) {
                 // The key exists in our dictionary
                 // Do a linear scan, most json objects have less than 100 props,
@@ -739,20 +731,18 @@ function _diagnose(json, typedef, path, errors) {
         }
         return;
     }
-
     if (typedef & ARRAY) {
         if (!Array.isArray(json)) {
             errors.push({ path, message: 'expected array, got ' + typeof json });
             return;
         }
         let itemType = ARRAYS[typedef & ID_MASK];
-        let n = json.length;
-        for (let i = 0; i < n; i++) {
+        let length = json.length;
+        for (let i = 0; i < length; i++) {
             _diagnose(json[i], itemType, path + '[' + i + ']', errors);
         }
         return;
     }
-
     if (typedef & UNION) {
         let id = typedef & ID_MASK;
         let discKey = KEY_INDEX.get(UNIONS[id]);
@@ -770,8 +760,8 @@ function _diagnose(json, typedef, path, errors) {
         }
         let valueId = KEY_DICT.get(json[discKey]);
         let arr = DISC_UNIONS[id];
-        let n = arr.length;
-        for (let i = 0; i < n; i += 2) {
+        let length = arr.length;
+        for (let i = 0; i < length; i += 2) {
             if (arr[i] === valueId) {
                 _diagnose(json, arr[i + 1], path, errors);
                 return;
@@ -780,7 +770,6 @@ function _diagnose(json, typedef, path, errors) {
         errors.push({ path: path + (path ? '.' : '') + discKey, message: 'unknown discriminator value "' + json[discKey] + '"' });
         return;
     }
-
     if (typedef & OBJECT) {
         if (typeof json !== 'object' || json === null || Array.isArray(json)) {
             errors.push({ path, message: 'expected object, got ' + typeof json });
@@ -788,8 +777,8 @@ function _diagnose(json, typedef, path, errors) {
         }
         let id = typedef & ID_MASK;
         let offset = OBJECTS[id * 2];
-        let n = OBJECTS[id * 2 + 1];
-        for (let i = 0; i < n; i++) {
+        let length = OBJECTS[id * 2 + 1];
+        for (let i = 0; i < length; i++) {
             let key = KEY_INDEX.get(SLAB[offset + (i * 2)]);
             if (key === void 0) {
                 errors.push({ path, message: '!! CRITICAL ERROR !! Please file an issue at Github' });
@@ -801,13 +790,11 @@ function _diagnose(json, typedef, path, errors) {
         }
         return;
     }
-
     let valueMask = typedef & VALUE;
     if (valueMask === 0) {
         errors.push({ path, message: 'invalid type definition (no type bits set)' });
         return;
     }
-
     // Primitive or type union — validate the value against all allowed flags
     if (!checkValue(json, valueMask)) {
         /** @type {string} */
