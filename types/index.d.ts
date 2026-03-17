@@ -1,28 +1,42 @@
+declare const complex: unique symbol;
+export type Primitive<T> = number & { readonly __phantom?: T };
+export interface Complex<T> {
+    readonly __phantom?: T;
+    readonly [complex]: never;
+}
 
-export type Type<T> = number & { readonly __phantom?: T };
+export type Infer<T> = T extends Primitive<infer U> ? U : never;
 
-export type Infer<T> = T extends Type<infer U> ? U : never;
+export const NULL: Primitive<null>;
+export const UNDEFINED: Primitive<undefined>;
+export const BOOLEAN: Primitive<boolean>;
+export const NUMBER: Primitive<number>;
+export const STRING: Primitive<string>;
+export const BIGINT: Primitive<bigint>;
+export const DATE: Primitive<Date>;
+export const URI: Primitive<URL>;
 
-export const NULL: Type<null>;
-export const UNDEFINED: Type<undefined>;
-export const BOOLEAN: Type<boolean>;
-export const NUMBER: Type<number>;
-export const STRING: Type<string>;
-export const BIGINT: Type<bigint>;
-export const DATE: Type<Date>;
-export const URI: Type<URL>;
+export const VALUE: Primitive<boolean> | Primitive<number> | Primitive<string> | Primitive<bigint> | Primitive<Date> | Primitive<URL>;
 
-export const VALUE: Type<boolean> | Type<number> | Type<string> | Type<bigint> | Type<Date> | Type<URL>;
+export type Type<T> = Primitive<T> | Complex<T>;
 
-export function nullable<T>(typedef: Type<T>): Type<T | null>;
-export function optional<T>(typedef: Type<T>): Type<T | undefined>;
+export function nullable<T>(typedef: Type<T>): Primitive<T | null>;
+export function optional<T>(typedef: Type<T>): Primitive<T | undefined>;
+
+
+export type Infer<T> =
+    T extends Primitive<infer U> ? U :
+    T extends Complex<infer U> ? U :
+    never;
 
 export interface Schema {
     [key: string]: number | Type<any> | Schema;
 }
 
 type InferSchema<T extends Schema> = {
-    [K in keyof T]: T[K] extends Type<infer U>
+    [K in keyof T]: T[K] extends Primitive<infer U>
+    ? U
+    : T[K] extends ComplexType<infer U>
     ? U
     : T[K] extends number
     ? any // Fallback for raw bitmasks without phantom types
@@ -31,64 +45,21 @@ type InferSchema<T extends Schema> = {
     : never;
 };
 
-/**
- * Defines an object type
- * @param definition An object literal, { key: Type }, can be nested
- */
-export function object<T extends Schema>(
-    definition: T
-): Type<InferSchema<T>>;
+// ---------------------------------------------------------------------------
+// Schema Builder
+// ---------------------------------------------------------------------------
 
-/**
- * Defines an array type
- * @param itemType The type, like Array<Type>
- */
-export function array<T>(
-    itemType: Type<T>
-): Type<T[]>;
-
-/**
- *
- * @param discriminator
- * @param variants
- */
-export function union<T extends Record<string, Type<any>>, D extends string>(
-    discriminator: D,
-    variants: T
-): Type<{ [K in keyof T]: Infer<T[K]> & { [P in D]: K } }[keyof T]>;
-
-/**
- * Asserts that `data` matches the `typedef` schema.
- * Calls `check` internally.
- * Throws an error if validation fails.
- * @param data The data to validate
- * @param typedef The typedef to check against
- * @throws {PathError[]} If the data does not match the schema
- */
-export function guard<T>(data: any, typedef: Type<T>): asserts json is T;
-
-/**
- * Validate that `data` conforms to the schema
- *
- */
-export function check<T>(data: any, typedef: Type<T>): json is T;
-
-/**
- * Parses `data` in-place. Validates JSON-native types strictly,
- * but hydrates rich types (Date, URL, BigInt) from strings/numbers.
- * @param data
- * @param typedef
- */
-export function conform<T>(data: any, typedef: Type<T>): json is T;
-
-/**
- * Parses `json` in-place. Validates JSON-native types strictly,
- * but hydrates rich types (Date, URL, BigInt) from strings/numbers.
- */
-export function strict<T>(json: any, typedef: Type<T>, strip?: boolean): json is T;
+export interface SchemaBuilder {
+    object<T extends Schema>(definition: T): Complex<InferSchema<T>>;
+    array<T>(itemType: Primitive<T>): Complex<T[]>;
+    union<T extends Record<string, Primitive<any>>, D extends string>(
+        discriminator: D,
+        variants: T
+    ): Complex<{ [K in keyof T]: Infer<T[K]> & { [P in D]: K } }[keyof T]>;
+}
 
 // ---------------------------------------------------------------------------
-// ERROR REPORTING
+// Registry
 // ---------------------------------------------------------------------------
 
 export interface PathError {
@@ -96,9 +67,35 @@ export interface PathError {
     message: string;
 }
 
-/**
- *
- * @param json
- * @param typedef
- */
-export function diagnose(json: any, typedef: Type<number>): PathError[];
+export interface Registry {
+    t: SchemaBuilder;
+    v: SchemaBuilder;
+    check<T>(data: any, typedef: Primitive<T>): data is T;
+    guard<T>(data: any, typedef: Primitive<T>): asserts data is T;
+    conform<T>(data: any, typedef: Primitive<T>, preserve?: boolean): data is T;
+    strict<T>(data: any, typedef: Primitive<T>, strip?: boolean): data is T;
+    diagnose(data: any, typedef: Primitive<number>): PathError[];
+}
+
+export function registry(): Registry;
+
+// ---------------------------------------------------------------------------
+// Default instance exports
+// ---------------------------------------------------------------------------
+
+export const t: SchemaBuilder;
+export const v: SchemaBuilder;
+
+// Backward-compatible top-level functions (from default instance)
+export function object<T extends Schema>(definition: T): Primitive<InferSchema<T>>;
+export function array<T>(itemType: Primitive<T>): Primitive<T[]>;
+export function union<T extends Record<string, Primitive<any>>, D extends string>(
+    discriminator: D,
+    variants: T
+): Primitive<{ [K in keyof T]: Infer<T[K]> & { [P in D]: K } }[keyof T]>;
+
+export function guard<T>(data: any, typedef: Type<T>): asserts data is T;
+export function check<T>(data: any, typedef: Type<T>): data is T;
+export function conform<T>(data: any, typedef: Type<T>, preserve?: boolean): data is T;
+export function strict<T>(data: any, typedef: Type<T>, strip?: boolean): data is T;
+export function diagnose<T>(data: any, typedef: Type<T>): PathError[];

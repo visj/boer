@@ -1,48 +1,49 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, BOOLEAN, NUMBER,
-    STRING, BIGINT, DATE, URI, VALUE,
-    object, conform, check
+    STRING, BIGINT, DATE, URI, VALUE, registry
 } from '../';
+
+const { t, check, conform } = registry();
 
 describe('object: schema builder', () => {
     test('returns a number', () => {
-        let t = object({ a: STRING });
-        expect(typeof t).toBe('number');
+        let type = t.object({ a: STRING });
+        expect(typeof type).toBe('number');
     });
 
     test('throws on null field type', () => {
-        expect(() => object({ a: null })).toThrow();
+        expect(() => t.object({ a: null })).toThrow();
     });
 
     test('throws on non-number/non-object field type', () => {
-        expect(() => object({ a: 'string' })).toThrow();
-        expect(() => object({ a: true })).toThrow();
-        expect(() => object({ a: undefined })).toThrow();
+        expect(() => t.object({ a: 'string' })).toThrow();
+        expect(() => t.object({ a: true })).toThrow();
+        expect(() => t.object({ a: undefined })).toThrow();
     });
 
     test('accepts nested object literals (auto-registers)', () => {
-        let t = object({
+        let type = t.object({
             name: STRING,
             address: {
                 street: STRING,
                 city: STRING
             }
         });
-        expect(typeof t).toBe('number');
-        expect(check({ name: 'Alice', address: { street: '123 Main', city: 'NY' } }, t)).toBe(true);
+        expect(typeof type).toBe('number');
+        expect(check({ name: 'Alice', address: { street: '123 Main', city: 'NY' } }, type)).toBe(true);
     });
 
     test('accepts pre-registered object types', () => {
-        let Address = object({ street: STRING, city: STRING });
-        let Person = object({ name: STRING, address: Address });
+        let Address = t.object({ street: STRING, city: STRING });
+        let Person = t.object({ name: STRING, address: Address });
         expect(check({ name: 'Bob', address: { street: '456 Oak', city: 'LA' } }, Person)).toBe(true);
     });
 });
 
 describe('validate: objects', () => {
     test('basic object with all field types', () => {
-        let schema = object({
+        let schema = t.object({
             s: STRING,
             n: NUMBER,
             b: BOOLEAN
@@ -52,7 +53,7 @@ describe('validate: objects', () => {
     });
 
     test('rejects non-objects', () => {
-        let schema = object({ a: STRING });
+        let schema = t.object({ a: STRING });
         expect(check('string', schema)).toBe(false);
         expect(check(42, schema)).toBe(false);
         expect(check(true, schema)).toBe(false);
@@ -62,35 +63,35 @@ describe('validate: objects', () => {
     });
 
     test('missing fields fail without UNDEFINED flag', () => {
-        let schema = object({ a: STRING, b: NUMBER });
+        let schema = t.object({ a: STRING, b: NUMBER });
         expect(check({ a: 'hello' }, schema)).toBe(false);
         expect(check({}, schema)).toBe(false);
     });
 
     test('missing fields pass with UNDEFINED flag', () => {
-        let schema = object({ a: STRING, b: NUMBER | UNDEFINED });
+        let schema = t.object({ a: STRING, b: NUMBER | UNDEFINED });
         expect(check({ a: 'hello' }, schema)).toBe(true);
         expect(check({ a: 'hello', b: 42 }, schema)).toBe(true);
     });
 
     test('null fields fail without NULL flag', () => {
-        let schema = object({ a: STRING, b: NUMBER });
+        let schema = t.object({ a: STRING, b: NUMBER });
         expect(check({ a: 'hello', b: null }, schema)).toBe(false);
     });
 
     test('null fields pass with NULL flag', () => {
-        let schema = object({ a: STRING, b: NUMBER | NULL });
+        let schema = t.object({ a: STRING, b: NUMBER | NULL });
         expect(check({ a: 'hello', b: null }, schema)).toBe(true);
         expect(check({ a: 'hello', b: 42 }, schema)).toBe(true);
     });
 
     test('extra fields are silently ignored', () => {
-        let schema = object({ a: STRING });
+        let schema = t.object({ a: STRING });
         expect(check({ a: 'hello', extra: 999, another: true }, schema)).toBe(true);
     });
 
     test('nested objects inline', () => {
-        let schema = object({
+        let schema = t.object({
             user: {
                 name: STRING,
                 age: NUMBER
@@ -103,7 +104,7 @@ describe('validate: objects', () => {
     });
 
     test('deeply nested objects inline', () => {
-        let schema = object({
+        let schema = t.object({
             a: {
                 b: {
                     c: {
@@ -118,8 +119,8 @@ describe('validate: objects', () => {
     });
 
     test('object with nullable nested object', () => {
-        let Inner = object({ x: NUMBER });
-        let Outer = object({ inner: Inner | NULL });
+        let Inner = t.object({ x: NUMBER });
+        let Outer = t.object({ inner: Inner | NULL });
         // Inner is a complex typedef (COMPLEX bit set + KIND index).
         // NULL sets the NULLABLE bit (1 << 30). OR-ing them together works
         // because NULLABLE is independent of COMPLEX and the KIND index.
@@ -130,8 +131,8 @@ describe('validate: objects', () => {
     });
 
     test('nullable registered object field', () => {
-        let Point = object({ x: NUMBER, y: NUMBER });
-        let Schema = object({ origin: Point | NULL | UNDEFINED });
+        let Point = t.object({ x: NUMBER, y: NUMBER });
+        let Schema = t.object({ origin: Point | NULL | UNDEFINED });
         expect(check({ origin: { x: 1, y: 2 } }, Schema)).toBe(true);
         expect(check({ origin: null }, Schema)).toBe(true);
         expect(check({}, Schema)).toBe(true);
@@ -140,7 +141,7 @@ describe('validate: objects', () => {
     });
 
     test('object with type-union fields', () => {
-        let schema = object({
+        let schema = t.object({
             id: STRING | NUMBER,
             label: STRING | NULL,
             active: BOOLEAN | UNDEFINED
@@ -156,48 +157,48 @@ describe('validate: objects', () => {
 
 describe('parse: objects', () => {
     test('basic parse leaves native types alone', () => {
-        let schema = object({ s: STRING, n: NUMBER, b: BOOLEAN });
+        let schema = t.object({ s: STRING, n: NUMBER, b: BOOLEAN });
         let obj = { s: 'hello', n: 42, b: true };
         expect(conform(obj, schema)).toBe(true);
         expect(obj).toEqual({ s: 'hello', n: 42, b: true });
     });
 
     test('parse casts Date fields from strings', () => {
-        let schema = object({ created: DATE });
+        let schema = t.object({ created: DATE });
         let obj = { created: '2024-06-15T12:00:00Z' };
         expect(conform(obj, schema)).toBe(true);
         expect(obj.created).toBeInstanceOf(Date);
     });
 
     test('parse casts URI fields from strings', () => {
-        let schema = object({ url: URI });
+        let schema = t.object({ url: URI });
         let obj = { url: 'https://vilhelm.se/page' };
         expect(conform(obj, schema)).toBe(true);
         expect(obj.url).toBeInstanceOf(URL);
     });
 
     test('parse casts BigInt fields from strings', () => {
-        let schema = object({ big: BIGINT });
+        let schema = t.object({ big: BIGINT });
         let obj = { big: '99999999999999999' };
         expect(conform(obj, schema)).toBe(true);
         expect(typeof obj.big).toBe('bigint');
     });
 
     test('parse rejects wrong native types', () => {
-        let schema = object({ s: STRING, n: NUMBER });
+        let schema = t.object({ s: STRING, n: NUMBER });
         expect(conform({ s: 42, n: 42 }, schema)).toBe(false);
         expect(conform({ s: 'ok', n: '42' }, schema)).toBe(false);
     });
 
     test('parse handles nullable fields', () => {
-        let schema = object({ a: STRING, b: NUMBER | NULL });
+        let schema = t.object({ a: STRING, b: NUMBER | NULL });
         expect(conform({ a: 'hello', b: null }, schema)).toBe(true);
         expect(conform({ a: 'hello', b: 42 }, schema)).toBe(true);
         expect(conform({ a: 'hello', b: 'nope' }, schema)).toBe(false);
     });
 
     test('parse nested object with rich types', () => {
-        let schema = object({
+        let schema = t.object({
             meta: {
                 created: DATE,
                 url: URI | NULL
@@ -212,7 +213,7 @@ describe('parse: objects', () => {
 
 describe('object: field with all types allowed', () => {
     test('VALUE | NULL | UNDEFINED accepts everything', () => {
-        let schema = object({ any: VALUE | NULL | UNDEFINED });
+        let schema = t.object({ any: VALUE | NULL | UNDEFINED });
         expect(check({ any: 'string' }, schema)).toBe(true);
         expect(check({ any: 42 }, schema)).toBe(true);
         expect(check({ any: true }, schema)).toBe(true);
@@ -230,7 +231,7 @@ describe('object: field with all types allowed', () => {
 
 describe('object: empty object', () => {
     test('empty schema matches any object', () => {
-        let schema = object({});
+        let schema = t.object({});
         expect(check({}, schema)).toBe(true);
         expect(check({ extra: true }, schema)).toBe(true);
         expect(check(null, schema)).toBe(false);
@@ -248,7 +249,7 @@ describe('object: many fields', () => {
             def['field' + i] = NUMBER;
             obj['field' + i] = i;
         }
-        let schema = object(def);
+        let schema = t.object(def);
         expect(check(obj, schema)).toBe(true);
         //@ts-ignore
         obj.field10 = 'wrong';

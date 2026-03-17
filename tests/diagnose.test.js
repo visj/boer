@@ -1,9 +1,10 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, BOOLEAN, NUMBER,
-    STRING, BIGINT, DATE, URI,
-    object, array, union, diagnose
-} from '../';
+    STRING, BIGINT, DATE, URI, registry
+} from '../dist';
+
+const { t, diagnose } = registry();
 
 describe('explain: primitives', () => {
     test('no errors for matching type', () => {
@@ -68,12 +69,12 @@ describe('explain: type unions', () => {
 
 describe('explain: objects', () => {
     test('no errors for valid object', () => {
-        let schema = object({ name: STRING, age: NUMBER });
+        let schema = t.object({ name: STRING, age: NUMBER });
         expect(diagnose({ name: 'Alice', age: 30 }, schema)).toEqual([]);
     });
 
     test('error with field path for wrong type', () => {
-        let schema = object({ name: STRING, age: NUMBER });
+        let schema = t.object({ name: STRING, age: NUMBER });
         let errs = diagnose({ name: 'Alice', age: '30' }, schema);
         expect(errs.length).toBe(1);
         expect(errs[0].path).toBe('age');
@@ -81,14 +82,14 @@ describe('explain: objects', () => {
     });
 
     test('multiple field errors', () => {
-        let schema = object({ a: STRING, b: NUMBER, c: BOOLEAN });
+        let schema = t.object({ a: STRING, b: NUMBER, c: BOOLEAN });
         let errs = diagnose({ a: 42, b: 'wrong', c: 'wrong' }, schema);
         expect(errs.length).toBe(3);
         expect(errs.map(e => e.path).sort()).toEqual(['a', 'b', 'c']);
     });
 
     test('error for null field without NULL', () => {
-        let schema = object({ name: STRING });
+        let schema = t.object({ name: STRING });
         let errs = diagnose({ name: null }, schema);
         expect(errs.length).toBe(1);
         expect(errs[0].path).toBe('name');
@@ -96,7 +97,7 @@ describe('explain: objects', () => {
     });
 
     test('error for missing field without UNDEFINED', () => {
-        let schema = object({ name: STRING, age: NUMBER });
+        let schema = t.object({ name: STRING, age: NUMBER });
         let errs = diagnose({ name: 'Alice' }, schema);
         expect(errs.length).toBe(1);
         expect(errs[0].path).toBe('age');
@@ -104,31 +105,31 @@ describe('explain: objects', () => {
     });
 
     test('no error for null field with NULL', () => {
-        let schema = object({ name: STRING | NULL });
+        let schema = t.object({ name: STRING | NULL });
         expect(diagnose({ name: null }, schema)).toEqual([]);
     });
 
     test('no error for missing field with UNDEFINED', () => {
-        let schema = object({ name: STRING | UNDEFINED });
+        let schema = t.object({ name: STRING | UNDEFINED });
         expect(diagnose({}, schema)).toEqual([]);
     });
 
     test('error for non-object', () => {
-        let schema = object({ a: STRING });
+        let schema = t.object({ a: STRING });
         let errs = diagnose('string', schema);
         expect(errs.length).toBe(1);
         expect(errs[0].message).toContain('object');
     });
 
     test('error for array instead of object', () => {
-        let schema = object({ a: STRING });
+        let schema = t.object({ a: STRING });
         let errs = diagnose([], schema);
         expect(errs.length).toBe(1);
         expect(errs[0].message).toContain('object');
     });
 
     test('nested object errors have dot paths', () => {
-        let schema = object({
+        let schema = t.object({
             user: {
                 name: STRING,
                 address: {
@@ -142,7 +143,7 @@ describe('explain: objects', () => {
     });
 
     test('deeply nested missing field', () => {
-        let schema = object({ a: { b: { c: NUMBER } } });
+        let schema = t.object({ a: { b: { c: NUMBER } } });
         let errs = diagnose({ a: { b: {} } }, schema);
         expect(errs.length).toBe(1);
         expect(errs[0].path).toBe('a.b.c');
@@ -152,70 +153,70 @@ describe('explain: objects', () => {
 
 describe('explain: arrays', () => {
     test('no errors for valid array', () => {
-        expect(diagnose([1, 2, 3], array(NUMBER))).toEqual([]);
+        expect(diagnose([1, 2, 3], t.array(NUMBER))).toEqual([]);
     });
 
     test('error for non-array', () => {
-        let errs = diagnose('not-array', array(NUMBER));
+        let errs = diagnose('not-array', t.array(NUMBER));
         expect(errs.length).toBe(1);
         expect(errs[0].message).toContain('array');
     });
 
     test('error for null array without NULL', () => {
-        let errs = diagnose(null, array(NUMBER));
+        let errs = diagnose(null, t.array(NUMBER));
         expect(errs.length).toBe(1);
         expect(errs[0].message).toContain('null');
     });
 
     test('no error for null array with NULL', () => {
-        expect(diagnose(null, array(NUMBER) | NULL)).toEqual([]);
+        expect(diagnose(null, t.array(NUMBER) | NULL)).toEqual([]);
     });
 
     test('element error has bracket path', () => {
-        let errs = diagnose([1, 'two', 3], array(NUMBER));
+        let errs = diagnose([1, 'two', 3], t.array(NUMBER));
         expect(errs.length).toBe(1);
         expect(errs[0].path).toBe('[1]');
     });
 
     test('multiple element errors', () => {
-        let errs = diagnose([1, 'two', true], array(NUMBER));
+        let errs = diagnose([1, 'two', true], t.array(NUMBER));
         expect(errs.length).toBe(2);
         expect(errs[0].path).toBe('[1]');
         expect(errs[1].path).toBe('[2]');
     });
 
     test('null element error when element not nullable', () => {
-        let errs = diagnose([1, null, 3], array(NUMBER));
+        let errs = diagnose([1, null, 3], t.array(NUMBER));
         expect(errs.length).toBe(1);
         expect(errs[0].path).toBe('[1]');
         expect(errs[0].message).toContain('null');
     });
 
     test('no error for null element when nullable', () => {
-        expect(diagnose([1, null, 3], array(NUMBER | NULL))).toEqual([]);
+        expect(diagnose([1, null, 3], t.array(NUMBER | NULL))).toEqual([]);
     });
 
     test('nested array errors have nested paths', () => {
-        let errs = diagnose([[1, 2], [3, 'four']], array(array(NUMBER)));
+        let errs = diagnose([[1, 2], [3, 'four']], t.array(t.array(NUMBER)));
         expect(errs.length).toBe(1);
         expect(errs[0].path).toBe('[1][1]');
     });
 
     test('array of objects errors have combined paths', () => {
-        let Item = object({ name: STRING, val: NUMBER });
+        let Item = t.object({ name: STRING, val: NUMBER });
         let errs = diagnose([
             { name: 'ok', val: 1 },
             { name: 'bad', val: 'wrong' }
-        ], array(Item));
+        ], t.array(Item));
         expect(errs.length).toBe(1);
         expect(errs[0].path).toBe('[1].val');
     });
 });
 
 describe('explain: unions', () => {
-    let ShapeUnion = union('type', {
-        circle: object({ type: STRING, radius: NUMBER }),
-        rect: object({ type: STRING, w: NUMBER, h: NUMBER })
+    let ShapeUnion = t.union('type', {
+        circle: t.object({ type: STRING, radius: NUMBER }),
+        rect: t.object({ type: STRING, w: NUMBER, h: NUMBER })
     });
 
     test('no errors for valid variant', () => {
@@ -261,7 +262,7 @@ describe('explain: unions', () => {
             { type: 'circle', radius: 5 },
             { type: 'circle', radius: 'wrong' },
             { type: 'unknown' }
-        ], array(ShapeUnion));
+        ], t.array(ShapeUnion));
         expect(errs.length).toBe(2);
         // First error: wrong field type in [1]
         expect(errs[0].path).toBe('[1].radius');
@@ -272,10 +273,10 @@ describe('explain: unions', () => {
 
 describe('explain: complex nested scenarios', () => {
     test('deeply nested object in array in object', () => {
-        let Schema = object({
-            users: array(object({
+        let Schema = t.object({
+            users: t.array(t.object({
                 name: STRING,
-                tags: array(STRING)
+                tags: t.array(STRING)
             }))
         });
         let errs = diagnose({
@@ -289,13 +290,13 @@ describe('explain: complex nested scenarios', () => {
     });
 
     test('nullable array of nullable union objects', () => {
-        let MsgUnion = union('kind', {
-            text: object({ kind: STRING, body: STRING }),
-            img: object({ kind: STRING, src: STRING })
+        let MsgUnion = t.union('kind', {
+            text: t.object({ kind: STRING, body: STRING }),
+            img: t.object({ kind: STRING, src: STRING })
         });
 
-        let Schema = object({
-            messages: array(MsgUnion | NULL) | NULL
+        let Schema = t.object({
+            messages: t.array(MsgUnion | NULL) | NULL
         });
 
         // Valid
@@ -309,10 +310,10 @@ describe('explain: complex nested scenarios', () => {
     });
 
     test('error count accumulates across multiple fields and elements', () => {
-        let Schema = object({
+        let Schema = t.object({
             a: STRING,
             b: NUMBER,
-            c: array(BOOLEAN)
+            c: t.array(BOOLEAN)
         });
         let errs = diagnose({ a: 42, b: 'wrong', c: [true, 'x', 'y'] }, Schema);
         expect(errs.length).toBe(4); // a wrong, b wrong, c[1] wrong, c[2] wrong

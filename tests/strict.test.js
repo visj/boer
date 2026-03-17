@@ -1,11 +1,12 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    UNDEFINED, NULL, NUMBER, STRING,
-    object, array, union, strict
+    UNDEFINED, NULL, NUMBER, STRING, registry
 } from '../';
 
+const { t, strict } = registry();
+
 describe('strict reject: flat objects', () => {
-    let Schema = object({ name: STRING, age: NUMBER });
+    let Schema = t.object({ name: STRING, age: NUMBER });
 
     test('exact match passes', () => {
         expect(strict({ name: 'Alice', age: 30 }, Schema)).toBe(true);
@@ -40,7 +41,7 @@ describe('strict reject: flat objects', () => {
 });
 
 describe('strict reject: nullable/optional fields', () => {
-    let Schema = object({
+    let Schema = t.object({
         required: STRING,
         nullable: STRING | NULL,
         optional: STRING | UNDEFINED,
@@ -73,10 +74,10 @@ describe('strict reject: nullable/optional fields', () => {
 });
 
 describe('strict reject: nested objects', () => {
-    let Schema = object({
-        user: object({
+    let Schema = t.object({
+        user: t.object({
             name: STRING,
-            address: object({
+            address: t.object({
                 city: STRING
             })
         })
@@ -101,27 +102,27 @@ describe('strict reject: nested objects', () => {
 
 describe('strict reject: arrays', () => {
     test('array of primitives (no object checking needed)', () => {
-        let Schema = object({ tags: array(STRING) });
+        let Schema = t.object({ tags: t.array(STRING) });
         expect(strict({ tags: ['a', 'b'] }, Schema)).toBe(true);
         expect(strict({ tags: ['a', 'b'], extra: 1 }, Schema)).toBe(false);
     });
 
     test('array of objects — checks each element', () => {
-        let Item = object({ id: NUMBER, name: STRING });
-        let Schema = object({ items: array(Item) });
+        let Item = t.object({ id: NUMBER, name: STRING });
+        let Schema = t.object({ items: t.array(Item) });
         expect(strict({ items: [{ id: 1, name: 'A' }] }, Schema)).toBe(true);
         expect(strict({ items: [{ id: 1, name: 'A', extra: true }] }, Schema)).toBe(false);
     });
 
     test('nested array of objects', () => {
-        let Cell = object({ v: NUMBER });
-        let Schema = object({ grid: array(array(Cell)) });
+        let Cell = t.object({ v: NUMBER });
+        let Schema = t.object({ grid: t.array(t.array(Cell)) });
         expect(strict({ grid: [[{ v: 1 }, { v: 2 }]] }, Schema)).toBe(true);
         expect(strict({ grid: [[{ v: 1, x: 'y' }]] }, Schema)).toBe(false);
     });
 
     test('nullable array — null passes', () => {
-        let Schema = object({ data: array(NUMBER) | NULL });
+        let Schema = t.object({ data: t.array(NUMBER) | NULL });
         expect(strict({ data: null }, Schema)).toBe(true);
         expect(strict({ data: [1, 2] }, Schema)).toBe(true);
         expect(strict({ data: null, extra: 1 }, Schema)).toBe(false);
@@ -129,36 +130,36 @@ describe('strict reject: arrays', () => {
 });
 
 describe('strict reject: discriminated unions', () => {
-    let ShapeD = union('kind', {
-        circle: object({ kind: STRING, radius: NUMBER }),
-        rect: object({ kind: STRING, w: NUMBER, h: NUMBER })
+    let ShapeD = t.union('kind', {
+        circle: t.object({ kind: STRING, radius: NUMBER }),
+        rect: t.object({ kind: STRING, w: NUMBER, h: NUMBER })
     });
 
     test('valid variant exact match passes', () => {
-        let Schema = object({ shape: ShapeD });
+        let Schema = t.object({ shape: ShapeD });
         expect(strict({ shape: { kind: 'circle', radius: 5 } }, Schema)).toBe(true);
         expect(strict({ shape: { kind: 'rect', w: 10, h: 20 } }, Schema)).toBe(true);
     });
 
     test('extra on variant fails', () => {
-        let Schema = object({ shape: ShapeD });
+        let Schema = t.object({ shape: ShapeD });
         expect(strict({ shape: { kind: 'circle', radius: 5, color: 'red' } }, Schema)).toBe(false);
     });
 
     test('extra on parent fails', () => {
-        let Schema = object({ shape: ShapeD });
+        let Schema = t.object({ shape: ShapeD });
         expect(strict({ shape: { kind: 'circle', radius: 5 }, extra: 1 }, Schema)).toBe(false);
     });
 
     test('nullable discriminated union', () => {
-        let Schema = object({ shape: ShapeD | NULL });
+        let Schema = t.object({ shape: ShapeD | NULL });
         expect(strict({ shape: null }, Schema)).toBe(true);
         expect(strict({ shape: { kind: 'circle', radius: 5 } }, Schema)).toBe(true);
         expect(strict({ shape: { kind: 'circle', radius: 5, x: 1 } }, Schema)).toBe(false);
     });
 
     test('array of discriminated unions', () => {
-        let Schema = object({ shapes: array(ShapeD) });
+        let Schema = t.object({ shapes: t.array(ShapeD) });
         expect(strict({
             shapes: [
                 { kind: 'circle', radius: 5 },
@@ -175,12 +176,12 @@ describe('strict reject: discriminated unions', () => {
 
 describe('strict reject: top-level types', () => {
     test('top-level null for nullable object', () => {
-        let Schema = object({ a: STRING }) | NULL;
+        let Schema = t.object({ a: STRING }) | NULL;
         expect(strict(null, Schema)).toBe(true);
     });
 
     test('top-level undefined for optional object', () => {
-        let Schema = object({ a: STRING }) | UNDEFINED;
+        let Schema = t.object({ a: STRING }) | UNDEFINED;
         expect(strict(undefined, Schema)).toBe(true);
     });
 
@@ -190,13 +191,13 @@ describe('strict reject: top-level types', () => {
     });
 
     test('top-level array', () => {
-        expect(strict([1, 2], array(NUMBER))).toBe(true);
-        expect(strict([1, 'x'], array(NUMBER))).toBe(false);
+        expect(strict([1, 2], t.array(NUMBER))).toBe(true);
+        expect(strict([1, 'x'], t.array(NUMBER))).toBe(false);
     });
 });
 
 describe('strict reject: empty object schema', () => {
-    let Empty = object({});
+    let Empty = t.object({});
 
     test('empty input passes', () => {
         expect(strict({}, Empty)).toBe(true);
@@ -208,7 +209,7 @@ describe('strict reject: empty object schema', () => {
 });
 
 describe('strict strip: flat objects', () => {
-    let Schema = object({ name: STRING, age: NUMBER });
+    let Schema = t.object({ name: STRING, age: NUMBER });
 
     test('strips extra properties and returns true', () => {
         let obj = { name: 'Alice', age: 30, extra1: true, extra2: 'bye' };
@@ -248,10 +249,10 @@ describe('strict strip: flat objects', () => {
 });
 
 describe('strict strip: nested objects', () => {
-    let Schema = object({
-        user: object({
+    let Schema = t.object({
+        user: t.object({
             name: STRING,
-            address: object({
+            address: t.object({
                 city: STRING
             })
         })
@@ -282,8 +283,8 @@ describe('strict strip: nested objects', () => {
 });
 
 describe('strict strip: arrays of objects', () => {
-    let Item = object({ id: NUMBER });
-    let Schema = object({ items: array(Item) });
+    let Item = t.object({ id: NUMBER });
+    let Schema = t.object({ items: t.array(Item) });
 
     test('strips extras from each array element', () => {
         let obj = {
@@ -308,11 +309,11 @@ describe('strict strip: arrays of objects', () => {
 });
 
 describe('strict strip: discriminated unions', () => {
-    let ShapeD = union('kind', {
-        circle: object({ kind: STRING, radius: NUMBER }),
-        rect: object({ kind: STRING, w: NUMBER, h: NUMBER })
+    let ShapeD = t.union('kind', {
+        circle: t.object({ kind: STRING, radius: NUMBER }),
+        rect: t.object({ kind: STRING, w: NUMBER, h: NUMBER })
     });
-    let Schema = object({ shape: ShapeD });
+    let Schema = t.object({ shape: ShapeD });
 
     test('strips extras from matched variant', () => {
         let obj = { shape: { kind: 'circle', radius: 5, color: 'red', z: 99 } };
@@ -336,14 +337,14 @@ describe('strict strip: discriminated unions', () => {
 
 describe('strict strip: complex nested scenario', () => {
     test('API response stripping', () => {
-        let UserSchema = object({
+        let UserSchema = t.object({
             id: NUMBER,
             name: STRING,
             email: STRING | NULL
         });
-        let ResponseSchema = object({
-            data: array(UserSchema),
-            meta: object({
+        let ResponseSchema = t.object({
+            data: t.array(UserSchema),
+            meta: t.object({
                 page: NUMBER,
                 total: NUMBER
             })
@@ -373,7 +374,7 @@ describe('strict strip: complex nested scenario', () => {
 
 describe('strict strip: edge cases', () => {
     test('empty object schema strips everything', () => {
-        let Schema = object({});
+        let Schema = t.object({});
         let obj = { a: 1, b: 2, c: 3 };
         expect(strict(obj, Schema, true)).toBe(true);
         //@ts-ignore
@@ -381,12 +382,12 @@ describe('strict strip: edge cases', () => {
     });
 
     test('nullable object at top level — null passes through', () => {
-        let Schema = object({ a: STRING }) | NULL;
+        let Schema = t.object({ a: STRING }) | NULL;
         expect(strict(null, Schema, true)).toBe(true);
     });
 
     test('strip does not affect primitive arrays', () => {
-        let Schema = object({ nums: array(NUMBER) });
+        let Schema = t.object({ nums: t.array(NUMBER) });
         let obj = { nums: [1, 2, 3], extra: true };
         expect(strict(obj, Schema, true)).toBe(true);
         //@ts-ignore

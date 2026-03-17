@@ -1,12 +1,14 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    UNDEFINED, NULL, BOOLEAN, NUMBER, STRING, DATE, URI,
-    object, array, union, conform, check, diagnose
+    UNDEFINED, NULL, BOOLEAN, NUMBER,
+    STRING, DATE, URI, registry
 } from '../';
+
+const { t, check, conform, diagnose } = registry();
 
 describe('object: inline nesting', () => {
     test('single level inline nesting', () => {
-        let schema = object({
+        let schema = t.object({
             name: STRING,
             location: { lat: NUMBER, lng: NUMBER }
         });
@@ -15,7 +17,7 @@ describe('object: inline nesting', () => {
     });
 
     test('two levels of inline nesting', () => {
-        let schema = object({
+        let schema = t.object({
             org: {
                 team: {
                     lead: STRING,
@@ -28,7 +30,7 @@ describe('object: inline nesting', () => {
     });
 
     test('three levels of inline nesting', () => {
-        let schema = object({
+        let schema = t.object({
             a: { b: { c: { d: STRING } } }
         });
         expect(check({ a: { b: { c: { d: 'deep' } } } }, schema)).toBe(true);
@@ -36,8 +38,8 @@ describe('object: inline nesting', () => {
     });
 
     test('inline nested combined with registered types', () => {
-        let Point = object({ x: NUMBER, y: NUMBER });
-        let schema = object({
+        let Point = t.object({ x: NUMBER, y: NUMBER });
+        let schema = t.object({
             label: STRING,
             bounds: {
                 topLeft: Point,
@@ -58,10 +60,10 @@ describe('object: inline nesting', () => {
     });
 
     test('inline nested with array fields', () => {
-        let schema = object({
+        let schema = t.object({
             config: {
-                tags: array(STRING),
-                limits: array(NUMBER | NULL)
+                tags: t.array(STRING),
+                limits: t.array(NUMBER | NULL)
             }
         });
         expect(check({ config: { tags: ['a'], limits: [1, null] } }, schema)).toBe(true);
@@ -69,11 +71,11 @@ describe('object: inline nesting', () => {
     });
 
     test('inline nested with union fields', () => {
-        let ModeUnion = union('mode', {
-            fast: object({ mode: STRING, turbo: BOOLEAN }),
-            slow: object({ mode: STRING, delay: NUMBER })
+        let ModeUnion = t.union('mode', {
+            fast: t.object({ mode: STRING, turbo: BOOLEAN }),
+            slow: t.object({ mode: STRING, delay: NUMBER })
         });
-        let schema = object({
+        let schema = t.object({
             settings: {
                 primary: ModeUnion,
                 fallback: ModeUnion | NULL
@@ -90,8 +92,8 @@ describe('object: inline nesting', () => {
 });
 
 describe('real-world: API response schema', () => {
-    let PaginatedResponse = object({
-        data: array(object({
+    let PaginatedResponse = t.object({
+        data: t.array(t.object({
             id: NUMBER,
             name: STRING,
             email: STRING | NULL,
@@ -134,25 +136,25 @@ describe('real-world: API response schema', () => {
 });
 
 describe('real-world: event system', () => {
-    let EventSchema = union('event', {
-        user_signup: object({
+    let EventSchema = t.union('event', {
+        user_signup: t.object({
             event: STRING,
             userId: NUMBER,
             email: STRING,
             timestamp: DATE
         }),
-        page_view: object({
+        page_view: t.object({
             event: STRING,
             userId: NUMBER | NULL,
             path: STRING,
             timestamp: DATE
         }),
-        purchase: object({
+        purchase: t.object({
             event: STRING,
             userId: NUMBER,
             amount: NUMBER,
             currency: STRING,
-            items: array(object({
+            items: t.array(t.object({
                 sku: STRING,
                 qty: NUMBER,
                 price: NUMBER
@@ -193,7 +195,7 @@ describe('real-world: event system', () => {
     });
 
     test('array of events', () => {
-        let BatchSchema = array(EventSchema);
+        let BatchSchema = t.array(EventSchema);
         let batch = [
             { event: 'page_view', userId: null, path: '/', timestamp: new Date() },
             { event: 'user_signup', userId: 1, email: 'x@y.com', timestamp: new Date() }
@@ -202,16 +204,16 @@ describe('real-world: event system', () => {
     });
 
     test('nullable array of events', () => {
-        let t = array(EventSchema) | NULL;
-        expect(check(null, t)).toBe(true);
-        expect(check([], t)).toBe(true);
+        let type = t.array(EventSchema) | NULL;
+        expect(check(null, type)).toBe(true);
+        expect(check([], type)).toBe(true);
     });
 });
 
 describe('real-world: config schema', () => {
-    let Credentials = object({ user: STRING, password: STRING });
+    let Credentials = t.object({ user: STRING, password: STRING });
 
-    let ConfigSchema = object({
+    let ConfigSchema = t.object({
         database: {
             host: STRING,
             port: NUMBER,
@@ -223,7 +225,7 @@ describe('real-world: config schema', () => {
             ttl: NUMBER | UNDEFINED,
             maxSize: NUMBER | UNDEFINED
         },
-        features: array(STRING) | UNDEFINED,
+        features: t.array(STRING) | UNDEFINED,
         debug: BOOLEAN | UNDEFINED
     });
 
@@ -271,38 +273,38 @@ describe('real-world: config schema', () => {
 
 describe('cross-function: validate vs parse vs cast consistency', () => {
     test('all three agree on valid data', () => {
-        let schema = object({ name: STRING, age: NUMBER });
+        let schema = t.object({ name: STRING, age: NUMBER });
         let data = { name: 'Alice', age: 30 };
         expect(check(data, schema)).toBe(true);
         expect(conform({ ...data }, schema)).toBe(true);
     });
 
     test('validate rejects what parse and cast accept (rich types)', () => {
-        let schema = object({ ts: DATE });
+        let schema = t.object({ ts: DATE });
         let data = { ts: '2024-01-01' };
         expect(check(data, schema)).toBe(false);  // string ≠ Date
         expect(conform({ ts: '2024-01-01' }, schema)).toBe(true);   // parse casts
     });
 
     test('validate and parse reject what cast accepts (native types)', () => {
-        let schema = object({ n: NUMBER });
+        let schema = t.object({ n: NUMBER });
         let data = { n: '42' };
         expect(check(data, schema)).toBe(false);
         expect(conform({ n: '42' }, schema)).toBe(false);
     });
 
     test('all three agree on nullability', () => {
-        let schema = object({ val: NUMBER | NULL });
+        let schema = t.object({ val: NUMBER | NULL });
         expect(check({ val: null }, schema)).toBe(true);
         expect(conform({ val: null }, schema)).toBe(true);
 
-        let schema2 = object({ val: NUMBER });
+        let schema2 = t.object({ val: NUMBER });
         expect(check({ val: null }, schema2)).toBe(false);
         expect(conform({ val: null }, schema2)).toBe(false);
     });
 
     test('explain returns no errors iff validate returns true', () => {
-        let schema = object({ a: STRING, b: NUMBER | NULL, c: BOOLEAN | UNDEFINED });
+        let schema = t.object({ a: STRING, b: NUMBER | NULL, c: BOOLEAN | UNDEFINED });
 
         let valid = { a: 'x', b: null };
         expect(check(valid, schema)).toBe(true);
@@ -316,7 +318,7 @@ describe('cross-function: validate vs parse vs cast consistency', () => {
 
 describe('mutation: parse mutates in place', () => {
     test('parse replaces date strings with Date objects', () => {
-        let schema = object({ d: DATE });
+        let schema = t.object({ d: DATE });
         let obj = { d: '2024-01-01' };
         let original = obj.d;
         conform(obj, schema);
@@ -325,14 +327,14 @@ describe('mutation: parse mutates in place', () => {
     });
 
     test('parse replaces URL strings with URL objects', () => {
-        let schema = object({ u: URI });
+        let schema = t.object({ u: URI });
         let obj = { u: 'https://vilhelm.se' };
         conform(obj, schema);
         expect(obj.u).toBeInstanceOf(URL);
     });
 
     test('parse mutates array elements', () => {
-        let schema = array(DATE);
+        let schema = t.array(DATE);
         let arr = ['2024-01-01', '2024-06-15'];
         conform(arr, schema);
         expect(arr[0]).toBeInstanceOf(Date);
@@ -340,7 +342,7 @@ describe('mutation: parse mutates in place', () => {
     });
 
     test('validate never mutates', () => {
-        let schema = object({ d: DATE });
+        let schema = t.object({ d: DATE });
         let obj = { d: '2024-01-01' };
         check(obj, schema);
         expect(typeof obj.d).toBe('string');
@@ -350,7 +352,7 @@ describe('mutation: parse mutates in place', () => {
 describe('edge: adversarial inputs', () => {
 
     test('object with constructor key', () => {
-        let schema = object({ constructor: STRING });
+        let schema = t.object({ constructor: STRING });
         expect(typeof schema).toBe('number');
         expect(check({ constructor: 'hello' }, schema)).toBe(true);
     });
@@ -375,13 +377,13 @@ describe('edge: adversarial inputs', () => {
     });
 
     test('nested null in object field', () => {
-        let schema = object({ a: { b: STRING } });
+        let schema = t.object({ a: { b: STRING } });
         expect(check({ a: null }, schema)).toBe(false);
         expect(check({ a: undefined }, schema)).toBe(false);
     });
 
     test('array-like object rejected', () => {
-        let schema = array(NUMBER);
+        let schema = t.array(NUMBER);
         expect(check({ 0: 1, 1: 2, length: 2 }, schema)).toBe(false);
     });
 
@@ -397,8 +399,8 @@ describe('edge: adversarial inputs', () => {
 
 describe('edge: shared keys across schemas', () => {
     test('schemas sharing field names work independently', () => {
-        let A = object({ name: STRING, age: NUMBER });
-        let B = object({ name: NUMBER, age: STRING }); // flipped types!
+        let A = t.object({ name: STRING, age: NUMBER });
+        let B = t.object({ name: NUMBER, age: STRING }); // flipped types!
 
         expect(check({ name: 'Alice', age: 30 }, A)).toBe(true);
         expect(check({ name: 'Alice', age: 30 }, B)).toBe(false);
@@ -410,9 +412,9 @@ describe('edge: shared keys across schemas', () => {
 
 describe('edge: multiple arrays registered', () => {
     test('different array types are independent', () => {
-        let numArr = array(NUMBER);
-        let strArr = array(STRING);
-        let nullNumArr = array(NUMBER | NULL);
+        let numArr = t.array(NUMBER);
+        let strArr = t.array(STRING);
+        let nullNumArr = t.array(NUMBER | NULL);
 
         expect(check([1, 2], numArr)).toBe(true);
         expect(check([1, 2], strArr)).toBe(false);
