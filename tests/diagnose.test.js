@@ -2,7 +2,7 @@ import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, BOOLEAN, NUMBER,
     STRING, BIGINT, DATE, URI, registry
-} from '../dist';
+} from 'uvd/core';
 
 const { t, diagnose } = registry();
 

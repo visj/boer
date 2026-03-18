@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, NUMBER, STRING, DATE, registry
-} from '../dist';
+} from 'uvd/core';
 
 const { t, check, conform } = registry();
 

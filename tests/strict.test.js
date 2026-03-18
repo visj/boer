@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, NUMBER, STRING, STRICT_DELETE, STRICT_REJECT, registry
-} from '../src/index.js';
+} from 'uvd/core';
 
 const { t, check } = registry();
 

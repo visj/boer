@@ -16,5 +16,5 @@
     "src/*.js",
     "tests/*.js",
     "types/*.d.ts"
-  ]
+, "global.d.ts"  ]
 }

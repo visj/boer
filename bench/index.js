@@ -3,7 +3,8 @@ import { z } from 'zod';
 import * as v from 'valibot';
 import { Type } from '@sinclair/typebox';
 import Ajv from 'ajv';
-import { t, check, NUMBER, DATE, STRING, BOOLEAN, UNDEFINED, URI, registry } from '../dist/index.mjs';
+import { t, check, NUMBER, DATE, STRING, BOOLEAN, UNDEFINED, URI } from 'uvd';
+import { registry } from 'uvd/core';
 
 const rawData = {
     id: 123456,

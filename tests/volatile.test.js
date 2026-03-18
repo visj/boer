@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    STRING, NUMBER, NULL, registry
-} from '../';
+    STRING, NUMBER, NULL, STRICT_REJECT, registry
+} from 'uvd/core';
 
 describe('volatile: basic usage', () => {
     test('v.object() creates a usable type', () => {
@@ -121,8 +121,8 @@ describe('volatile: lifecycle', () => {
     test('strict works with volatile types', () => {
         let r = registry();
         let schema = r.v.object({ name: STRING });
-        expect(r.strict({ name: 'Alice' }, schema)).toBe(true);
-        expect(r.strict({ name: 'Alice', extra: true }, schema)).toBe(false);
+        expect(r.check({ name: 'Alice' }, schema, STRICT_REJECT)).toBe(true);
+        expect(r.check({ name: 'Alice', extra: true }, schema, STRICT_REJECT)).toBe(false);
     });
 
     test('diagnose works with volatile types', () => {

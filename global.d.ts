@@ -1,4 +1,4 @@
-import type { Schema as _Schema } from ".";
+import type { Schema as _Schema } from "./types";
 
 /**
  * Shims for Special Types in the Closure Type System.

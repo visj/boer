@@ -1,9 +1,10 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    BOOLEAN, NUMBER, STRING, DATE, registry
-} from '../';
+    BOOLEAN, NUMBER, STRING, DATE, registry,
+    STRICT_DELETE
+} from 'uvd/core';
 
-const { t, check, strict, conform } = registry();
+const { t, check, conform } = registry();
 
 describe('stress: SLAB growth beyond initial 4096', () => {
     test('register 300 objects with 8 fields each (4800 slab entries)', () => {
@@ -282,7 +283,7 @@ describe('stress: parse and strict on large objects', () => {
         }
         let schema = t.object(def);
         expect(Object.keys(obj).length).toBe(50);
-        expect(strict(obj, schema, true)).toBe(true);
+        expect(check(obj, schema, STRICT_DELETE)).toBe(true);
         expect(Object.keys(obj).length).toBe(30);
         for (let i = 0; i < 30; i++) {
             expect(obj['keep_' + i]).toBe(i);

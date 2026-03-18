@@ -1,7 +1,8 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    STRING, NUMBER, NULL, UNDEFINED, registry
-} from '../';
+    STRING, NUMBER, NULL, UNDEFINED, registry,
+    STRICT_REJECT
+} from 'uvd/core';
 
 describe('registry: isolation', () => {
     test('registry() returns an object with t, v, check, diagnose, etc.', () => {
@@ -15,7 +16,6 @@ describe('registry: isolation', () => {
         expect(typeof r.check).toBe('function');
         expect(typeof r.guard).toBe('function');
         expect(typeof r.conform).toBe('function');
-        expect(typeof r.strict).toBe('function');
         expect(typeof r.diagnose).toBe('function');
     });
 
@@ -112,8 +112,8 @@ describe('registry: isolation', () => {
         let r = registry();
         let schema = r.t.object({ name: STRING });
 
-        expect(r.strict({ name: 'Alice' }, schema)).toBe(true);
-        expect(r.strict({ name: 'Alice', extra: true }, schema)).toBe(false);
+        expect(r.check({ name: 'Alice' }, schema, STRICT_REJECT)).toBe(true);
+        expect(r.check({ name: 'Alice', extra: true }, schema, STRICT_REJECT)).toBe(false);
     });
 
     test('registry diagnose works', () => {
