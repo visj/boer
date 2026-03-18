@@ -57,12 +57,16 @@ export const PLAIN = true;
 export const NOT_STRICT = 0;
 export const STRICT_REJECT = 1;
 export const STRICT_DELETE = 2;
+export const STRICT_PROTO = 4;
+const STRICT_MODE_MASK = 0b11;
 
 const U16 = 1;
 const U32 = 2;
 
 /** @const @type {symbol} */
 var FAIL = Symbol('FAIL');
+
+const hasOwnProperty = Object.prototype.hasOwnProperty;
 
 // ---------------------------------------------------------------------------
 // Stateless helpers (module-level — no registry state needed)
@@ -844,8 +848,6 @@ function registry() {
         return false;
     }
 
-    // --- VALIDATION FUNCTIONS ---
-
     /**
      * @param {*} data
      * @param {number} typedef
@@ -933,11 +935,12 @@ function registry() {
                     return false;
                 }
                 if (strict !== NOT_STRICT) {
-                    let dataKeys = Object.keys(data);
-                    let dataLength = dataKeys.length;
-                    let reject = strict === STRICT_REJECT;
-                    for (let i = 0; i < dataLength; i++) {
-                        let key = dataKeys[i];
+                    let reject = (strict & STRICT_REJECT) !== 0;
+                    let proto = (strict & STRICT_PROTO) !== 0;
+                    for (let key in data) {
+                        if (proto && !hasOwnProperty.call(data, key)) {
+                            continue;
+                        }
                         let keyId = KEY_DICT.get(key);
                         if (keyId === void 0) {
                             // If we don't even know the key, it cannot possibly be optional
@@ -947,21 +950,26 @@ function registry() {
                             delete data[key];
                             continue;
                         }
+                        let lo = 0;
+                        let hi = length - 1;
                         let missing = true;
 
-                        for (let j = 0; j < length; j++) {
-                            let slot = offset + j * 2;
+                        while (lo <= hi) {
+                            let mid = (lo + hi) >>> 1;
+                            let slot = offset + (mid << 1);
+                            let midKey = slab[slot];
 
-                            if (slab[slot] === keyId) {
+                            if (midKey === keyId) {
                                 missing = false;
                                 break;
+                            } else if (midKey < keyId) {
+                                lo = mid + 1;
+                            } else {
+                                hi = mid - 1;
                             }
                         }
-
                         if (missing) {
-                            if (reject) {
-                                return false;
-                            }
+                            if (reject) return false;
                             delete data[key];
                         }
                     }
@@ -1276,10 +1284,14 @@ function registry() {
         needsWipe = true;
         let _strict = NOT_STRICT;
         if (typeof strict === 'number') {
-            if (strict === STRICT_DELETE || strict === STRICT_REJECT) {
-                _strict = strict;
-            } else {
-                throw new Error('Unknown strict argument ' + strict)
+            let mode = strict & STRICT_MODE_MASK;
+            if (mode === STRICT_DELETE) {
+                _strict |= STRICT_DELETE;
+            } else if (mode === STRICT_REJECT) {
+                _strict |= STRICT_REJECT;
+            }
+            if (strict & STRICT_PROTO) {
+                _strict |= STRICT_PROTO;
             }
         }
         let result = _check(data, typedef, _strict);
