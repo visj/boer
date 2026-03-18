@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, BOOLEAN, NUMBER,
-    STRING, BIGINT, DATE, URI, VALUE, registry
+    STRING, BIGINT, DATE, URI, PRIMITIVE, registry
 } from '../';
 
 const { t, check, conform } = registry();
@@ -309,7 +309,7 @@ describe('validate: primitive type unions', () => {
     });
 
     test('all VALUE types combined', () => {
-        let type = VALUE;
+        let type = PRIMITIVE;
         expect(check('hello', type)).toBe(true);
         expect(check(42, type)).toBe(true);
         expect(check(true, type)).toBe(true);

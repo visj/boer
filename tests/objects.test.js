@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, BOOLEAN, NUMBER,
-    STRING, BIGINT, DATE, URI, VALUE, registry
+    STRING, BIGINT, DATE, URI, PRIMITIVE, registry
 } from '../';
 
 const { t, check, conform } = registry();
@@ -213,7 +213,7 @@ describe('parse: objects', () => {
 
 describe('object: field with all types allowed', () => {
     test('VALUE | NULL | UNDEFINED accepts everything', () => {
-        let schema = t.object({ any: VALUE | NULL | UNDEFINED });
+        let schema = t.object({ any: PRIMITIVE | NULL | UNDEFINED });
         expect(check({ any: 'string' }, schema)).toBe(true);
         expect(check({ any: 42 }, schema)).toBe(true);
         expect(check({ any: true }, schema)).toBe(true);

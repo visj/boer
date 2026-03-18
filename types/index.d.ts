@@ -20,7 +20,7 @@ export const BIGINT: Primitive<bigint, any>;
 export const DATE: Primitive<Date, any>;
 export const URI: Primitive<URL, any>;
 
-export const VALUE: Primitive<boolean, any> | Primitive<number, any> | Primitive<string, any> | Primitive<bigint, any> | Primitive<Date, any> | Primitive<URL, any>;
+export const PRIMITIVE: Primitive<boolean, any> | Primitive<number, any> | Primitive<string, any> | Primitive<bigint, any> | Primitive<Date, any> | Primitive<URL, any>;
 
 export type Type<T, R = unknown> = Primitive<T, R> | Complex<T, R>;
 
@@ -114,9 +114,11 @@ export interface SchemaBuilder<R> {
     optional<T>(typedef: Complex<T, R>): Complex<T | undefined, R>;
 }
 
-// ---------------------------------------------------------------------------
-// Registry
-// ---------------------------------------------------------------------------
+export const NOT_STRICT = 0;
+export const STRICT_REJECT = 1;
+export const STRICT_DELETE = 2;
+
+export type StrictFlag = typeof NOT_STRICT | typeof STRICT_REJECT | typeof STRICT_DELETE;
 
 export interface PathError {
     path: string;
@@ -127,8 +129,7 @@ export interface Registry<R> {
     t: SchemaBuilder<R>;
     v: SchemaBuilder<R>;
 
-    // Strict enforcement: These functions ONLY accept types tagged with 'R'
-    check<T>(data: any, typedef: Primitive<T, R>): data is T;
+    check<T>(data: any, typedef: Primitive<T, R>, strict?: StrictFlag): data is T;
     guard<T>(data: any, typedef: Primitive<T, R>): asserts data is T;
     conform<T>(data: any, typedef: Primitive<T, R>, preserve?: boolean): data is T;
     strict<T>(data: any, typedef: Primitive<T, R>, strip?: boolean): data is T;

@@ -21,7 +21,7 @@ export const BIGINT = (1 << 24) >>> 0;
 export const DATE = (1 << 23) >>> 0;
 export const URI = (1 << 22) >>> 0;
 
-export const VALUE = (BOOLEAN | NUMBER | STRING | BIGINT | DATE | URI);
+export const PRIMITIVE = (BOOLEAN | NUMBER | STRING | BIGINT | DATE | URI);
 const PRIM_MASK = 0x0FFFFFFF;
 const KIND_MASK = 0x0FFFFFFF;
 
@@ -54,8 +54,9 @@ const FMT_MAP = { email: FMT_EMAIL, ipv4: FMT_IPV4, uuid: FMT_UUID, 'date-time':
 export const STRIP = true;
 export const PLAIN = true;
 
-export const STRICT_DELETE = 1;
-export const STRICT_REJECT = 2;
+export const NOT_STRICT = 0;
+export const STRICT_REJECT = 1;
+export const STRICT_DELETE = 2;
 
 const U16 = 1;
 const U32 = 2;
@@ -81,6 +82,71 @@ export function nullable(typedef) {
  */
 export function optional(typedef) {
     return (typedef | OPTIONAL) >>> 0;
+}
+
+/**
+ * 
+ * @param {!Array<number>} entries
+ * @returns {void} 
+ */
+function sortTuple(entries) {
+    /**
+     * 
+     * @param {number} i 
+     * @param {number} j 
+     */
+    function swap(i, j) {
+        let i2 = i << 1;
+        let j2 = j << 1;
+
+        let tmp = entries[i2];
+        entries[i2] = entries[j2];
+        entries[j2] = tmp;
+
+        tmp = entries[i2 + 1];
+        entries[i2 + 1] = entries[j2 + 1];
+        entries[j2 + 1] = tmp;
+    }
+
+    /**
+     * 
+     * @param {number} low 
+     * @param {number} high 
+     * @returns {void}
+     */
+    function quicksort(low, high) {
+        if (low >= high) {
+            return;
+        }
+
+        let pivot = entries[((low + high) >>> 1) << 1];
+        let start = low;
+        let end = high;
+
+        while (start <= end) {
+            while (entries[start << 1] < pivot) {
+                start++;
+            }
+            while (entries[end << 1] > pivot) {
+                end--;
+            }
+
+            if (start <= end) {
+                swap(start, end);
+                start++;
+                end--;
+            }
+        }
+
+        if (low < end) {
+            quicksort(low, end);
+        }
+        if (start < high) {
+            quicksort(start, high);
+        }
+    }
+
+    quicksort(0, (entries.length >> 1) - 1);
 }
 
 /**
@@ -303,6 +369,7 @@ function registry() {
      * @param {number} complexType
      * @param {number} registryIndex
      * @param {boolean} volatile
+     * @param {number} slots
      * @returns {number}
      */
     function allocKind(header, registryIndex, volatile, slots) {
@@ -407,7 +474,7 @@ function registry() {
      * @returns {function(!Object=): number}
      */
     function primitiveImpl(primConst) {
-        return function(opts) {
+        return function (opts) {
             if (opts === void 0) {
                 return primConst;
             }
@@ -424,7 +491,7 @@ function registry() {
      * @returns {function(!Object=): number}
      */
     function volatilePrimitiveImpl(primConst) {
-        return function(opts) {
+        return function (opts) {
             if (opts === void 0) {
                 return primConst;
             }
@@ -455,7 +522,7 @@ function registry() {
             let header = kinds[ptr];
             let ct = header & KIND_ENUM_MASK;
             if (ct === K_PRIMITIVE) {
-                let primBits = header & VALUE;
+                let primBits = header & PRIMITIVE;
                 if (primBits & BOOLEAN) parts.push('boolean');
                 if (primBits & NUMBER) parts.push('number');
                 if (primBits & STRING) parts.push('string');
@@ -490,10 +557,8 @@ function registry() {
         let count = keys.length;
         let required = count * 2;
         /** @type {!Array<number>} */
-        let resolvedKeys = new Array(count);
-        /** @type {!Array<number>} */
-        let resolvedTypes = new Array(count);
-        for (let i = 0; i < count; i++) {
+        let resolved = new Array(count * 2);
+        for (let i = 0, j = 0; i < count; i++, j += 2) {
             let key = keys[i];
             let type = definition[key];
             let jsType = typeof type;
@@ -516,9 +581,10 @@ function registry() {
             if (isObject) {
                 type = objectImpl(/** @type {!Schema} */(type), volatile);
             }
-            resolvedKeys[i] = lookup(key);
-            resolvedTypes[i] = /** @type {number} */(type) >>> 0;
+            resolved[j] = lookup(key);
+            resolved[j + 1] = /** @type {number} */(type) >>> 0;
         }
+        sortTuple(resolved);
         let hasVal = opts !== void 0;
         let valIdx = 0;
         if (hasVal) {
@@ -566,9 +632,8 @@ function registry() {
                 V_SLAB = buffer;
             }
             let offset = V_PTR;
-            for (let i = 0; i < count; i++) {
-                V_SLAB[offset + (i * 2)] = resolvedKeys[i];
-                V_SLAB[offset + (i * 2) + 1] = resolvedTypes[i];
+            for (let i = 0; i < required; i++) {
+                V_SLAB[offset + i] = resolved[i];
             }
             if ((V_OBJ_COUNT + 1) * 2 > V_OBJ_LEN) {
                 let buffer = V_OBJ_TYPE === U16 ?
@@ -608,9 +673,8 @@ function registry() {
             OBJ_TYPE = U32;
         }
         let offset = PTR;
-        for (let i = 0; i < count; i++) {
-            SLAB[offset + (i * 2)] = resolvedKeys[i];
-            SLAB[offset + (i * 2) + 1] = resolvedTypes[i];
+        for (let i = 0; i < required; i++) {
+            SLAB[offset + i] = resolved[i];
         }
         if ((OBJ_COUNT + 1) * 2 > OBJ_LEN) {
             let buffer = OBJ_TYPE === U16 ?
@@ -751,23 +815,6 @@ function registry() {
         return (COMPLEX | kindId) >>> 0;
     }
 
-    // --- VALIDATION HELPERS (closure-bound) ---
-
-    /**
-     * @param {*} raw
-     * @param {number} type
-     * @returns {boolean}
-     */
-    function _checkSlot(raw, type) {
-        return (
-            raw === void 0 ? (type & OPTIONAL) !== 0 :
-                raw === null ? (type & NULLABLE) !== 0 :
-                    (type & COMPLEX) ? _check(raw, type) :
-                        (type & VALUE) ? checkValue(raw, type & PRIM_MASK) :
-                            false
-        );
-    }
-
     /**
      * @param {*} holder
      * @param {string|number} slot
@@ -802,14 +849,12 @@ function registry() {
     /**
      * @param {*} data
      * @param {number} typedef
+     * @param {number} strict
      * @returns {boolean}
      */
-    function _check(data, typedef) {
-        if (data === void 0) {
-            return (typedef & OPTIONAL) !== 0;
-        }
-        if (data === null) {
-            return (typedef & NULLABLE) !== 0;
+    function _check(data, typedef, strict) {
+        if (data == null) {
+            return (data === null ? (typedef & NULLABLE) : (typedef & OPTIONAL)) !== 0;
         }
         if (typedef & COMPLEX) {
             let volatile = (typedef & VOLATILE) !== 0;
@@ -819,41 +864,38 @@ function registry() {
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
             if (ct === K_PRIMITIVE) {
-                return checkValue(data, header & VALUE);
+                return checkValue(data, header & PRIMITIVE);
             }
             if (ct === K_ARRAY) {
                 if (!Array.isArray(data)) {
                     return false;
                 }
                 let arrays = volatile ? V_ARRAYS : ARRAYS;
-                let innerType = arrays[ri];
                 let length = data.length;
+                let innerType = arrays[ri];
                 for (let i = 0; i < length; i++) {
-                    if (!_checkSlot(data[i], innerType)) {
-                        return false;
+                    let item = data[i];
+                    if (item == null) {
+                        if ((item === null ? (innerType & NULLABLE) : (innerType & OPTIONAL)) === 0) {
+                            return false;
+                        }
+                        continue;
                     }
+                    if (innerType & COMPLEX) {
+                        if (!_check(item, innerType, strict)) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    if (innerType & PRIMITIVE) {
+                        if (!checkValue(item, innerType & PRIM_MASK)) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    return false;
                 }
                 return true;
-            }
-            if (ct === K_UNION) {
-                let unions = volatile ? V_UNIONS : UNIONS;
-                let discUnions = volatile ? V_DISC_UNIONS : DISC_UNIONS;
-                let discKey = KEY_INDEX.get(unions[ri]);
-                if (discKey === void 0) {
-                    return false;
-                }
-                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-                    return false;
-                }
-                let valueId = KEY_DICT.get(data[discKey]);
-                let variants = discUnions[ri];
-                let length = variants.length;
-                for (let i = 0; i < length; i += 2) {
-                    if (variants[i] === valueId) {
-                        return _check(data, variants[i + 1]);
-                    }
-                }
-                return false;
             }
             if (ct === K_OBJECT) {
                 if (typeof data !== 'object' || data === null || Array.isArray(data)) {
@@ -869,11 +911,85 @@ function registry() {
                         return false;
                     }
                     let type = slab[offset + (i * 2) + 1];
-                    if (!_checkSlot(data[key], type)) {
-                        return false;
+                    let item = data[key];
+                    if (item == null) {
+                        if ((item === null ? (type & NULLABLE) : (type & OPTIONAL)) === 0) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    if (type & COMPLEX) {
+                        if (!_check(item, type, strict)) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    if (type & PRIMITIVE) {
+                        if (!checkValue(item, type & PRIM_MASK)) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    return false;
+                }
+                if (strict !== NOT_STRICT) {
+                    let dataKeys = Object.keys(data);
+                    let dataLength = dataKeys.length;
+                    let reject = strict === STRICT_REJECT;
+                    for (let i = 0; i < dataLength; i++) {
+                        let key = dataKeys[i];
+                        let keyId = KEY_DICT.get(key);
+                        if (keyId === void 0) {
+                            // If we don't even know the key, it cannot possibly be optional
+                            if (reject) {
+                                return false;
+                            }
+                            delete data[key];
+                            continue;
+                        }
+                        let missing = true;
+
+                        for (let j = 0; j < length; j++) {
+                            let slot = offset + j * 2;
+
+                            if (slab[slot] === keyId) {
+                                missing = false;
+                                break;
+                            }
+                        }
+
+                        if (missing) {
+                            if (reject) {
+                                return false;
+                            }
+                            delete data[key];
+                        }
                     }
                 }
                 return true;
+            }
+            if (ct === K_UNION) {
+                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                    return false;
+                }
+                let unions = volatile ? V_UNIONS : UNIONS;
+                let discKey = KEY_INDEX.get(unions[ri]);
+                if (discKey === void 0) {
+                    return false;
+                }
+                let discUnions = volatile ? V_DISC_UNIONS : DISC_UNIONS;
+                let valueId = KEY_DICT.get(data[discKey]);
+                if (valueId === void 0) {
+                    return false;
+                }
+                let variants = discUnions[ri];
+                let length = variants.length;
+                for (let i = 0; i < length; i += 2) {
+                    if (variants[i] === valueId) {
+                        return _check(data, variants[i + 1], strict);
+                    }
+                }
+                return false;
             }
             return false;
         }
@@ -928,7 +1044,7 @@ function registry() {
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
             if (ct === K_PRIMITIVE) {
-                let vm = header & VALUE;
+                let vm = header & PRIMITIVE;
                 return vm !== 0 && parseValue(data, vm, reify) !== FAIL;
             }
             if (ct === K_ARRAY) {
@@ -1005,145 +1121,10 @@ function registry() {
      */
     function strict(data, typedef, strip) {
         needsWipe = true;
-        let result = _strictInner(data, typedef, strip);
+        let strict = strip ? STRICT_DELETE : STRICT_REJECT;
+        let result = _check(data, typedef, strict);
         return result;
     }
-
-    /**
-     * @param {*} data
-     * @param {number} typedef
-     * @param {boolean=} strip
-     * @returns {boolean}
-     */
-    function _strictInner(data, typedef, strip) {
-        if (data == null || typeof data !== 'object') {
-            return _check(data, typedef);
-        }
-        if (!(typedef & COMPLEX)) {
-            return _check(data, typedef);
-        }
-        let volatile = (typedef & VOLATILE) !== 0;
-        let ptr = typedef & KIND_MASK;
-        let kinds = volatile ? V_KINDS : KINDS;
-        let header = kinds[ptr];
-        let ct = header & KIND_ENUM_MASK;
-        let ri = kinds[ptr + 1];
-        if (ct === K_PRIMITIVE) {
-            return checkValue(data, header & VALUE);
-        }
-        if (ct === K_ARRAY) {
-            if (!Array.isArray(data)) {
-                return false;
-            }
-            let arrays = volatile ? V_ARRAYS : ARRAYS;
-            let innerType = arrays[ri];
-            let length = data.length;
-            for (let i = 0; i < length; i++) {
-                let raw = data[i];
-                if (raw == null) {
-                    if ((raw === null ? (innerType & NULLABLE) : (innerType & OPTIONAL)) === 0) {
-                        return false;
-                    }
-                    continue;
-                }
-                if (innerType & COMPLEX) {
-                    if (!_strictInner(raw, innerType, strip)) {
-                        return false;
-                    }
-                    continue;
-                }
-                if (innerType & VALUE) {
-                    if (!checkValue(raw, innerType & PRIM_MASK)) {
-                        return false;
-                    }
-                    continue;
-                }
-                return false;
-            }
-            return true;
-        }
-        if (ct === K_UNION) {
-            let unions = volatile ? V_UNIONS : UNIONS;
-            let discUnions = volatile ? V_DISC_UNIONS : DISC_UNIONS;
-            let discKey = KEY_INDEX.get(unions[ri]);
-            if (discKey === void 0) {
-                return false;
-            }
-            if (Array.isArray(data)) {
-                return false;
-            }
-            let valueId = KEY_DICT.get(data[discKey]);
-            let variants = discUnions[ri];
-            let length = variants.length;
-            for (let i = 0; i < length; i += 2) {
-                if (variants[i] === valueId) {
-                    return _strictInner(data, variants[i + 1], strip);
-                }
-            }
-            return false;
-        }
-        if (ct === K_OBJECT) {
-            if (Array.isArray(data)) {
-                return false;
-            }
-            let objects = volatile ? V_OBJECTS : OBJECTS;
-            let slab = volatile ? V_SLAB : SLAB;
-            let offset = objects[ri * 2];
-            let length = objects[ri * 2 + 1];
-            for (let i = 0; i < length; i++) {
-                let key = KEY_INDEX.get(slab[offset + (i * 2)]);
-                if (key === void 0) {
-                    return false;
-                }
-                let type = slab[offset + (i * 2) + 1];
-                let raw = data[key];
-                if (raw == null) {
-                    if ((raw === null ? (type & NULLABLE) : (type & OPTIONAL)) === 0) {
-                        return false;
-                    }
-                    continue;
-                }
-                if (type & COMPLEX) {
-                    if (!_strictInner(raw, type, strip)) {
-                        return false;
-                    }
-                    continue;
-                }
-                if (type & VALUE) {
-                    if (!checkValue(raw, type & PRIM_MASK)) {
-                        return false;
-                    }
-                    continue;
-                }
-                return false;
-            }
-            let actualKeys = Object.keys(data);
-            for (let i = 0; i < actualKeys.length; i++) {
-                let dataKey = actualKeys[i];
-                let keyId = KEY_DICT.get(dataKey);
-                let isKnown = false;
-                if (keyId !== void 0) {
-                    for (let i = 0; i < length; i++) {
-                        if (slab[offset + (i * 2)] === keyId) {
-                            isKnown = true;
-                            break;
-                        }
-                    }
-                }
-                if (!isKnown) {
-                    if (strip) {
-                        delete data[actualKeys[i]];
-                    } else {
-                        return false;
-                    }
-                }
-            }
-            return true;
-        }
-        return false;
-    }
-
-    // --- DIAGNOSTICS ---
 
     /** @typedef {{path: string, message: string}} */
     var PathError;
@@ -1189,7 +1170,7 @@ function registry() {
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
             if (ct === K_PRIMITIVE) {
-                let primBits = header & VALUE;
+                let primBits = header & PRIMITIVE;
                 if (primBits === 0 || !checkValue(data, primBits)) {
                     /** @type {string} */
                     let type = typeof data;
@@ -1288,11 +1269,20 @@ function registry() {
     /**
      * @param {*} data
      * @param {number} typedef
+     * @param {number=} strict
      * @returns {boolean}
      */
-    function check(data, typedef) {
-        let result = _check(data, typedef);
+    function check(data, typedef, strict) {
         needsWipe = true;
+        let _strict = NOT_STRICT;
+        if (typeof strict === 'number') {
+            if (strict === STRICT_DELETE || strict === STRICT_REJECT) {
+                _strict = strict;
+            } else {
+                throw new Error('Unknown strict argument ' + strict)
+            }
+        }
+        let result = _check(data, typedef, _strict);
         return result;
     }
 
@@ -1319,9 +1309,9 @@ function registry() {
             if (vHeader & 8) {
                 let fmt = vals[p++] | 0;
                 let re = fmt === FMT_EMAIL ? FMT_RE_EMAIL :
-                         fmt === FMT_IPV4 ? FMT_RE_IPV4 :
-                         fmt === FMT_UUID ? FMT_RE_UUID :
-                         fmt === FMT_DATETIME ? FMT_RE_DATETIME : null;
+                    fmt === FMT_IPV4 ? FMT_RE_IPV4 :
+                        fmt === FMT_UUID ? FMT_RE_UUID :
+                            fmt === FMT_DATETIME ? FMT_RE_DATETIME : null;
                 if (re && !re.test(/** @type {string} */(value))) return false;
             }
             return true;
@@ -1440,7 +1430,7 @@ function registry() {
             raw === void 0 ? (type & OPTIONAL) !== 0 :
                 raw === null ? (type & NULLABLE) !== 0 :
                     (type & COMPLEX) ? _validate(raw, type) :
-                        (type & VALUE) ? checkValue(raw, type & PRIM_MASK) :
+                        (type & PRIMITIVE) ? checkValue(raw, type & PRIM_MASK) :
                             false
         );
     }
@@ -1451,11 +1441,8 @@ function registry() {
      * @returns {boolean}
      */
     function _validate(data, typedef) {
-        if (data === void 0) {
-            return (typedef & OPTIONAL) !== 0;
-        }
-        if (data === null) {
-            return (typedef & NULLABLE) !== 0;
+        if (data == null) {
+            return (data === null ? (typedef & NULLABLE) : (typedef & OPTIONAL)) !== 0;
         }
         if (typedef & COMPLEX) {
             let volatile = (typedef & VOLATILE) !== 0;
@@ -1465,7 +1452,7 @@ function registry() {
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
             if (ct === K_PRIMITIVE) {
-                let primBits = header & VALUE;
+                let primBits = header & PRIMITIVE;
                 if (!checkValue(data, primBits)) return false;
                 if (header & HAS_VALIDATOR) {
                     return runPrimValidator(data, primBits, ri, volatile);
