@@ -16,6 +16,17 @@ async function buildFormat(format, ext, isModule) {
         input: {
             core: 'src/core.js',
             index: 'src/index.js'
+        },
+        treeshake: {
+            moduleSideEffects: (id) => {
+                // Tell the bundler that types.js has absolutely zero side effects.
+                // This gives it permission to drop the unused imports entirely.
+                if (id.includes('types.js')) {
+                    return false;
+                }
+                // Keep default behavior for everything else
+                return true;
+            }
         }
     });
 

@@ -1,7 +1,7 @@
 import {
     registry,
-    NULL, UNDEFINED, BOOLEAN, NUMBER,
-    STRING, DATE, URI
+    PRIMITIVE, NULL, UNDEFINED, BOOLEAN,
+    NUMBER, STRING, DATE, URI,
 } from "./core";
 
 const uvd = registry();
@@ -11,7 +11,7 @@ export const v = uvd.v;
 export const check = uvd.check;
 export const guard = uvd.guard;
 export const conform = uvd.conform;
-export const diagnose = uvd.diagnose;
 export const validate = uvd.validate;
+export const diagnose = uvd.diagnose;
 
-export { NULL, UNDEFINED, BOOLEAN, NUMBER, STRING, DATE, URI }
+export { PRIMITIVE, NULL, UNDEFINED, BOOLEAN, NUMBER, STRING, DATE, URI }

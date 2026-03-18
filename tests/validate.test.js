@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    BOOLEAN, NUMBER, STRING, BIGINT, DATE, URI,
-    nullable, optional, registry
+    BOOLEAN, NUMBER, STRING,
+    BIGINT, DATE, URI, registry
 } from 'uvd/core';
 
 const { t, v, check, validate } = registry();
@@ -212,13 +212,13 @@ describe('validate: nested recursive validation', () => {
 
 describe('validate: nullable/optional validated types', () => {
     test('nullable validated string', () => {
-        let td = nullable(t.string({ minLength: 3 }));
+        let td = t.nullable(t.string({ minLength: 3 }));
         expect(validate(null, td)).toBe(true);
         expect(validate('abc', td)).toBe(true);
         expect(validate('ab', td)).toBe(false);
     });
     test('optional validated number', () => {
-        let td = optional(t.number({ minimum: 0 }));
+        let td = t.optional(t.number({ minimum: 0 }));
         expect(validate(undefined, td)).toBe(true);
         expect(validate(5, td)).toBe(true);
         expect(validate(-1, td)).toBe(false);
@@ -427,8 +427,8 @@ describe('validate: object dependentRequired', () => {
     test('trigger present, dep missing — fail', () => {
         let td = t.object({
             name: STRING,
-            email: optional(STRING),
-            phone: optional(STRING)
+            email: t.optional(STRING),
+            phone: t.optional(STRING)
         }, {
             dependentRequired: { email: ['phone'] }
         });
@@ -437,8 +437,8 @@ describe('validate: object dependentRequired', () => {
     test('trigger absent — constraint not activated', () => {
         let td = t.object({
             name: STRING,
-            email: optional(STRING),
-            phone: optional(STRING)
+            email: t.optional(STRING),
+            phone: t.optional(STRING)
         }, {
             dependentRequired: { email: ['phone'] }
         });
@@ -447,9 +447,9 @@ describe('validate: object dependentRequired', () => {
     test('multiple triggers', () => {
         let td = t.object({
             name: STRING,
-            billing: optional(STRING),
-            shipping: optional(STRING),
-            address: optional(STRING),
+            billing: t.optional(STRING),
+            shipping: t.optional(STRING),
+            address: t.optional(STRING),
         }, {
             dependentRequired: {
                 billing: ['address'],
@@ -483,12 +483,136 @@ describe('validate: volatile new validators', () => {
     test('v.object with dependentRequired works', () => {
         let td = v.object({
             name: STRING,
-            email: optional(STRING),
-            phone: optional(STRING),
+            email: t.optional(STRING),
+            phone: t.optional(STRING),
         }, {
             dependentRequired: { email: ['phone'] }
         });
         expect(validate({ name: 'Alice', email: 'a@b.com', phone: '123' }, td)).toBe(true);
         expect(validate({ name: 'Alice', email: 'a@b.com' }, td)).toBe(false);
+    });
+});
+
+// --- t.refine() ---
+
+describe('validate: t.refine — primitives', () => {
+    test('refine string with custom predicate', () => {
+        let td = t.refine(STRING, s => s.startsWith('A'));
+        expect(validate('Alice', td)).toBe(true);
+        expect(validate('Bob', td)).toBe(false);
+    });
+    test('refine number — even check', () => {
+        let even = t.refine(NUMBER, n => n % 2 === 0);
+        expect(validate(4, even)).toBe(true);
+        expect(validate(3, even)).toBe(false);
+    });
+    test('wrong type fails before refine runs', () => {
+        let td = t.refine(STRING, () => true);
+        expect(validate(42, td)).toBe(false);
+    });
+});
+
+describe('validate: t.refine — complex types', () => {
+    test('refine on object', () => {
+        let schema = t.object({ x: NUMBER, y: NUMBER });
+        let positive = t.refine(schema, obj => obj.x > 0 && obj.y > 0);
+        expect(validate({ x: 1, y: 2 }, positive)).toBe(true);
+        expect(validate({ x: -1, y: 2 }, positive)).toBe(false);
+    });
+    test('refine on validated primitive', () => {
+        let td = t.refine(t.number({ minimum: 0 }), n => n % 2 === 0);
+        expect(validate(4, td)).toBe(true);
+        expect(validate(3, td)).toBe(false);  // fails refine
+        expect(validate(-2, td)).toBe(false); // fails minimum
+    });
+    test('refine on array', () => {
+        let td = t.refine(t.array(NUMBER), arr => arr.length <= 3);
+        expect(validate([1, 2], td)).toBe(true);
+        expect(validate([1, 2, 3, 4], td)).toBe(false);
+    });
+});
+
+describe('validate: t.refine — check ignores callback', () => {
+    test('check passes even when refine would reject', () => {
+        let td = t.refine(STRING, () => false);
+        expect(check('anything', td)).toBe(true);
+    });
+    test('check still validates inner type', () => {
+        let td = t.refine(STRING, () => true);
+        expect(check(42, td)).toBe(false);
+    });
+});
+
+describe('validate: t.refine - can chain refine definitions', () => {
+    test('basic chaining validates correctly', () => {
+        let schema = t.object({ x: NUMBER, y: NUMBER });
+        let positive = t.refine(schema, obj => obj.x > 0 && obj.y > 0);
+        let chained = t.refine(positive, obj => obj.x > 10 && obj.y > 10);
+
+        expect(validate({ x: 12, y: 14 }, chained)).toBe(true);
+        expect(validate({ x: 8, y: 6 }, chained)).toBe(false);
+    });
+});
+
+describe('validate: t.refine — nullable/optional', () => {
+    test('nullable refine', () => {
+        let td = t.nullable(t.refine(STRING, s => s.length > 0));
+        expect(validate(null, td)).toBe(true);
+        expect(validate('hi', td)).toBe(true);
+        expect(validate('', td)).toBe(false);
+    });
+    test('optional refine', () => {
+        let td = t.optional(t.refine(NUMBER, n => n > 0));
+        expect(validate(undefined, td)).toBe(true);
+        expect(validate(5, td)).toBe(true);
+        expect(validate(-1, td)).toBe(false);
+    });
+});
+
+describe('validate: v.refine — volatile', () => {
+    test('v.refine on primitive', () => {
+        let td = v.refine(NUMBER, n => n > 0);
+        expect(validate(5, td)).toBe(true);
+        expect(validate(-1, td)).toBe(false);
+    });
+    test('v.refine on object', () => {
+        let schema = v.object({ a: NUMBER });
+        let td = v.refine(schema, obj => obj.a < 100);
+        expect(validate({ a: 50 }, td)).toBe(true);
+        expect(validate({ a: 200 }, td)).toBe(false);
+    });
+});
+
+// --- additionalProperties: false ---
+
+describe('validate: additionalProperties: false', () => {
+    test('exact keys pass', () => {
+        let td = t.object({ name: STRING, age: NUMBER }, { additionalProperties: false });
+        expect(validate({ name: 'Alice', age: 30 }, td)).toBe(true);
+    });
+    test('extra keys fail', () => {
+        let td = t.object({ name: STRING, age: NUMBER }, { additionalProperties: false });
+        expect(validate({ name: 'Alice', age: 30, extra: true }, td)).toBe(false);
+    });
+    test('missing optional key is ok', () => {
+        let td = t.object({ name: STRING, age: t.optional(NUMBER) }, { additionalProperties: false });
+        expect(validate({ name: 'Alice' }, td)).toBe(true);
+    });
+    test('check ignores additionalProperties', () => {
+        let td = t.object({ name: STRING }, { additionalProperties: false });
+        expect(check({ name: 'Alice', extra: true }, td)).toBe(true);
+    });
+    test('combined with other object validators', () => {
+        let td = t.object({ name: STRING }, {
+            additionalProperties: false,
+            minProperties: 1
+        });
+        expect(validate({ name: 'Alice' }, td)).toBe(true);
+        expect(validate({ name: 'Alice', extra: 1 }, td)).toBe(false);
+    });
+    test('volatile v.object with additionalProperties', () => {
+        let td = v.object({ x: NUMBER }, { additionalProperties: false });
+        expect(validate({ x: 1 }, td)).toBe(true);
+        expect(validate({ x: 1, y: 2 }, td)).toBe(false);
     });
 });

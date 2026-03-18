@@ -85,6 +85,7 @@ export interface ObjectValidators {
     patternProperties?: Record<string, number>;
     propertyNames?: number;
     dependentRequired?: Record<string, string[]>;
+    additionalProperties?: false;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +103,7 @@ export interface SchemaBuilder<R> {
         variants: T
     ): Complex<{ [K in keyof T]: Infer<T[K]> & { [P in D]: K } }[keyof T], R>;
 
+    refine<T>(typedef: Type<T, R>, fn: (data: T) => boolean): Complex<T, R>;
     string(opts?: any): Primitive<string, R>;
     number(opts?: any): Primitive<number, R>;
     boolean(): Primitive<boolean, R>;
@@ -128,10 +130,10 @@ export interface Registry<R> {
     t: SchemaBuilder<R>;
     v: SchemaBuilder<R>;
 
-    check<T>(data: any, typedef: Primitive<T, R>, strict?: number): data is T;
-    guard<T>(data: any, typedef: Primitive<T, R>): asserts data is T;
-    conform<T>(data: any, typedef: Primitive<T, R>, preserve?: boolean): data is T;
-    diagnose(data: any, typedef: Primitive<number, R>): any[];
+    check<T>(data: any, typedef: Type<T, R>, strict?: number): data is T;
+    guard<T>(data: any, typedef: Type<T, R>, strict?: number): asserts data is T;
+    conform<T>(data: any, typedef: Type<T, R>, preserve?: boolean): data is T;
+    diagnose(data: any, typedef: Type<number, R>): any[];
     validate<T>(data: any, typedef: Type<T, R>): data is T;
 }
 

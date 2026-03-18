@@ -1,7 +1,10 @@
-/// <reference path="types.d.ts" />
+/// <reference path="../global.d.ts" />
 
 /**
  * @record
  * @extends {!IObject<string,number|!Schema>}
  */
-function Schema() {}
+export function Schema() {}
+
+/** @typedef {{path: string, message: string}} */
+export var PathError;
