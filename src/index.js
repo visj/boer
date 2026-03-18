@@ -37,8 +37,25 @@ const K_UNION = 3;
 const KIND_ENUM_MASK = 0xF;
 const HAS_VALIDATOR = 1 << 4;
 
+// Format enum values (string format validator)
+const FMT_EMAIL = 1;
+const FMT_IPV4 = 2;
+const FMT_UUID = 3;
+const FMT_DATETIME = 4;
+
+// Format validation regexes
+const FMT_RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const FMT_RE_IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/;
+const FMT_RE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const FMT_RE_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+const FMT_MAP = { email: FMT_EMAIL, ipv4: FMT_IPV4, uuid: FMT_UUID, 'date-time': FMT_DATETIME };
+
 export const STRIP = true;
 export const PLAIN = true;
+
+export const STRICT_DELETE = 1;
+export const STRICT_REJECT = 2;
 
 const U16 = 1;
 const U32 = 2;
@@ -369,6 +386,12 @@ function registry() {
                 let idx = cache.push(opts.pattern instanceof RegExp ? opts.pattern : new RegExp(opts.pattern)) - 1;
                 payloads.push(idx);
             }
+            if (opts.format !== void 0) {
+                let fmt = FMT_MAP[opts.format];
+                if (fmt === void 0) throw new Error('Unknown string format: ' + opts.format);
+                vHeader |= 8;
+                payloads.push(fmt);
+            }
         } else if (primConst & NUMBER) {
             if (opts.minimum !== void 0) { vHeader |= 1; payloads.push(opts.minimum); }
             if (opts.maximum !== void 0) { vHeader |= 2; payloads.push(opts.maximum); }
@@ -504,6 +527,36 @@ function registry() {
             let payloads = [];
             if (opts.minProperties !== void 0) { vHeader |= 1; payloads.push(opts.minProperties); }
             if (opts.maxProperties !== void 0) { vHeader |= 2; payloads.push(opts.maxProperties); }
+            if (opts.patternProperties !== void 0) {
+                vHeader |= 4;
+                let patterns = Object.keys(opts.patternProperties);
+                let cache = volatile ? V_REGEX_CACHE : REGEX_CACHE;
+                payloads.push(patterns.length);
+                for (let i = 0; i < patterns.length; i++) {
+                    let re = patterns[i] instanceof RegExp ? patterns[i] : new RegExp(patterns[i]);
+                    let idx = cache.push(re) - 1;
+                    payloads.push(idx);
+                    payloads.push(opts.patternProperties[patterns[i]] >>> 0);
+                }
+            }
+            if (opts.propertyNames !== void 0) {
+                vHeader |= 8;
+                payloads.push(opts.propertyNames >>> 0);
+            }
+            if (opts.dependentRequired !== void 0) {
+                vHeader |= 16;
+                let triggers = Object.keys(opts.dependentRequired);
+                payloads.push(triggers.length);
+                for (let i = 0; i < triggers.length; i++) {
+                    let triggerKeyId = lookup(triggers[i]);
+                    let deps = opts.dependentRequired[triggers[i]];
+                    payloads.push(triggerKeyId);
+                    payloads.push(deps.length);
+                    for (let j = 0; j < deps.length; j++) {
+                        payloads.push(lookup(deps[j]));
+                    }
+                }
+            }
             valIdx = allocValidator(vHeader, payloads, volatile);
         }
         if (volatile) {
@@ -596,6 +649,9 @@ function registry() {
             if (opts.minItems !== void 0) { vHeader |= 1; payloads.push(opts.minItems); }
             if (opts.maxItems !== void 0) { vHeader |= 2; payloads.push(opts.maxItems); }
             if (opts.uniqueItems) { vHeader |= 4; }
+            if (opts.contains !== void 0) { vHeader |= 8; payloads.push(opts.contains >>> 0); }
+            if (opts.minContains !== void 0) { vHeader |= 16; payloads.push(opts.minContains); }
+            if (opts.maxContains !== void 0) { vHeader |= 32; payloads.push(opts.maxContains); }
             valIdx = allocValidator(vHeader, payloads, volatile);
         }
         if (volatile) {
@@ -835,10 +891,10 @@ function registry() {
      * @returns {void}
      */
     function guard(data, typedef) {
+        needsWipe = true;
         if (!_check(data, typedef)) {
             throw diagnose(data, typedef);
         }
-        needsWipe = true;
     }
 
     /**
@@ -848,8 +904,8 @@ function registry() {
      * @returns {boolean}
      */
     function conform(data, typedef, preserve) {
-        let result = _conformInner(data, typedef, !preserve);
         needsWipe = true;
+        let result = _conformInner(data, typedef, !preserve);
         return result;
     }
 
@@ -948,8 +1004,8 @@ function registry() {
      * @returns {boolean}
      */
     function strict(data, typedef, strip) {
-        let result = _strictInner(data, typedef, strip);
         needsWipe = true;
+        let result = _strictInner(data, typedef, strip);
         return result;
     }
 
@@ -1098,10 +1154,10 @@ function registry() {
      * @returns {!Array<PathError>}
      */
     function diagnose(data, typedef) {
+        needsWipe = true;
         /** @type {!Array<PathError>} */
         let errors = [];
         _diagnose(data, typedef, '', errors);
-        needsWipe = true;
         return errors;
     }
 
@@ -1260,6 +1316,14 @@ function registry() {
                 let regexCache = volatile ? V_REGEX_CACHE : REGEX_CACHE;
                 if (!regexCache[vals[p++] | 0].test(/** @type {string} */(value))) return false;
             }
+            if (vHeader & 8) {
+                let fmt = vals[p++] | 0;
+                let re = fmt === FMT_EMAIL ? FMT_RE_EMAIL :
+                         fmt === FMT_IPV4 ? FMT_RE_IPV4 :
+                         fmt === FMT_UUID ? FMT_RE_UUID :
+                         fmt === FMT_DATETIME ? FMT_RE_DATETIME : null;
+                if (re && !re.test(/** @type {string} */(value))) return false;
+            }
             return true;
         }
         if (primBits & NUMBER) {
@@ -1289,6 +1353,23 @@ function registry() {
             let set = new Set(data);
             if (set.size !== data.length) return false;
         }
+        if (vHeader & 8) {
+            let containsType = vals[p++] >>> 0;
+            let minC = (vHeader & 16) ? vals[p++] : 1;
+            let maxC = (vHeader & 32) ? vals[p++] : Infinity;
+            let matchCount = 0;
+            for (let i = 0; i < data.length; i++) {
+                if (_validate(data[i], containsType)) {
+                    matchCount++;
+                    if (matchCount > maxC) return false;
+                }
+            }
+            if (matchCount < minC) return false;
+        } else {
+            // Skip minContains/maxContains payloads if no contains
+            if (vHeader & 16) p++;
+            if (vHeader & 32) p++;
+        }
         return true;
     }
 
@@ -1300,11 +1381,52 @@ function registry() {
      */
     function runObjectValidator(data, valIdx, volatile) {
         let vals = volatile ? V_VALIDATORS : VALIDATORS;
+        let regexCache = volatile ? V_REGEX_CACHE : REGEX_CACHE;
         let vHeader = vals[valIdx] | 0;
         let p = valIdx + 1;
-        let keyCount = Object.keys(data).length;
+        let keys = Object.keys(data);
+        let keyCount = keys.length;
         if (vHeader & 1) { if (keyCount < vals[p++]) return false; }
         if (vHeader & 2) { if (keyCount > vals[p++]) return false; }
+        if (vHeader & 4) {
+            // patternProperties: count, then [regexIdx, typeId] pairs
+            let patternCount = vals[p++] | 0;
+            for (let pi = 0; pi < patternCount; pi++) {
+                let reIdx = vals[p++] | 0;
+                let schemaType = vals[p++] >>> 0;
+                let re = regexCache[reIdx];
+                for (let ki = 0; ki < keyCount; ki++) {
+                    if (re.test(keys[ki])) {
+                        if (!_validate(data[keys[ki]], schemaType)) return false;
+                    }
+                }
+            }
+        }
+        if (vHeader & 8) {
+            // propertyNames: typeId of a string schema
+            let nameSchema = vals[p++] >>> 0;
+            for (let ki = 0; ki < keyCount; ki++) {
+                if (!_validate(keys[ki], nameSchema)) return false;
+            }
+        }
+        if (vHeader & 16) {
+            // dependentRequired: triggerCount, then [triggerKeyId, depCount, ...depKeyIds]
+            let triggerCount = vals[p++] | 0;
+            for (let ti = 0; ti < triggerCount; ti++) {
+                let triggerKeyId = vals[p++] | 0;
+                let depCount = vals[p++] | 0;
+                let triggerKey = KEY_INDEX.get(triggerKeyId);
+                if (triggerKey !== void 0 && data[triggerKey] !== void 0) {
+                    for (let di = 0; di < depCount; di++) {
+                        let depKeyId = vals[p++] | 0;
+                        let depKey = KEY_INDEX.get(depKeyId);
+                        if (depKey === void 0 || data[depKey] === void 0) return false;
+                    }
+                } else {
+                    p += depCount;
+                }
+            }
+        }
         return true;
     }
 

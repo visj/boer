@@ -59,6 +59,7 @@ export interface StringValidators {
     minLength?: number;
     maxLength?: number;
     pattern?: RegExp | string;
+    format?: 'email' | 'ipv4' | 'uuid' | 'date-time';
 }
 
 export interface NumberValidators {
@@ -73,11 +74,17 @@ export interface ArrayValidators {
     minItems?: number;
     maxItems?: number;
     uniqueItems?: boolean;
+    contains?: number;
+    minContains?: number;
+    maxContains?: number;
 }
 
 export interface ObjectValidators {
     minProperties?: number;
     maxProperties?: number;
+    patternProperties?: Record<string, number>;
+    propertyNames?: number;
+    dependentRequired?: Record<string, string[]>;
 }
 
 // ---------------------------------------------------------------------------
