@@ -8,14 +8,15 @@
     ],
     /* Enable JS checking without generating output files */
     "noEmit": true,
-    /* Strictness & Module Resolution */
-    "moduleResolution": "node",
     "strict": true,
-    "skipLibCheck": true
+    "checkJs": true,
+    "skipLibCheck": true,
+    "allowJs": true,
+    "module": "node16",
+    "moduleResolution": "node16"
   },
   "include": [
     "src/*.js",
-    "tests/*.js",
     "types/*.d.ts",
     "global.d.ts"
   ]

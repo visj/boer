@@ -1,16 +1,17 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    UNDEFINED, NULL, NUMBER, STRING, STRICT_DELETE, STRICT_REJECT, registry
-} from 'uvd/core';
+    UNDEFINED, NULL, NUMBER, STRING, STRICT_DELETE,
+    STRICT_REJECT, catalog
+} from 'uvd/catalog';
 
-const { t, check } = registry();
+const { t, is } = catalog();
 
 function strictDelete(obj, schema) {
-    return check(obj, schema, STRICT_DELETE);
+    return is(obj, schema, STRICT_DELETE);
 }
 
 function strictReject(obj, schema) {
-    return check(obj, schema, STRICT_REJECT);
+    return is(obj, schema, STRICT_REJECT);
 }
 
 describe('strict reject: flat objects', () => {

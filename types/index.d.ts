@@ -1,26 +1,28 @@
 import { 
-    Primitive, Complex, Schema, SchemaBuilder, Registry,
+    Primitive, Complex, Schema, SchemaBuilder, Catalog,
     NULL, UNDEFINED, BOOLEAN, NUMBER, STRING, DATE, URI,
-    type Primitive, type Complex, type Type, Infer, InferSchema
-} from "./core";
+    type Primitive, type Complex, type Type, type Infer,
+    type InferSchema, type PathError
+} from "./catalog.js";
 
-declare const uvd: unique symbol;
-export type UvdRegistry = typeof uvd;
+declare const UVD: unique symbol;
+export type UVD = typeof UVD;
+
+export declare const uvd: Catalog<UVD>;
 
 // 2. Lock the default builders to this specific symbol
-export const t: SchemaBuilder<UvdRegistry>;
-export const v: SchemaBuilder<UvdRegistry>;
+export declare const t: SchemaBuilder<UVD>;
+export declare const v: SchemaBuilder<UVD>;
 
 // 3. Lock all the default utility functions to the same symbol
-export function check<T>(data: any, typedef: Type<T, UvdRegistry>): data is T;
-export function guard<T>(data: any, typedef: Type<T, UvdRegistry>): asserts data is T;
-export function conform<T>(data: any, typedef: Type<T, UvdRegistry>, preserve?: boolean): data is T;
-export function strict<T>(data: any, typedef: Type<T, UvdRegistry>, strip?: boolean): data is T;
-export function diagnose(data: any, typedef: Type<number, UvdRegistry>): any[];
-export function validate<T>(data: any, typedef: Type<T, UvdRegistry>): data is T;
+export declare function check<T>(data: any, typedef: Type<T, UVD>): data is T;
+export declare function guard<T>(data: any, typedef: Type<T, UVD>): asserts data is T;
+export declare function conform<T>(data: any, typedef: Type<T, UVD>, preserve?: boolean): data is T;
+export declare function validate<T>(data: any, typedef: Type<T, UVD>): data is T;
+export declare function diagnose(data: any, typedef: Type<number, UVD>): PathError[];
 
 export { NULL, UNDEFINED, BOOLEAN, NUMBER, STRING, DATE, URI }
 
-export { Primitive, Complex, Registry }
+export { Primitive, Complex, Catalog as Atlas }
 
 export { Infer, InferSchema, Type, Complex }

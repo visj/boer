@@ -1,9 +1,9 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    UNDEFINED, NULL, NUMBER, STRING, DATE, registry
-} from 'uvd/core';
+    UNDEFINED, NULL, NUMBER, STRING, DATE, catalog
+} from 'uvd/catalog';
 
-const { t, check, conform } = registry();
+const { t, is, conform } = catalog();
 
 describe('discriminated: schema builder', () => {
     test('returns a complex typedef (bit 31 set)', () => {
@@ -37,30 +37,30 @@ describe('validate: basic unions', () => {
     });
 
     test('matches correct variant', () => {
-        expect(check({ type: 'circle', radius: 5 }, ShapeUnion)).toBe(true);
-        expect(check({ type: 'rect', w: 10, h: 20 }, ShapeUnion)).toBe(true);
+        expect(is({ type: 'circle', radius: 5 }, ShapeUnion)).toBe(true);
+        expect(is({ type: 'rect', w: 10, h: 20 }, ShapeUnion)).toBe(true);
     });
 
     test('rejects unknown discriminator value', () => {
-        expect(check({ type: 'triangle', sides: 3 }, ShapeUnion)).toBe(false);
+        expect(is({ type: 'triangle', sides: 3 }, ShapeUnion)).toBe(false);
     });
 
     test('rejects correct discriminator but wrong fields', () => {
-        expect(check({ type: 'circle', radius: 'five' }, ShapeUnion)).toBe(false);
-        expect(check({ type: 'rect', w: 10, h: 'twenty' }, ShapeUnion)).toBe(false);
+        expect(is({ type: 'circle', radius: 'five' }, ShapeUnion)).toBe(false);
+        expect(is({ type: 'rect', w: 10, h: 'twenty' }, ShapeUnion)).toBe(false);
     });
 
     test('rejects missing discriminator', () => {
-        expect(check({ radius: 5 }, ShapeUnion)).toBe(false);
+        expect(is({ radius: 5 }, ShapeUnion)).toBe(false);
     });
 
     test('rejects non-object inputs', () => {
-        expect(check(null, ShapeUnion)).toBe(false);
-        expect(check(undefined, ShapeUnion)).toBe(false);
-        expect(check('circle', ShapeUnion)).toBe(false);
-        expect(check(42, ShapeUnion)).toBe(false);
-        expect(check([], ShapeUnion)).toBe(false);
-        expect(check(true, ShapeUnion)).toBe(false);
+        expect(is(null, ShapeUnion)).toBe(false);
+        expect(is(undefined, ShapeUnion)).toBe(false);
+        expect(is('circle', ShapeUnion)).toBe(false);
+        expect(is(42, ShapeUnion)).toBe(false);
+        expect(is([], ShapeUnion)).toBe(false);
+        expect(is(true, ShapeUnion)).toBe(false);
     });
 });
 
@@ -73,14 +73,14 @@ describe('validate: union with many variants', () => {
     });
 
     test('each variant validates correctly', () => {
-        expect(check({ event: 'click', x: 10, y: 20 }, EventUnion)).toBe(true);
-        expect(check({ event: 'keypress', key: 'a', code: 65 }, EventUnion)).toBe(true);
-        expect(check({ event: 'scroll', dx: 0, dy: -10 }, EventUnion)).toBe(true);
-        expect(check({ event: 'resize', width: 800, height: 600 }, EventUnion)).toBe(true);
+        expect(is({ event: 'click', x: 10, y: 20 }, EventUnion)).toBe(true);
+        expect(is({ event: 'keypress', key: 'a', code: 65 }, EventUnion)).toBe(true);
+        expect(is({ event: 'scroll', dx: 0, dy: -10 }, EventUnion)).toBe(true);
+        expect(is({ event: 'resize', width: 800, height: 600 }, EventUnion)).toBe(true);
     });
 
     test('wrong fields for variant', () => {
-        expect(check({ event: 'click', key: 'a' }, EventUnion)).toBe(false);
+        expect(is({ event: 'click', key: 'a' }, EventUnion)).toBe(false);
     });
 });
 
@@ -91,12 +91,12 @@ describe('validate: union with rich types', () => {
     });
 
     test('validates with Date instances', () => {
-        expect(check({ level: 'info', message: 'ok', ts: new Date() }, LogEntry)).toBe(true);
-        expect(check({ level: 'error', message: 'fail', ts: new Date(), stack: 'at...' }, LogEntry)).toBe(true);
+        expect(is({ level: 'info', message: 'ok', ts: new Date() }, LogEntry)).toBe(true);
+        expect(is({ level: 'error', message: 'fail', ts: new Date(), stack: 'at...' }, LogEntry)).toBe(true);
     });
 
     test('rejects with string dates (validate is strict)', () => {
-        expect(check({ level: 'info', message: 'ok', ts: '2024-01-01' }, LogEntry)).toBe(false);
+        expect(is({ level: 'info', message: 'ok', ts: '2024-01-01' }, LogEntry)).toBe(false);
     });
 });
 
@@ -108,25 +108,25 @@ describe('validate: nullable unions', () => {
 
     test('Union | NULL', () => {
         let type = ShapeUnion | NULL;
-        expect(check(null, type)).toBe(true);
-        expect(check({ type: 'circle', radius: 5 }, type)).toBe(true);
-        expect(check(undefined, type)).toBe(false);
+        expect(is(null, type)).toBe(true);
+        expect(is({ type: 'circle', radius: 5 }, type)).toBe(true);
+        expect(is(undefined, type)).toBe(false);
     });
 
     test('Union | UNDEFINED', () => {
         let type = ShapeUnion | UNDEFINED;
-        expect(check(undefined, type)).toBe(true);
-        expect(check({ type: 'circle', radius: 5 }, type)).toBe(true);
-        expect(check(null, type)).toBe(false);
+        expect(is(undefined, type)).toBe(true);
+        expect(is({ type: 'circle', radius: 5 }, type)).toBe(true);
+        expect(is(null, type)).toBe(false);
     });
 
     test('Union | NULL | UNDEFINED', () => {
         let type = ShapeUnion | NULL | UNDEFINED;
-        expect(check(null, type)).toBe(true);
-        expect(check(undefined, type)).toBe(true);
-        expect(check({ type: 'square', side: 10 }, type)).toBe(true);
-        expect(check({ type: 'triangle' }, type)).toBe(false);
-        expect(check('string', type)).toBe(false);
+        expect(is(null, type)).toBe(true);
+        expect(is(undefined, type)).toBe(true);
+        expect(is({ type: 'square', side: 10 }, type)).toBe(true);
+        expect(is({ type: 'triangle' }, type)).toBe(false);
+        expect(is('string', type)).toBe(false);
     });
 });
 
@@ -138,29 +138,29 @@ describe('validate: union as object field', () => {
 
     test('required union field', () => {
         let schema = t.object({ op: ActionUnion });
-        expect(check({ op: { action: 'create', name: 'item' } }, schema)).toBe(true);
-        expect(check({ op: { action: 'delete', id: 42 } }, schema)).toBe(true);
-        expect(check({ op: null }, schema)).toBe(false);
-        expect(check({}, schema)).toBe(false);
+        expect(is({ op: { action: 'create', name: 'item' } }, schema)).toBe(true);
+        expect(is({ op: { action: 'delete', id: 42 } }, schema)).toBe(true);
+        expect(is({ op: null }, schema)).toBe(false);
+        expect(is({}, schema)).toBe(false);
     });
 
     test('nullable union field', () => {
         let schema = t.object({ op: ActionUnion | NULL });
-        expect(check({ op: null }, schema)).toBe(true);
-        expect(check({ op: { action: 'create', name: 'item' } }, schema)).toBe(true);
+        expect(is({ op: null }, schema)).toBe(true);
+        expect(is({ op: { action: 'create', name: 'item' } }, schema)).toBe(true);
     });
 
     test('optional union field', () => {
         let schema = t.object({ op: ActionUnion | UNDEFINED });
-        expect(check({}, schema)).toBe(true);
-        expect(check({ op: { action: 'delete', id: 1 } }, schema)).toBe(true);
+        expect(is({}, schema)).toBe(true);
+        expect(is({ op: { action: 'delete', id: 1 } }, schema)).toBe(true);
     });
 
     test('nullable optional union field', () => {
         let schema = t.object({ op: ActionUnion | NULL | UNDEFINED });
-        expect(check({}, schema)).toBe(true);
-        expect(check({ op: null }, schema)).toBe(true);
-        expect(check({ op: { action: 'create', name: 'x' } }, schema)).toBe(true);
+        expect(is({}, schema)).toBe(true);
+        expect(is({ op: null }, schema)).toBe(true);
+        expect(is({ op: { action: 'create', name: 'x' } }, schema)).toBe(true);
     });
 });
 
@@ -172,16 +172,16 @@ describe('validate: array of unions', () => {
 
     test('Array<Union>', () => {
         let type = t.array(MsgUnion);
-        expect(check([
+        expect(is([
             { type: 'text', body: 'hello' },
             { type: 'image', url: 'https://vilhelm.se/a.png', width: 200 }
         ], type)).toBe(true);
-        expect(check([], type)).toBe(true);
+        expect(is([], type)).toBe(true);
     });
 
     test('Array<Union | null>', () => {
         let type = t.array(MsgUnion | NULL);
-        expect(check([
+        expect(is([
             { type: 'text', body: 'hello' },
             null,
             { type: 'image', url: 'https://vilhelm.se/a.png', width: 200 }
@@ -190,13 +190,13 @@ describe('validate: array of unions', () => {
 
     test('Array<Union | null> | null', () => {
         let type = t.array(MsgUnion | NULL) | NULL;
-        expect(check(null, type)).toBe(true);
-        expect(check([null, { type: 'text', body: 'hi' }], type)).toBe(true);
+        expect(is(null, type)).toBe(true);
+        expect(is([null, { type: 'text', body: 'hi' }], type)).toBe(true);
     });
 
     test('Array<Union> rejects invalid variants in array', () => {
         let type = t.array(MsgUnion);
-        expect(check([
+        expect(is([
             { type: 'text', body: 'hello' },
             { type: 'video', src: 'x.mp4' }  // unknown variant
         ], type)).toBe(false);
@@ -228,8 +228,8 @@ describe('parse: unions', () => {
 describe('union: edge cases', () => {
     test('single variant union', () => {
         let type = t.union('kind', { only: t.object({ kind: STRING, val: NUMBER }) });
-        expect(check({ kind: 'only', val: 42 }, type)).toBe(true);
-        expect(check({ kind: 'other', val: 42 }, type)).toBe(false);
+        expect(is({ kind: 'only', val: 42 }, type)).toBe(true);
+        expect(is({ kind: 'other', val: 42 }, type)).toBe(false);
     });
 
     test('union variants with optional/nullable fields', () => {
@@ -237,15 +237,15 @@ describe('union: edge cases', () => {
             full: t.object({ mode: STRING, a: NUMBER, b: NUMBER }),
             partial: t.object({ mode: STRING, a: NUMBER, b: NUMBER | UNDEFINED })
         });
-        expect(check({ mode: 'partial', a: 1 }, type)).toBe(true);
-        expect(check({ mode: 'full', a: 1 }, type)).toBe(false); // b required for 'full'
+        expect(is({ mode: 'partial', a: 1 }, type)).toBe(true);
+        expect(is({ mode: 'full', a: 1 }, type)).toBe(false); // b required for 'full'
     });
 
     test('union with extra properties on input (ignored)', () => {
         let type = t.union('kind', {
             x: t.object({ kind: STRING, val: NUMBER })
         });
-        expect(check({ kind: 'x', val: 1, extra: 'ignored' }, type)).toBe(true);
+        expect(is({ kind: 'x', val: 1, extra: 'ignored' }, type)).toBe(true);
     });
 
     test('union where variant has array field', () => {
@@ -253,9 +253,9 @@ describe('union: edge cases', () => {
             list: t.object({ type: STRING, items: t.array(NUMBER) }),
             single: t.object({ type: STRING, item: NUMBER })
         });
-        expect(check({ type: 'list', items: [1, 2, 3] }, type)).toBe(true);
-        expect(check({ type: 'single', item: 42 }, type)).toBe(true);
-        expect(check({ type: 'list', items: [1, '2'] }, type)).toBe(false);
+        expect(is({ type: 'list', items: [1, 2, 3] }, type)).toBe(true);
+        expect(is({ type: 'single', item: 42 }, type)).toBe(true);
+        expect(is({ type: 'list', items: [1, '2'] }, type)).toBe(false);
     });
 
     test('union where variant has nested union field', () => {
@@ -266,15 +266,15 @@ describe('union: edge cases', () => {
         let OuterUnion = t.union('outer', {
             wrap: t.object({ outer: STRING, child: InnerUnion })
         });
-        expect(check({
+        expect(is({
             outer: 'wrap',
             child: { inner: 'a', val: 42 }
         }, OuterUnion)).toBe(true);
-        expect(check({
+        expect(is({
             outer: 'wrap',
             child: { inner: 'b', val: 'hello' }
         }, OuterUnion)).toBe(true);
-        expect(check({
+        expect(is({
             outer: 'wrap',
             child: { inner: 'a', val: 'wrong' }
         }, OuterUnion)).toBe(false);

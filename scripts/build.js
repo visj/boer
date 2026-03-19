@@ -14,7 +14,7 @@ async function buildFormat(format, ext, isModule) {
     // ⚠️ NEW: create a fresh bundle per format
     const bundle = await rolldown({
         input: {
-            core: 'src/core.js',
+            catalog: 'src/catalog.js',
             index: 'src/index.js'
         },
         treeshake: {
@@ -62,7 +62,7 @@ async function buildFormat(format, ext, isModule) {
         });
         // Ugly hack, don't know how to fix it
         if (fileName === 'index.cjs') {
-            minified.code = minified.code.replace('require("./core.js")', 'require("./core.cjs")');
+            minified.code = minified.code.replace('require("./catalog.js")', 'require("./catalog.cjs")');
         }
 
         fs.writeFileSync(path.resolve(outputDir, fileName), minified.code);
@@ -84,8 +84,8 @@ async function build() {
     await buildFormat('cjs', 'cjs', true);
 
     // Copy types
-    if (fs.existsSync('types/core.d.ts')) {
-        fs.copyFileSync('types/core.d.ts', path.resolve(outputDir, 'core.d.ts'));
+    if (fs.existsSync('types/catalog.d.ts')) {
+        fs.copyFileSync('types/catalog.d.ts', path.resolve(outputDir, 'catalog.d.ts'));
     }
     if (fs.existsSync('types/index.d.ts')) {
         fs.copyFileSync('types/index.d.ts', path.resolve(outputDir, 'index.d.ts'));

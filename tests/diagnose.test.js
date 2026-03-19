@@ -1,10 +1,10 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, BOOLEAN, NUMBER,
-    STRING, BIGINT, DATE, URI, registry
-} from 'uvd/core';
+    STRING, BIGINT, DATE, URI, catalog
+} from 'uvd/catalog';
 
-const { t, diagnose } = registry();
+const { t, diagnose } = catalog();
 
 describe('explain: primitives', () => {
     test('no errors for matching type', () => {

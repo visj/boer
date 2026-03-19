@@ -1,10 +1,10 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, BOOLEAN, NUMBER,
-    STRING, BIGINT, DATE, URI, PRIMITIVE, registry
-} from 'uvd/core';
+    STRING, BIGINT, DATE, URI, PRIMITIVE, catalog
+} from 'uvd/catalog';
 
-const { t, check, conform } = registry();
+const { t, is, conform } = catalog();
 
 describe('object: schema builder', () => {
     test('returns a number', () => {
@@ -31,13 +31,13 @@ describe('object: schema builder', () => {
             }
         });
         expect(typeof type).toBe('number');
-        expect(check({ name: 'Alice', address: { street: '123 Main', city: 'NY' } }, type)).toBe(true);
+        expect(is({ name: 'Alice', address: { street: '123 Main', city: 'NY' } }, type)).toBe(true);
     });
 
     test('accepts pre-registered object types', () => {
         let Address = t.object({ street: STRING, city: STRING });
         let Person = t.object({ name: STRING, address: Address });
-        expect(check({ name: 'Bob', address: { street: '456 Oak', city: 'LA' } }, Person)).toBe(true);
+        expect(is({ name: 'Bob', address: { street: '456 Oak', city: 'LA' } }, Person)).toBe(true);
     });
 });
 
@@ -48,46 +48,46 @@ describe('validate: objects', () => {
             n: NUMBER,
             b: BOOLEAN
         });
-        expect(check({ s: 'hello', n: 42, b: true }, schema)).toBe(true);
-        expect(check({ s: 'hello', n: 42, b: 'true' }, schema)).toBe(false);
+        expect(is({ s: 'hello', n: 42, b: true }, schema)).toBe(true);
+        expect(is({ s: 'hello', n: 42, b: 'true' }, schema)).toBe(false);
     });
 
     test('rejects non-objects', () => {
         let schema = t.object({ a: STRING });
-        expect(check('string', schema)).toBe(false);
-        expect(check(42, schema)).toBe(false);
-        expect(check(true, schema)).toBe(false);
-        expect(check(null, schema)).toBe(false);
-        expect(check(undefined, schema)).toBe(false);
-        expect(check([], schema)).toBe(false);
+        expect(is('string', schema)).toBe(false);
+        expect(is(42, schema)).toBe(false);
+        expect(is(true, schema)).toBe(false);
+        expect(is(null, schema)).toBe(false);
+        expect(is(undefined, schema)).toBe(false);
+        expect(is([], schema)).toBe(false);
     });
 
     test('missing fields fail without UNDEFINED flag', () => {
         let schema = t.object({ a: STRING, b: NUMBER });
-        expect(check({ a: 'hello' }, schema)).toBe(false);
-        expect(check({}, schema)).toBe(false);
+        expect(is({ a: 'hello' }, schema)).toBe(false);
+        expect(is({}, schema)).toBe(false);
     });
 
     test('missing fields pass with UNDEFINED flag', () => {
         let schema = t.object({ a: STRING, b: NUMBER | UNDEFINED });
-        expect(check({ a: 'hello' }, schema)).toBe(true);
-        expect(check({ a: 'hello', b: 42 }, schema)).toBe(true);
+        expect(is({ a: 'hello' }, schema)).toBe(true);
+        expect(is({ a: 'hello', b: 42 }, schema)).toBe(true);
     });
 
     test('null fields fail without NULL flag', () => {
         let schema = t.object({ a: STRING, b: NUMBER });
-        expect(check({ a: 'hello', b: null }, schema)).toBe(false);
+        expect(is({ a: 'hello', b: null }, schema)).toBe(false);
     });
 
     test('null fields pass with NULL flag', () => {
         let schema = t.object({ a: STRING, b: NUMBER | NULL });
-        expect(check({ a: 'hello', b: null }, schema)).toBe(true);
-        expect(check({ a: 'hello', b: 42 }, schema)).toBe(true);
+        expect(is({ a: 'hello', b: null }, schema)).toBe(true);
+        expect(is({ a: 'hello', b: 42 }, schema)).toBe(true);
     });
 
     test('extra fields are silently ignored', () => {
         let schema = t.object({ a: STRING });
-        expect(check({ a: 'hello', extra: 999, another: true }, schema)).toBe(true);
+        expect(is({ a: 'hello', extra: 999, another: true }, schema)).toBe(true);
     });
 
     test('nested objects inline', () => {
@@ -97,10 +97,10 @@ describe('validate: objects', () => {
                 age: NUMBER
             }
         });
-        expect(check({ user: { name: 'Alice', age: 30 } }, schema)).toBe(true);
-        expect(check({ user: { name: 'Alice', age: '30' } }, schema)).toBe(false);
-        expect(check({ user: null }, schema)).toBe(false);
-        expect(check({ user: 'Alice' }, schema)).toBe(false);
+        expect(is({ user: { name: 'Alice', age: 30 } }, schema)).toBe(true);
+        expect(is({ user: { name: 'Alice', age: '30' } }, schema)).toBe(false);
+        expect(is({ user: null }, schema)).toBe(false);
+        expect(is({ user: 'Alice' }, schema)).toBe(false);
     });
 
     test('deeply nested objects inline', () => {
@@ -113,9 +113,9 @@ describe('validate: objects', () => {
                 }
             }
         });
-        expect(check({ a: { b: { c: { d: 42 } } } }, schema)).toBe(true);
-        expect(check({ a: { b: { c: { d: '42' } } } }, schema)).toBe(false);
-        expect(check({ a: { b: { c: null } } }, schema)).toBe(false);
+        expect(is({ a: { b: { c: { d: 42 } } } }, schema)).toBe(true);
+        expect(is({ a: { b: { c: { d: '42' } } } }, schema)).toBe(false);
+        expect(is({ a: { b: { c: null } } }, schema)).toBe(false);
     });
 
     test('object with nullable nested object', () => {
@@ -124,20 +124,20 @@ describe('validate: objects', () => {
         // Inner is a complex typedef (COMPLEX bit set + KIND index).
         // NULL sets the NULLABLE bit (1 << 30). OR-ing them together works
         // because NULLABLE is independent of COMPLEX and the KIND index.
-        expect(check({ inner: { x: 5 } }, Outer)).toBe(true);
-        expect(check({ inner: null }, Outer)).toBe(true);
-        expect(check({ inner: { x: 'wrong' } }, Outer)).toBe(false);
-        expect(check({ inner: 'string' }, Outer)).toBe(false);
+        expect(is({ inner: { x: 5 } }, Outer)).toBe(true);
+        expect(is({ inner: null }, Outer)).toBe(true);
+        expect(is({ inner: { x: 'wrong' } }, Outer)).toBe(false);
+        expect(is({ inner: 'string' }, Outer)).toBe(false);
     });
 
     test('nullable registered object field', () => {
         let Point = t.object({ x: NUMBER, y: NUMBER });
         let Schema = t.object({ origin: Point | NULL | UNDEFINED });
-        expect(check({ origin: { x: 1, y: 2 } }, Schema)).toBe(true);
-        expect(check({ origin: null }, Schema)).toBe(true);
-        expect(check({}, Schema)).toBe(true);
-        expect(check({ origin: { x: 1, y: '2' } }, Schema)).toBe(false);
-        expect(check({ origin: 'point' }, Schema)).toBe(false);
+        expect(is({ origin: { x: 1, y: 2 } }, Schema)).toBe(true);
+        expect(is({ origin: null }, Schema)).toBe(true);
+        expect(is({}, Schema)).toBe(true);
+        expect(is({ origin: { x: 1, y: '2' } }, Schema)).toBe(false);
+        expect(is({ origin: 'point' }, Schema)).toBe(false);
     });
 
     test('object with type-union fields', () => {
@@ -147,11 +147,11 @@ describe('validate: objects', () => {
             active: BOOLEAN | UNDEFINED
         });
         // active has UNDEFINED flag, so missing is OK
-        expect(check({ id: 'abc', label: 'hello' }, schema)).toBe(true);
-        expect(check({ id: 'abc', label: 'hello', active: true }, schema)).toBe(true);
-        expect(check({ id: 123, label: null, active: undefined }, schema)).toBe(true);
-        expect(check({ id: 123, label: null }, schema)).toBe(true);
-        expect(check({ id: true, label: 'hello', active: true }, schema)).toBe(false); // id wrong
+        expect(is({ id: 'abc', label: 'hello' }, schema)).toBe(true);
+        expect(is({ id: 'abc', label: 'hello', active: true }, schema)).toBe(true);
+        expect(is({ id: 123, label: null, active: undefined }, schema)).toBe(true);
+        expect(is({ id: 123, label: null }, schema)).toBe(true);
+        expect(is({ id: true, label: 'hello', active: true }, schema)).toBe(false); // id wrong
     });
 });
 
@@ -214,28 +214,28 @@ describe('parse: objects', () => {
 describe('object: field with all types allowed', () => {
     test('VALUE | NULL | UNDEFINED accepts everything', () => {
         let schema = t.object({ any: PRIMITIVE | NULL | UNDEFINED });
-        expect(check({ any: 'string' }, schema)).toBe(true);
-        expect(check({ any: 42 }, schema)).toBe(true);
-        expect(check({ any: true }, schema)).toBe(true);
-        expect(check({ any: BigInt(1) }, schema)).toBe(true);
-        expect(check({ any: new Date() }, schema)).toBe(true);
-        expect(check({ any: new URL('https://vilhelm.se') }, schema)).toBe(true);
-        expect(check({ any: null }, schema)).toBe(true);
-        expect(check({ any: undefined }, schema)).toBe(true);
-        expect(check({}, schema)).toBe(true);  // any is undefined
+        expect(is({ any: 'string' }, schema)).toBe(true);
+        expect(is({ any: 42 }, schema)).toBe(true);
+        expect(is({ any: true }, schema)).toBe(true);
+        expect(is({ any: BigInt(1) }, schema)).toBe(true);
+        expect(is({ any: new Date() }, schema)).toBe(true);
+        expect(is({ any: new URL('https://vilhelm.se') }, schema)).toBe(true);
+        expect(is({ any: null }, schema)).toBe(true);
+        expect(is({ any: undefined }, schema)).toBe(true);
+        expect(is({}, schema)).toBe(true);  // any is undefined
         // But not objects/arrays
-        expect(check({ any: {} }, schema)).toBe(false);
-        expect(check({ any: [] }, schema)).toBe(false);
+        expect(is({ any: {} }, schema)).toBe(false);
+        expect(is({ any: [] }, schema)).toBe(false);
     });
 });
 
 describe('object: empty object', () => {
     test('empty schema matches any object', () => {
         let schema = t.object({});
-        expect(check({}, schema)).toBe(true);
-        expect(check({ extra: true }, schema)).toBe(true);
-        expect(check(null, schema)).toBe(false);
-        expect(check([], schema)).toBe(false);
+        expect(is({}, schema)).toBe(true);
+        expect(is({ extra: true }, schema)).toBe(true);
+        expect(is(null, schema)).toBe(false);
+        expect(is([], schema)).toBe(false);
     });
 });
 
@@ -250,9 +250,9 @@ describe('object: many fields', () => {
             obj['field' + i] = i;
         }
         let schema = t.object(def);
-        expect(check(obj, schema)).toBe(true);
+        expect(is(obj, schema)).toBe(true);
         //@ts-ignore
         obj.field10 = 'wrong';
-        expect(check(obj, schema)).toBe(false);
+        expect(is(obj, schema)).toBe(false);
     });
 });

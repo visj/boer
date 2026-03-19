@@ -1,14 +1,14 @@
 declare const complex: unique symbol;
-declare const registryId: unique symbol;
+declare const atlasId: unique symbol;
 
 export type Primitive<T, R = unknown> = number & {
     readonly __phantom?: T;
-    readonly [registryId]?: (tag: R) => R;
+    readonly [atlasId]?: (tag: R) => R;
 };
 export interface Complex<T, R = unknown> {
     readonly __phantom?: T;
     readonly [complex]: never;
-    readonly [registryId]?: (tag: R) => R;
+    readonly [atlasId]?: (tag: R) => R;
 }
 
 export const NULL: Primitive<null, any>;
@@ -33,7 +33,7 @@ export interface Schema<R> {
     [key: string]: number | Type<any, R> | Schema<R>;
 }
 
-type InferSchema<T extends Schema<any>> = {
+export type InferSchema<T extends Schema<any>> = {
     [K in keyof T]: T[K] extends Primitive<infer U, any> ? U :
     T[K] extends Complex<infer U, any> ? U :
     T[K] extends number ? any :
@@ -83,6 +83,14 @@ export interface ObjectValidators {
     dependentRequired?: Record<string, string[]>;
     additionalProperties?: false;
 }
+
+export interface WhenValidators {
+    if: number;
+    then?: number;
+    else?: number;
+}
+
+export type Validators = StringValidators | NumberValidators | ArrayValidators | ObjectValidators | WhenValidators;
 
 export interface SchemaBuilder<R> {
     object<T extends Schema<R>>(
@@ -149,15 +157,71 @@ export interface PathError {
     message: string;
 }
 
-export interface Registry<R> {
+export interface Catalog<R> {
     t: SchemaBuilder<R>;
     v: SchemaBuilder<R>;
 
-    check<T>(data: any, typedef: Type<T, R>, strict?: number): data is T;
+    is<T>(data: any, typedef: Type<T, R>, strict?: number): data is T;
     guard<T>(data: any, typedef: Type<T, R>, strict?: number): asserts data is T;
     conform<T>(data: any, typedef: Type<T, R>, preserve?: boolean): data is T;
     diagnose(data: any, typedef: Type<number, R>): any[];
     validate<T>(data: any, typedef: Type<T, R>): data is T;
 }
 
-export function registry<R extends symbol>(): Registry<R>;
+export function catalog<R extends symbol>(): Catalog<R>;
+
+// Internal stuff
+
+export declare const U8 = 1;
+export declare const U16 = 2;
+export declare const U32 = 3;
+
+export type u_number = typeof U8 | typeof U16 | typeof U32;
+
+export interface Heap {
+    PTR: number;
+    SLAB_LEN: number;
+    OBJ_LEN: number;
+    OBJ_TYPE: u_number;
+    OBJ_COUNT: number;
+    ARR_LEN: number;
+    ARR_COUNT: number;
+    UNION_LEN: number;
+    UNION_COUNT: number;
+    TUP_LEN: number;
+    TUP_TYPE: u_number;
+    TUP_COUNT: number;
+    MAT_LEN: number;
+    MAT_TYPE: u_number;
+    MAT_COUNT: number;
+    KIND_LEN: number;
+    KIND_PTR: number;
+    VAL_LEN: number;
+    VAL_PTR: number;
+    SLAB: Uint32Array;
+    OBJECTS: Uint16Array | Uint32Array;
+    ARRAYS: Uint32Array;
+    UNIONS: Uint32Array;
+    TUPLES: Uint16Array | Uint32Array;
+    MATCHES: Uint16Array | Uint32Array;
+    KINDS: Uint32Array;
+    VALIDATORS: Float64Array;
+    REGEX_CACHE: RegExp[];
+    CALLBACKS: Array<(...args: any[]) => any>;
+}
+
+export interface HeapConfig {
+    slab: number;
+    objects: number;
+    arrays: number;
+    unions: number;
+    tuples: number;
+    matches: number;
+    kinds: number;
+    validators: number;
+}
+
+export interface Config {
+    t: HeapConfig;
+    v: HeapConfig;
+}

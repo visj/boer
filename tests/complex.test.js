@@ -1,10 +1,10 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, BOOLEAN, NUMBER,
-    STRING, DATE, URI, registry
-} from 'uvd/core';
+    STRING, DATE, URI, catalog
+} from 'uvd/catalog';
 
-const { t, check, conform, diagnose } = registry();
+const { t, is, conform, diagnose } = catalog();
 
 describe('object: inline nesting', () => {
     test('single level inline nesting', () => {
@@ -12,8 +12,8 @@ describe('object: inline nesting', () => {
             name: STRING,
             location: { lat: NUMBER, lng: NUMBER }
         });
-        expect(check({ name: 'HQ', location: { lat: 37.7, lng: -122.4 } }, schema)).toBe(true);
-        expect(check({ name: 'HQ', location: { lat: '37', lng: -122 } }, schema)).toBe(false);
+        expect(is({ name: 'HQ', location: { lat: 37.7, lng: -122.4 } }, schema)).toBe(true);
+        expect(is({ name: 'HQ', location: { lat: '37', lng: -122 } }, schema)).toBe(false);
     });
 
     test('two levels of inline nesting', () => {
@@ -25,16 +25,16 @@ describe('object: inline nesting', () => {
                 }
             }
         });
-        expect(check({ org: { team: { lead: 'Alice', size: 5 } } }, schema)).toBe(true);
-        expect(check({ org: { team: { lead: 'Alice' } } }, schema)).toBe(false);
+        expect(is({ org: { team: { lead: 'Alice', size: 5 } } }, schema)).toBe(true);
+        expect(is({ org: { team: { lead: 'Alice' } } }, schema)).toBe(false);
     });
 
     test('three levels of inline nesting', () => {
         let schema = t.object({
             a: { b: { c: { d: STRING } } }
         });
-        expect(check({ a: { b: { c: { d: 'deep' } } } }, schema)).toBe(true);
-        expect(check({ a: { b: { c: { d: 42 } } } }, schema)).toBe(false);
+        expect(is({ a: { b: { c: { d: 'deep' } } } }, schema)).toBe(true);
+        expect(is({ a: { b: { c: { d: 42 } } } }, schema)).toBe(false);
     });
 
     test('inline nested combined with registered types', () => {
@@ -53,10 +53,10 @@ describe('object: inline nesting', () => {
                 bottomRight: { x: 100, y: 100 }
             }
         };
-        expect(check(valid, schema)).toBe(true);
+        expect(is(valid, schema)).toBe(true);
         //@ts-ignore
         valid.bounds.topLeft.x = 'wrong';
-        expect(check(valid, schema)).toBe(false);
+        expect(is(valid, schema)).toBe(false);
     });
 
     test('inline nested with array fields', () => {
@@ -66,8 +66,8 @@ describe('object: inline nesting', () => {
                 limits: t.array(NUMBER | NULL)
             }
         });
-        expect(check({ config: { tags: ['a'], limits: [1, null] } }, schema)).toBe(true);
-        expect(check({ config: { tags: ['a'], limits: [1, 'x'] } }, schema)).toBe(false);
+        expect(is({ config: { tags: ['a'], limits: [1, null] } }, schema)).toBe(true);
+        expect(is({ config: { tags: ['a'], limits: [1, 'x'] } }, schema)).toBe(false);
     });
 
     test('inline nested with union fields', () => {
@@ -87,7 +87,7 @@ describe('object: inline nesting', () => {
                 fallback: null
             }
         };
-        expect(check(valid, schema)).toBe(true);
+        expect(is(valid, schema)).toBe(true);
     });
 });
 
@@ -191,7 +191,7 @@ describe('real-world: event system', () => {
     });
 
     test('validate rejects unknown event type', () => {
-        expect(check({ event: 'logout', userId: 1, timestamp: new Date() }, EventSchema)).toBe(false);
+        expect(is({ event: 'logout', userId: 1, timestamp: new Date() }, EventSchema)).toBe(false);
     });
 
     test('array of events', () => {
@@ -200,13 +200,13 @@ describe('real-world: event system', () => {
             { event: 'page_view', userId: null, path: '/', timestamp: new Date() },
             { event: 'user_signup', userId: 1, email: 'x@y.com', timestamp: new Date() }
         ];
-        expect(check(batch, BatchSchema)).toBe(true);
+        expect(is(batch, BatchSchema)).toBe(true);
     });
 
     test('nullable array of events', () => {
         let type = t.array(EventSchema) | NULL;
-        expect(check(null, type)).toBe(true);
-        expect(check([], type)).toBe(true);
+        expect(is(null, type)).toBe(true);
+        expect(is([], type)).toBe(true);
     });
 });
 
@@ -241,7 +241,7 @@ describe('real-world: config schema', () => {
             features: ['feature-a', 'feature-b'],
             debug: true
         };
-        expect(check(cfg, ConfigSchema)).toBe(true);
+        expect(is(cfg, ConfigSchema)).toBe(true);
     });
 
     test('validate minimal config', () => {
@@ -254,7 +254,7 @@ describe('real-world: config schema', () => {
             },
             cache: { enabled: false }
         };
-        expect(check(cfg, ConfigSchema)).toBe(true);
+        expect(is(cfg, ConfigSchema)).toBe(true);
     });
 
     test('parse config with optional fields missing', () => {
@@ -275,31 +275,31 @@ describe('cross-function: validate vs parse vs cast consistency', () => {
     test('all three agree on valid data', () => {
         let schema = t.object({ name: STRING, age: NUMBER });
         let data = { name: 'Alice', age: 30 };
-        expect(check(data, schema)).toBe(true);
+        expect(is(data, schema)).toBe(true);
         expect(conform({ ...data }, schema)).toBe(true);
     });
 
     test('validate rejects what parse and cast accept (rich types)', () => {
         let schema = t.object({ ts: DATE });
         let data = { ts: '2024-01-01' };
-        expect(check(data, schema)).toBe(false);  // string ≠ Date
+        expect(is(data, schema)).toBe(false);  // string ≠ Date
         expect(conform({ ts: '2024-01-01' }, schema)).toBe(true);   // parse casts
     });
 
     test('validate and parse reject what cast accepts (native types)', () => {
         let schema = t.object({ n: NUMBER });
         let data = { n: '42' };
-        expect(check(data, schema)).toBe(false);
+        expect(is(data, schema)).toBe(false);
         expect(conform({ n: '42' }, schema)).toBe(false);
     });
 
     test('all three agree on nullability', () => {
         let schema = t.object({ val: NUMBER | NULL });
-        expect(check({ val: null }, schema)).toBe(true);
+        expect(is({ val: null }, schema)).toBe(true);
         expect(conform({ val: null }, schema)).toBe(true);
 
         let schema2 = t.object({ val: NUMBER });
-        expect(check({ val: null }, schema2)).toBe(false);
+        expect(is({ val: null }, schema2)).toBe(false);
         expect(conform({ val: null }, schema2)).toBe(false);
     });
 
@@ -307,11 +307,11 @@ describe('cross-function: validate vs parse vs cast consistency', () => {
         let schema = t.object({ a: STRING, b: NUMBER | NULL, c: BOOLEAN | UNDEFINED });
 
         let valid = { a: 'x', b: null };
-        expect(check(valid, schema)).toBe(true);
+        expect(is(valid, schema)).toBe(true);
         expect(diagnose(valid, schema)).toEqual([]);
 
         let invalid = { a: 42, b: 'wrong' };
-        expect(check(invalid, schema)).toBe(false);
+        expect(is(invalid, schema)).toBe(false);
         expect(diagnose(invalid, schema).length).toBeGreaterThan(0);
     });
 });
@@ -344,7 +344,7 @@ describe('mutation: parse mutates in place', () => {
     test('validate never mutates', () => {
         let schema = t.object({ d: DATE });
         let obj = { d: '2024-01-01' };
-        check(obj, schema);
+        is(obj, schema);
         expect(typeof obj.d).toBe('string');
     });
 });
@@ -354,37 +354,37 @@ describe('edge: adversarial inputs', () => {
     test('object with constructor key', () => {
         let schema = t.object({ constructor: STRING });
         expect(typeof schema).toBe('number');
-        expect(check({ constructor: 'hello' }, schema)).toBe(true);
+        expect(is({ constructor: 'hello' }, schema)).toBe(true);
     });
 
     test('validate with NaN number', () => {
-        expect(check(NaN, NUMBER)).toBe(true);
-        expect(check(NaN, STRING)).toBe(false);
+        expect(is(NaN, NUMBER)).toBe(true);
+        expect(is(NaN, STRING)).toBe(false);
     });
 
     test('validate with -0', () => {
-        expect(check(-0, NUMBER)).toBe(true);
+        expect(is(-0, NUMBER)).toBe(true);
     });
 
     test('validate with empty string', () => {
-        expect(check('', STRING)).toBe(true);
-        expect(check('', NUMBER)).toBe(false);
+        expect(is('', STRING)).toBe(true);
+        expect(is('', NUMBER)).toBe(false);
     });
 
     test('validate with very long string', () => {
         let long = 'x'.repeat(1000000);
-        expect(check(long, STRING)).toBe(true);
+        expect(is(long, STRING)).toBe(true);
     });
 
     test('nested null in object field', () => {
         let schema = t.object({ a: { b: STRING } });
-        expect(check({ a: null }, schema)).toBe(false);
-        expect(check({ a: undefined }, schema)).toBe(false);
+        expect(is({ a: null }, schema)).toBe(false);
+        expect(is({ a: undefined }, schema)).toBe(false);
     });
 
     test('array-like object rejected', () => {
         let schema = t.array(NUMBER);
-        expect(check({ 0: 1, 1: 2, length: 2 }, schema)).toBe(false);
+        expect(is({ 0: 1, 1: 2, length: 2 }, schema)).toBe(false);
     });
 
     test('Date with invalid time', () => {
@@ -393,7 +393,7 @@ describe('edge: adversarial inputs', () => {
         // validate checks instanceof Date, so it passes
         // todo is this really what we want it to do?
         // maybe validate should not accept NaN or invalid date
-        expect(check(invalid, DATE)).toBe(true);
+        expect(is(invalid, DATE)).toBe(true);
     });
 });
 
@@ -402,11 +402,11 @@ describe('edge: shared keys across schemas', () => {
         let A = t.object({ name: STRING, age: NUMBER });
         let B = t.object({ name: NUMBER, age: STRING }); // flipped types!
 
-        expect(check({ name: 'Alice', age: 30 }, A)).toBe(true);
-        expect(check({ name: 'Alice', age: 30 }, B)).toBe(false);
+        expect(is({ name: 'Alice', age: 30 }, A)).toBe(true);
+        expect(is({ name: 'Alice', age: 30 }, B)).toBe(false);
 
-        expect(check({ name: 42, age: 'thirty' }, B)).toBe(true);
-        expect(check({ name: 42, age: 'thirty' }, A)).toBe(false);
+        expect(is({ name: 42, age: 'thirty' }, B)).toBe(true);
+        expect(is({ name: 42, age: 'thirty' }, A)).toBe(false);
     });
 });
 
@@ -416,13 +416,13 @@ describe('edge: multiple arrays registered', () => {
         let strArr = t.array(STRING);
         let nullNumArr = t.array(NUMBER | NULL);
 
-        expect(check([1, 2], numArr)).toBe(true);
-        expect(check([1, 2], strArr)).toBe(false);
+        expect(is([1, 2], numArr)).toBe(true);
+        expect(is([1, 2], strArr)).toBe(false);
 
-        expect(check(['a', 'b'], strArr)).toBe(true);
-        expect(check(['a', 'b'], numArr)).toBe(false);
+        expect(is(['a', 'b'], strArr)).toBe(true);
+        expect(is(['a', 'b'], numArr)).toBe(false);
 
-        expect(check([1, null], nullNumArr)).toBe(true);
-        expect(check([1, null], numArr)).toBe(false);
+        expect(is([1, null], nullNumArr)).toBe(true);
+        expect(is([1, null], numArr)).toBe(false);
     });
 });

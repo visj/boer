@@ -1,10 +1,10 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    BOOLEAN, NUMBER, STRING, DATE, registry,
+    BOOLEAN, NUMBER, STRING, DATE, catalog,
     STRICT_DELETE
-} from 'uvd/core';
+} from 'uvd/catalog';
 
-const { t, check, conform } = registry();
+const { t, is, conform } = catalog();
 
 describe('stress: SLAB growth beyond initial 4096', () => {
     test('register 300 objects with 8 fields each (4800 slab entries)', () => {
@@ -30,14 +30,14 @@ describe('stress: SLAB growth beyond initial 4096', () => {
             return obj;
         };
 
-        expect(check(makeObj(0), first)).toBe(true);
-        expect(check(makeObj(150), mid)).toBe(true);
-        expect(check(makeObj(299), last)).toBe(true);
+        expect(is(makeObj(0), first)).toBe(true);
+        expect(is(makeObj(150), mid)).toBe(true);
+        expect(is(makeObj(299), last)).toBe(true);
 
         // Wrong type should still fail
         let bad = makeObj(0);
         bad['slab_field_0_3'] = 'not-a-number';
-        expect(check(bad, first)).toBe(false);
+        expect(is(bad, first)).toBe(false);
     });
 
     test('single object with 100 fields', () => {
@@ -48,11 +48,11 @@ describe('stress: SLAB growth beyond initial 4096', () => {
             obj['big_field_' + i] = (i % 2 === 0) ? i : 'val_' + i;
         }
         let schema = t.object(def);
-        expect(check(obj, schema)).toBe(true);
+        expect(is(obj, schema)).toBe(true);
 
         // Flip one type
         obj['big_field_50'] = 'should-be-number';
-        expect(check(obj, schema)).toBe(false);
+        expect(is(obj, schema)).toBe(false);
     });
 });
 
@@ -64,12 +64,12 @@ describe('stress: OBJECTS registry growth beyond 256', () => {
         }
 
         // Validate first, middle, last
-        expect(check({ obj_reg_0: 42 }, schemas[0])).toBe(true);
-        expect(check({ obj_reg_250: 42 }, schemas[250])).toBe(true);
-        expect(check({ obj_reg_499: 42 }, schemas[499])).toBe(true);
+        expect(is({ obj_reg_0: 42 }, schemas[0])).toBe(true);
+        expect(is({ obj_reg_250: 42 }, schemas[250])).toBe(true);
+        expect(is({ obj_reg_499: 42 }, schemas[499])).toBe(true);
 
         // Wrong type
-        expect(check({ obj_reg_499: 'wrong' }, schemas[499])).toBe(false);
+        expect(is({ obj_reg_499: 'wrong' }, schemas[499])).toBe(false);
     });
 });
 
@@ -81,15 +81,15 @@ describe('stress: ARRAYS registry growth beyond 128', () => {
             arrTypes.push(t.array(elemType));
         }
 
-        expect(check([1, 2, 3], arrTypes[0])).toBe(true);
-        expect(check(['a', 'b'], arrTypes[1])).toBe(true);
-        expect(check([true, false], arrTypes[2])).toBe(true);
+        expect(is([1, 2, 3], arrTypes[0])).toBe(true);
+        expect(is(['a', 'b'], arrTypes[1])).toBe(true);
+        expect(is([true, false], arrTypes[2])).toBe(true);
 
-        expect(check([1, 2], arrTypes[198])).toBe(true);    // 198 % 3 === 0 -> NUMBER
-        expect(check(['x'], arrTypes[199])).toBe(true);      // 199 % 3 === 1 -> STRING
+        expect(is([1, 2], arrTypes[198])).toBe(true);    // 198 % 3 === 0 -> NUMBER
+        expect(is(['x'], arrTypes[199])).toBe(true);      // 199 % 3 === 1 -> STRING
 
-        expect(check(['wrong'], arrTypes[0])).toBe(false);
-        expect(check([42], arrTypes[1])).toBe(false);
+        expect(is(['wrong'], arrTypes[0])).toBe(false);
+        expect(is([42], arrTypes[1])).toBe(false);
     });
 });
 
@@ -107,15 +107,15 @@ describe('stress: key dictionary growth past 255 (U8 → U16 discriminator upgra
             beta: t.object({ disc_type: STRING, beta_val: STRING })
         });
 
-        expect(check({ disc_type: 'alpha', alpha_val: 42 }, D)).toBe(true);
-        expect(check({ disc_type: 'beta', beta_val: 'hello' }, D)).toBe(true);
-        expect(check({ disc_type: 'gamma' }, D)).toBe(false);
+        expect(is({ disc_type: 'alpha', alpha_val: 42 }, D)).toBe(true);
+        expect(is({ disc_type: 'beta', beta_val: 'hello' }, D)).toBe(true);
+        expect(is({ disc_type: 'gamma' }, D)).toBe(false);
 
         let bigObj = {};
         for (let i = 0; i < 270; i++) {
             bigObj['dictkey_' + i] = i;
         }
-        expect(check(bigObj, bigSchema)).toBe(true);
+        expect(is(bigObj, bigSchema)).toBe(true);
     });
 });
 
@@ -131,14 +131,14 @@ describe('stress: discriminated union registry growth beyond 64', () => {
             ));
         }
 
-        expect(check({ du_kind: 'opt_a_0', du_val_a_: 42 }, discs[0])).toBe(true);
-        expect(check({ du_kind: 'opt_b_0', du_val_b_: 'hi' }, discs[0])).toBe(true);
+        expect(is({ du_kind: 'opt_a_0', du_val_a_: 42 }, discs[0])).toBe(true);
+        expect(is({ du_kind: 'opt_b_0', du_val_b_: 'hi' }, discs[0])).toBe(true);
 
-        expect(check({ du_kind: 'opt_a_99', du_val_a_: 99 }, discs[99])).toBe(true);
-        expect(check({ du_kind: 'opt_b_99', du_val_b_: 'end' }, discs[99])).toBe(true);
+        expect(is({ du_kind: 'opt_a_99', du_val_a_: 99 }, discs[99])).toBe(true);
+        expect(is({ du_kind: 'opt_b_99', du_val_b_: 'end' }, discs[99])).toBe(true);
 
-        expect(check({ du_kind: 'opt_a_0' }, discs[99])).toBe(false);
-        expect(check({ du_kind: 'unknown' }, discs[50])).toBe(false);
+        expect(is({ du_kind: 'opt_a_0' }, discs[99])).toBe(false);
+        expect(is({ du_kind: 'unknown' }, discs[50])).toBe(false);
     });
 });
 
@@ -152,13 +152,13 @@ describe('stress: deeply nested inline objects', () => {
         let schema = t.object(def);
 
         let obj = { l9: { l8: { l7: { l6: { l5: { l4: { l3: { l2: { l1: { l0: 42 } } } } } } } } } };
-        expect(check(obj, schema)).toBe(true);
+        expect(is(obj, schema)).toBe(true);
 
         let bad = { l9: { l8: { l7: { l6: { l5: { l4: { l3: { l2: { l1: { l0: 'wrong' } } } } } } } } } };
-        expect(check(bad, schema)).toBe(false);
+        expect(is(bad, schema)).toBe(false);
 
         let nullMid = { l9: { l8: { l7: null } } };
-        expect(check(nullMid, schema)).toBe(false);
+        expect(is(nullMid, schema)).toBe(false);
     });
 
     test('wide + deep: 5 levels, 5 fields each', () => {
@@ -202,11 +202,11 @@ describe('stress: deeply nested inline objects', () => {
         }
 
         let data = buildData();
-        expect(check(data, schema)).toBe(true);
+        expect(is(data, schema)).toBe(true);
 
         // Corrupt one deep field
         data['wd_root_3']['wd_l1_2']['wd_l2_1']['wd_l3_4']['wd_leaf_0'] = 'wrong';
-        expect(check(data, schema)).toBe(false);
+        expect(is(data, schema)).toBe(false);
     });
 });
 
@@ -235,13 +235,13 @@ describe('stress: combined registries at scale', () => {
 
         // Validate a late object
         let idx = 199;
-        expect(check({ ['mixed_obj_a_' + idx]: 42, ['mixed_obj_b_' + idx]: 'hi' }, objectSchemas[idx])).toBe(true);
-        expect(check({ ['mixed_obj_a_' + idx]: 42, ['mixed_obj_b_' + idx]: 42 }, objectSchemas[idx])).toBe(false);
+        expect(is({ ['mixed_obj_a_' + idx]: 42, ['mixed_obj_b_' + idx]: 'hi' }, objectSchemas[idx])).toBe(true);
+        expect(is({ ['mixed_obj_a_' + idx]: 42, ['mixed_obj_b_' + idx]: 42 }, objectSchemas[idx])).toBe(false);
 
         // Validate a late array
         let arrIdx = 99;
         let objIdx = arrIdx * 2; // 198
-        expect(check([
+        expect(is([
             { ['mixed_obj_a_' + objIdx]: 1, ['mixed_obj_b_' + objIdx]: 'x' }
         ], arraySchemas[arrIdx])).toBe(true);
     });
@@ -283,7 +283,7 @@ describe('stress: parse and strict on large objects', () => {
         }
         let schema = t.object(def);
         expect(Object.keys(obj).length).toBe(50);
-        expect(check(obj, schema, STRICT_DELETE)).toBe(true);
+        expect(is(obj, schema, STRICT_DELETE)).toBe(true);
         expect(Object.keys(obj).length).toBe(30);
         for (let i = 0; i < 30; i++) {
             expect(obj['keep_' + i]).toBe(i);

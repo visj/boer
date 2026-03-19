@@ -1,10 +1,10 @@
 import { describe, test, expect } from 'bun:test';
 import {
     BOOLEAN, NUMBER, STRING,
-    BIGINT, DATE, URI, registry
-} from 'uvd/core';
+    BIGINT, DATE, URI, catalog
+} from 'uvd/catalog';
 
-const { t, v, check, validate } = registry();
+const { t, v, is, validate } = catalog();
 
 describe('validate: primitive builders — no args', () => {
     test('t.string() returns STRING constant', () => {
@@ -38,17 +38,17 @@ describe('validate: primitive builders — with validators', () => {
     });
 });
 
-describe('validate: check() ignores validators', () => {
-    test('check passes structural type even if validator would fail', () => {
+describe('validate: is ignores validators', () => {
+    test('is passes structural type even if validator would fail', () => {
         let td = t.string({ minLength: 5 });
-        expect(check('hi', td)).toBe(true);
-        expect(check('hello world', td)).toBe(true);
-        expect(check(42, td)).toBe(false);
+        expect(is('hi', td)).toBe(true);
+        expect(is('hello world', td)).toBe(true);
+        expect(is(42, td)).toBe(false);
     });
-    test('check passes number even if below minimum', () => {
+    test('is passes number even if below minimum', () => {
         let td = t.number({ minimum: 10 });
-        expect(check(5, td)).toBe(true);
-        expect(check('not a number', td)).toBe(false);
+        expect(is(5, td)).toBe(true);
+        expect(is('not a number', td)).toBe(false);
     });
 });
 
@@ -157,10 +157,10 @@ describe('validate: array validators', () => {
         expect(validate([1, 2, 3], td)).toBe(true);
         expect(validate([1, 2, 2], td)).toBe(false);
     });
-    test('check ignores array validators', () => {
+    test('is ignores array validators', () => {
         let td = t.array(STRING, { minItems: 5 });
-        expect(check(['a'], td)).toBe(true);
-        expect(check([], td)).toBe(true);
+        expect(is(['a'], td)).toBe(true);
+        expect(is([], td)).toBe(true);
     });
     test('array element type still checked', () => {
         let td = t.array(STRING, { minItems: 1 });
@@ -177,9 +177,9 @@ describe('validate: object validators', () => {
         let td = t.object({ name: STRING, age: NUMBER }, { maxProperties: 3 });
         expect(validate({ name: 'Alice', age: 30 }, td)).toBe(true);
     });
-    test('check ignores object validators', () => {
+    test('is ignores object validators', () => {
         let td = t.object({ name: STRING }, { minProperties: 5 });
-        expect(check({ name: 'Alice' }, td)).toBe(true);
+        expect(is({ name: 'Alice' }, td)).toBe(true);
     });
 });
 
@@ -226,7 +226,7 @@ describe('validate: nullable/optional validated types', () => {
 });
 
 describe('validate: plain primitives (no validators)', () => {
-    test('validate works like check for plain primitives', () => {
+    test('validate works like is for plain primitives', () => {
         expect(validate('hello', STRING)).toBe(true);
         expect(validate(42, NUMBER)).toBe(true);
         expect(validate(true, BOOLEAN)).toBe(true);
@@ -266,9 +266,9 @@ describe('validate: string format — email', () => {
         expect(validate('@missing.com', td)).toBe(false);
         expect(validate('user@', td)).toBe(false);
     });
-    test('check ignores format', () => {
+    test('is ignores format', () => {
         let td = t.string({ format: 'email' });
-        expect(check('not-an-email', td)).toBe(true);
+        expect(is('not-an-email', td)).toBe(true);
     });
 });
 
@@ -360,10 +360,10 @@ describe('validate: array contains', () => {
         expect(validate([6, 7, 8], td)).toBe(false); // 3 matches > max 2
         expect(validate([1, 2, 3], td)).toBe(false); // 0 matches < min 1
     });
-    test('check ignores contains', () => {
+    test('is ignores contains', () => {
         let gt10 = t.number({ minimum: 10 });
         let td = t.array(NUMBER, { contains: gt10 });
-        expect(check([1, 2, 3], td)).toBe(true);
+        expect(is([1, 2, 3], td)).toBe(true);
     });
 });
 
@@ -532,14 +532,14 @@ describe('validate: t.refine — complex types', () => {
     });
 });
 
-describe('validate: t.refine — check ignores callback', () => {
-    test('check passes even when refine would reject', () => {
+describe('validate: t.refine — is ignores callback', () => {
+    test('is passes even when refine would reject', () => {
         let td = t.refine(STRING, () => false);
-        expect(check('anything', td)).toBe(true);
+        expect(is('anything', td)).toBe(true);
     });
-    test('check still validates inner type', () => {
+    test('is still validates inner type', () => {
         let td = t.refine(STRING, () => true);
-        expect(check(42, td)).toBe(false);
+        expect(is(42, td)).toBe(false);
     });
 });
 
@@ -598,9 +598,9 @@ describe('validate: additionalProperties: false', () => {
         let td = t.object({ name: STRING, age: t.optional(NUMBER) }, { additionalProperties: false });
         expect(validate({ name: 'Alice' }, td)).toBe(true);
     });
-    test('check ignores additionalProperties', () => {
+    test('is ignores additionalProperties', () => {
         let td = t.object({ name: STRING }, { additionalProperties: false });
-        expect(check({ name: 'Alice', extra: true }, td)).toBe(true);
+        expect(is({ name: 'Alice', extra: true }, td)).toBe(true);
     });
     test('combined with other object validators', () => {
         let td = t.object({ name: STRING }, {
