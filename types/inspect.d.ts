@@ -1,6 +1,6 @@
 import { Heap } from "./catalog.js"
 
-declare module "./catalog" {
+declare module "./catalog.js" {
 
     export interface Dictionary {
         readonly KEY_DICT: Map<string,number>;

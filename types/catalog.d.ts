@@ -1,14 +1,14 @@
 declare const complex: unique symbol;
-declare const atlasId: unique symbol;
+declare const catalogId: unique symbol;
 
 export type Primitive<T, R = unknown> = number & {
     readonly __phantom?: T;
-    readonly [atlasId]?: (tag: R) => R;
+    readonly [catalogId]?: (tag: R) => R;
 };
 export interface Complex<T, R = unknown> {
     readonly __phantom?: T;
     readonly [complex]: never;
-    readonly [atlasId]?: (tag: R) => R;
+    readonly [catalogId]?: (tag: R) => R;
 }
 
 export const NULL: Primitive<null, any>;
@@ -92,8 +92,10 @@ export interface WhenValidators {
 
 export type Validators = StringValidators | NumberValidators | ArrayValidators | ObjectValidators | WhenValidators;
 
+export interface Transformers { }
+
 export interface SchemaBuilder<R> {
-    object<T extends Schema<R>>(
+    object<T extends StrictSchema<R>>(
         definition: T extends StrictSchema<T, R> ? T : StrictSchema<T, R>,
         opts?: any
     ): Complex<InferSchema<T>, R>;
@@ -104,6 +106,14 @@ export interface SchemaBuilder<R> {
     ): Complex<{ [K in keyof T]: Infer<T[K]> & { [P in D]: K } }[keyof T], R>;
 
     refine<T>(typedef: Type<T, R>, fn: (data: T) => boolean): Complex<T, R>;
+
+    transform<
+        TBase extends Type<any, R>,
+        TKey extends keyof Transformers
+    >(
+        typedef: TBase,
+        key: TKey
+    ): Complex<Transformers[TKey], R>;
 
     // Tuple (prefixItems)
     tuple<A>(a: Type<A, R>): Complex<[A], R>;

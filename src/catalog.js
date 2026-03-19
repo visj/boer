@@ -121,7 +121,7 @@ const hasOwnProperty = Object.prototype.hasOwnProperty;
 
 /**
  * @template T
- * @template {cat.Primitive<T> | cat.Complex<T>} D
+ * @template {uvd.cat.Primitive<T> | uvd.cat.Complex<T>} D
  * @param {D} typedef
  * @returns {D}
  */
@@ -132,7 +132,7 @@ function nullable(typedef) {
 
 /**
  * @template T
- * @template {cat.Primitive<T> | cat.Complex<T>} D
+ * @template {uvd.cat.Primitive<T> | uvd.cat.Complex<T>} D
  * @param {D} typedef
  * @returns {D}
  */
@@ -351,16 +351,16 @@ function _isValue(raw, mask) {
 const DEFAULT_T = { slab: 16384, objects: 4096, arrays: 256, unions: 128, tuples: 128, matches: 256, kinds: 2048, validators: 512 };
 const DEFAULT_V = { slab: 1024, objects: 256, arrays: 64, unions: 32, tuples: 32, matches: 64, kinds: 512, validators: 128 };
 /**
- * @type {readonly (keyof cat.HeapConfig)[]}
+ * @type {readonly (keyof uvd.cat.HeapConfig)[]}
  */
 const CONFIG_KEYS = ['slab', 'objects', 'arrays', 'unions', 'tuples', 'matches', 'kinds', 'validators'];
 
 /**
- * @param {cat.Config=} cfg
- * @returns {cat.Config}
+ * @param {uvd.cat.Config=} cfg
+ * @returns {uvd.cat.Config}
  */
 function config(cfg) {
-    /** @type {cat.HeapConfig} */
+    /** @type {uvd.cat.HeapConfig} */
     let t = { slab: DEFAULT_T.slab, objects: DEFAULT_T.objects, arrays: DEFAULT_T.arrays, unions: DEFAULT_T.unions, tuples: DEFAULT_T.tuples, matches: DEFAULT_T.matches, kinds: DEFAULT_T.kinds, validators: DEFAULT_T.validators };
     let v = { slab: DEFAULT_V.slab, objects: DEFAULT_V.objects, arrays: DEFAULT_V.arrays, unions: DEFAULT_V.unions, tuples: DEFAULT_V.tuples, matches: DEFAULT_V.matches, kinds: DEFAULT_V.kinds, validators: DEFAULT_V.validators };
     if (cfg) {
@@ -388,8 +388,8 @@ function config(cfg) {
 
 /**
  * 
- * @param {cat.HeapConfig} cfg 
- * @returns {cat.Heap}
+ * @param {uvd.cat.HeapConfig} cfg 
+ * @returns {uvd.cat.Heap}
  */
 function malloc(cfg) {
     return {
@@ -431,7 +431,7 @@ function malloc(cfg) {
 
 /**
  * @template R
- * @param {cat.Config=} cfg 
+ * @param {uvd.cat.Config=} cfg 
  */
 function catalog(cfg) {
     cfg = config(cfg);
@@ -575,7 +575,7 @@ function catalog(cfg) {
 
     /**
      * @param {number} primConst
-     * @param {!cat.Validators} opts
+     * @param {!uvd.cat.Validators} opts
      * @param {boolean} volatile
      * @returns {{vHeader: number, payloads: !Array<number>}}
      */
@@ -584,7 +584,7 @@ function catalog(cfg) {
         /** @type {!Array<number>} */
         let payloads = [];
         if (primConst & STRING) {
-            const strOpts = /** @type {cat.StringValidators} */(opts);
+            const strOpts = /** @type {uvd.cat.StringValidators} */(opts);
             if (strOpts.minLength !== void 0) {
                 vHeader |= STR_MIN_LENGTH;
                 payloads.push(strOpts.minLength);
@@ -608,7 +608,7 @@ function catalog(cfg) {
                 payloads.push(fmt);
             }
         } else if (primConst & NUMBER) {
-            const nbrOpts = /** @type {!cat.NumberValidators} */(opts);
+            const nbrOpts = /** @type {!uvd.cat.NumberValidators} */(opts);
             if (nbrOpts.minimum !== void 0) {
                 vHeader |= NUM_MINIMUM;
                 payloads.push(nbrOpts.minimum);
@@ -672,10 +672,10 @@ function catalog(cfg) {
 
     /**
      * @template T
-     * @param {cat.Type<T,R>} typedef
+     * @param {uvd.cat.Type<T,R>} typedef
      * @param {function(*): boolean} fn
      * @param {boolean} volatile
-     * @returns {cat.Complex<T, R>}
+     * @returns {uvd.cat.Complex<T, R>}
      */
     function refineImpl(typedef, fn, volatile) {
         assertIsNumber(typedef, 0);
@@ -875,9 +875,9 @@ function catalog(cfg) {
 
     /**
      * @template T
-     * @param {cat.Type<T,R>} valueType
+     * @param {uvd.cat.Type<T,R>} valueType
      * @param {boolean} volatile
-     * @returns {cat.Complex<T,R>}
+     * @returns {uvd.cat.Complex<T,R>}
      */
     function recordImpl(valueType, volatile) {
         assertIsNumber(valueType, 0);
@@ -936,7 +936,7 @@ function catalog(cfg) {
 
     /**
      * @template T
-     * @param {!cat.Type<T,R>} typedef
+     * @param {!uvd.cat.Type<T,R>} typedef
      * @param {boolean} volatile
      * @returns {number}
      */
@@ -947,7 +947,7 @@ function catalog(cfg) {
     }
 
     /**
-     * @param {!cat.WhenValidators} config
+     * @param {!uvd.cat.WhenValidators} config
      * @param {boolean} volatile
      * @returns {number}
      */
@@ -1054,10 +1054,10 @@ function catalog(cfg) {
     /**
      * @throws
      * @template T
-     * @param {!cat.Schema<R>} definition
+     * @param {!uvd.cat.Schema<R>} definition
      * @param {boolean} volatile
-     * @param {cat.ObjectValidators=} opts
-     * @returns {cat.Complex<cat.InferSchema<T>, R>}
+     * @param {uvd.cat.ObjectValidators=} opts
+     * @returns {uvd.cat.Complex<uvd.cat.InferSchema<T>, R>}
      */
     function objectImpl(definition, volatile, opts) {
         let keys = Object.keys(definition);
@@ -1081,7 +1081,7 @@ function catalog(cfg) {
                     }
                 }
             } else if (isObject(type)) {
-                type = objectImpl(/** @type {cat.Schema<R>} */(type), volatile);
+                type = objectImpl(/** @type {uvd.cat.Schema<R>} */(type), volatile);
             } else {
                 throw new Error('Invalid type for key ' + key);
             }
@@ -1158,77 +1158,16 @@ function catalog(cfg) {
             }
             valIdx = allocValidator(vHeader, payloads, volatile);
         }
-        if (volatile) {
-            if (VOL_HEAP.PTR + required > VOL_HEAP.SLAB_LEN) {
-                let buffer = new Uint32Array(VOL_HEAP.SLAB_LEN *= 2);
-                buffer.set(V_SLAB);
-                VOL_HEAP.SLAB = V_SLAB = buffer;
-            }
-            let offset = VOL_HEAP.PTR;
-            for (let i = 0; i < required; i++) {
-                V_SLAB[offset + i] = resolved[i];
-            }
-            if ((VOL_HEAP.OBJ_COUNT + 1) * 2 > VOL_HEAP.OBJ_LEN) {
-                let buffer = VOL_HEAP.OBJ_TYPE === U16 ?
-                    new Uint16Array(VOL_HEAP.OBJ_LEN *= 2) :
-                    new Uint32Array(VOL_HEAP.OBJ_LEN *= 2);
-                buffer.set(V_OBJECTS);
-                VOL_HEAP.OBJECTS = V_OBJECTS = buffer;
-            }
-            if (VOL_HEAP.OBJ_TYPE === U16 && VOL_HEAP.PTR + required > 65535) {
-                let buffer = new Uint32Array(VOL_HEAP.OBJ_LEN);
-                buffer.set(V_OBJECTS);
-                VOL_HEAP.OBJECTS = V_OBJECTS = buffer;
-                VOL_HEAP.OBJ_TYPE = U32;
-            }
-            let id = VOL_HEAP.OBJ_COUNT++;
-            V_OBJECTS[id * 2] = offset;
-            V_OBJECTS[id * 2 + 1] = count;
-            VOL_HEAP.PTR += required;
-            let kindHeader = hasValidator ? (K_OBJECT | HAS_VALIDATOR) : K_OBJECT;
-            let slots = hasValidator ? 3 : 2;
-            let kindPtr = allocKind(kindHeader, id, true, slots);
-            if (hasValidator) {
-                V_KINDS[kindPtr + 2] = valIdx;
-            }
-            //@ts-ignore
-            return (COMPLEX | VOLATILE | kindPtr) >>> 0;
-        }
-        // Permanent path
-        if (HEAP.PTR + required > HEAP.SLAB_LEN) {
-            let buffer = new Uint32Array(HEAP.SLAB_LEN *= 2);
-            buffer.set(SLAB);
-            HEAP.SLAB = SLAB = buffer;
-        }
-        if (HEAP.OBJ_TYPE === U16 && HEAP.PTR + required > 65535) {
-            let buffer = new Uint32Array(HEAP.OBJ_LEN);
-            buffer.set(OBJECTS);
-            HEAP.OBJECTS = OBJECTS = buffer;
-            HEAP.OBJ_TYPE = U32;
-        }
-        let offset = HEAP.PTR;
-        for (let i = 0; i < required; i++) {
-            SLAB[offset + i] = resolved[i];
-        }
-        if ((HEAP.OBJ_COUNT + 1) * 2 > HEAP.OBJ_LEN) {
-            let buffer = HEAP.OBJ_TYPE === U16 ?
-                new Uint16Array(HEAP.OBJ_LEN *= 2) :
-                new Uint32Array(HEAP.OBJ_LEN *= 2);
-            buffer.set(OBJECTS);
-            HEAP.OBJECTS = OBJECTS = buffer;
-        }
-        let id = HEAP.OBJ_COUNT++;
-        OBJECTS[id * 2] = offset;
-        OBJECTS[id * 2 + 1] = count;
-        HEAP.PTR += required;
+        let id = registerObject(resolved, count, volatile);
         let kindHeader = hasValidator ? (K_OBJECT | HAS_VALIDATOR) : K_OBJECT;
         let slots = hasValidator ? 3 : 2;
-        let kindPtr = allocKind(kindHeader, id, false, slots);
+        let kindPtr = allocKind(kindHeader, id, volatile, slots);
         if (hasValidator) {
-            KINDS[kindPtr + 2] = valIdx;
+            let kinds = volatile ? V_KINDS : KINDS;
+            kinds[kindPtr + 2] = valIdx;
         }
         //@ts-ignore
-        return (COMPLEX | kindPtr) >>> 0;
+        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
     }
 
     /**
@@ -1236,8 +1175,8 @@ function catalog(cfg) {
      * @template T
      * @param {number} elemType
      * @param {boolean} volatile
-     * @param {cat.ArrayValidators=} opts
-     * @returns {cat.Complex<cat.InferSchema<T>, R>}
+     * @param {uvd.cat.ArrayValidators=} opts
+     * @returns {uvd.cat.Complex<uvd.cat.InferSchema<T>, R>}
      */
     function arrayImpl(elemType, volatile, opts) {
         assertIsNumber(elemType, ERR_ARRAY_ELEMENT_MUST_BE_NUMBER);
@@ -1272,38 +1211,16 @@ function catalog(cfg) {
             }
             valIdx = allocValidator(vHeader, payloads, volatile);
         }
-        if (volatile) {
-            let index = VOL_HEAP.ARR_COUNT++;
-            if (index >= VOL_HEAP.ARR_LEN) {
-                let buffer = new Uint32Array(VOL_HEAP.ARR_LEN *= 2);
-                buffer.set(V_ARRAYS);
-                VOL_HEAP.ARRAYS = V_ARRAYS = buffer;
-            }
-            V_ARRAYS[index] = elemType >>> 0;
-            let kindHeader = hasVal ? (K_ARRAY | HAS_VALIDATOR) : K_ARRAY;
-            let slots = hasVal ? 3 : 2;
-            let kindPtr = allocKind(kindHeader, index, true, slots);
-            if (hasVal) {
-                V_KINDS[kindPtr + 2] = valIdx;
-            }
-            //@ts-ignore
-            return (COMPLEX | VOLATILE | kindPtr) >>> 0;
-        }
-        let index = HEAP.ARR_COUNT++;
-        if (index >= HEAP.ARR_LEN) {
-            let buffer = new Uint32Array(HEAP.ARR_LEN *= 2);
-            buffer.set(ARRAYS);
-            HEAP.ARRAYS = ARRAYS = buffer;
-        }
-        ARRAYS[index] = elemType >>> 0;
+        let index = registerArray(elemType, volatile);
         let kindHeader = hasVal ? (K_ARRAY | HAS_VALIDATOR) : K_ARRAY;
         let slots = hasVal ? 3 : 2;
-        let kindPtr = allocKind(kindHeader, index, false, slots);
+        let kindPtr = allocKind(kindHeader, index, volatile, slots);
         if (hasVal) {
-            KINDS[kindPtr + 2] = valIdx;
+            let kinds = volatile ? V_KINDS : KINDS;
+            kinds[kindPtr + 2] = valIdx;
         }
         //@ts-ignore
-        return (COMPLEX | kindPtr) >>> 0;
+        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
     }
 
     /**
@@ -1313,7 +1230,7 @@ function catalog(cfg) {
      * @param {D} discriminator
      * @param {!Record<string,number>} variants
      * @param {boolean} volatile
-     * @returns {cat.Complex<{ [K in keyof T]: cat.Infer<T[K]> & { [P in D]: K } }[keyof T], R>}
+     * @returns {uvd.cat.Complex<{ [K in keyof T]: uvd.cat.Infer<T[K]> & { [P in D]: K } }[keyof T], R>}
      */
     function unionImpl(discriminator, variants, volatile) {
         if (
@@ -1343,62 +1260,10 @@ function catalog(cfg) {
         }
 
         let discKeyId = lookup(discriminator);
-
-        if (volatile) {
-            // Write variant pairs onto the volatile slab
-            if (VOL_HEAP.PTR + required > VOL_HEAP.SLAB_LEN) {
-                let buffer = new Uint32Array(VOL_HEAP.SLAB_LEN *= 2);
-                buffer.set(V_SLAB);
-                VOL_HEAP.SLAB = V_SLAB = buffer;
-            }
-            let offset = VOL_HEAP.PTR;
-            for (let i = 0; i < required; i++) {
-                V_SLAB[offset + i] = resolved[i];
-            }
-            VOL_HEAP.PTR += required;
-
-            // Register in UNIONS: [slabOffset, variantCount, discKeyId]
-            let id = VOL_HEAP.UNION_COUNT++;
-            if ((id + 1) * 3 > VOL_HEAP.UNION_LEN) {
-                let buffer = new Uint32Array(VOL_HEAP.UNION_LEN *= 2);
-                buffer.set(V_UNIONS);
-                VOL_HEAP.UNIONS = V_UNIONS = buffer;
-            }
-            V_UNIONS[id * 3] = offset;
-            V_UNIONS[id * 3 + 1] = count;
-            V_UNIONS[id * 3 + 2] = discKeyId;
-
-            let kindId = allocKind(K_UNION, id, true, 2);
-            //@ts-ignore
-            return (COMPLEX | VOLATILE | kindId) >>> 0;
-        }
-
-        // Permanent path: write variant pairs onto the slab
-        if (HEAP.PTR + required > HEAP.SLAB_LEN) {
-            let buffer = new Uint32Array(HEAP.SLAB_LEN *= 2);
-            buffer.set(SLAB);
-            HEAP.SLAB = SLAB = buffer;
-        }
-        let offset = HEAP.PTR;
-        for (let i = 0; i < required; i++) {
-            SLAB[offset + i] = resolved[i];
-        }
-        HEAP.PTR += required;
-
-        // Register in UNIONS: [slabOffset, variantCount, discKeyId]
-        let id = HEAP.UNION_COUNT++;
-        if ((id + 1) * 3 > HEAP.UNION_LEN) {
-            let buffer = new Uint32Array(HEAP.UNION_LEN *= 2);
-            buffer.set(UNIONS);
-            HEAP.UNIONS = UNIONS = buffer;
-        }
-        UNIONS[id * 3] = offset;
-        UNIONS[id * 3 + 1] = count;
-        UNIONS[id * 3 + 2] = discKeyId;
-
-        let kindId = allocKind(K_UNION, id, false, 2);
+        let id = registerUnion(resolved, count, discKeyId, volatile);
+        let kindId = allocKind(K_UNION, id, volatile, 2);
         //@ts-ignore
-        return (COMPLEX | kindId) >>> 0;
+        return (COMPLEX | (volatile ? VOLATILE : 0) | kindId) >>> 0;
     }
 
     /**
@@ -1916,11 +1781,11 @@ function catalog(cfg) {
     /**
      * @param {*} data
      * @param {number} typedef
-     * @returns {!Array<cat.PathError>}
+     * @returns {!Array<uvd.cat.PathError>}
      */
     function diagnose(data, typedef) {
         rewindPending = true;
-        /** @type {!Array<cat.PathError>} */
+        /** @type {!Array<uvd.cat.PathError>} */
         let errors = [];
         _diagnose(data, typedef, '', errors);
         return errors;
@@ -1930,7 +1795,7 @@ function catalog(cfg) {
      * @param {*} data
      * @param {number} typedef
      * @param {string} path
-     * @param {!Array<cat.PathError>} errors
+     * @param {!Array<uvd.cat.PathError>} errors
      * @returns {void}
      */
     function _diagnose(data, typedef, path, errors) {
@@ -2621,7 +2486,155 @@ function catalog(cfg) {
     }
 
     /**
-     * @type {cat.SchemaBuilder<R>}
+     * Writes pre-resolved [keyId, typedef, ...] pairs to SLAB, registers in OBJECTS.
+     * @param {!Array<number>} resolved - sorted [keyId, typedef] pairs
+     * @param {number} count - number of properties (resolved.length / 2)
+     * @param {boolean} volatile
+     * @returns {number} object registry id
+     */
+    function registerObject(resolved, count, volatile) {
+        let required = count * 2;
+        if (volatile) {
+            if (VOL_HEAP.PTR + required > VOL_HEAP.SLAB_LEN) {
+                let buffer = new Uint32Array(VOL_HEAP.SLAB_LEN *= 2);
+                buffer.set(V_SLAB);
+                VOL_HEAP.SLAB = V_SLAB = buffer;
+            }
+            let offset = VOL_HEAP.PTR;
+            for (let i = 0; i < required; i++) {
+                V_SLAB[offset + i] = resolved[i];
+            }
+            if ((VOL_HEAP.OBJ_COUNT + 1) * 2 > VOL_HEAP.OBJ_LEN) {
+                let buffer = VOL_HEAP.OBJ_TYPE === U16 ?
+                    new Uint16Array(VOL_HEAP.OBJ_LEN *= 2) :
+                    new Uint32Array(VOL_HEAP.OBJ_LEN *= 2);
+                buffer.set(V_OBJECTS);
+                VOL_HEAP.OBJECTS = V_OBJECTS = buffer;
+            }
+            if (VOL_HEAP.OBJ_TYPE === U16 && VOL_HEAP.PTR + required > 65535) {
+                let buffer = new Uint32Array(VOL_HEAP.OBJ_LEN);
+                buffer.set(V_OBJECTS);
+                VOL_HEAP.OBJECTS = V_OBJECTS = buffer;
+                VOL_HEAP.OBJ_TYPE = U32;
+            }
+            let id = VOL_HEAP.OBJ_COUNT++;
+            V_OBJECTS[id * 2] = offset;
+            V_OBJECTS[id * 2 + 1] = count;
+            VOL_HEAP.PTR += required;
+            return id;
+        }
+        if (HEAP.PTR + required > HEAP.SLAB_LEN) {
+            let buffer = new Uint32Array(HEAP.SLAB_LEN *= 2);
+            buffer.set(SLAB);
+            HEAP.SLAB = SLAB = buffer;
+        }
+        if (HEAP.OBJ_TYPE === U16 && HEAP.PTR + required > 65535) {
+            let buffer = new Uint32Array(HEAP.OBJ_LEN);
+            buffer.set(OBJECTS);
+            HEAP.OBJECTS = OBJECTS = buffer;
+            HEAP.OBJ_TYPE = U32;
+        }
+        let offset = HEAP.PTR;
+        for (let i = 0; i < required; i++) {
+            SLAB[offset + i] = resolved[i];
+        }
+        if ((HEAP.OBJ_COUNT + 1) * 2 > HEAP.OBJ_LEN) {
+            let buffer = HEAP.OBJ_TYPE === U16 ?
+                new Uint16Array(HEAP.OBJ_LEN *= 2) :
+                new Uint32Array(HEAP.OBJ_LEN *= 2);
+            buffer.set(OBJECTS);
+            HEAP.OBJECTS = OBJECTS = buffer;
+        }
+        let id = HEAP.OBJ_COUNT++;
+        OBJECTS[id * 2] = offset;
+        OBJECTS[id * 2 + 1] = count;
+        HEAP.PTR += required;
+        return id;
+    }
+
+    /**
+     * Registers an element type in ARRAYS.
+     * @param {number} elemType
+     * @param {boolean} volatile
+     * @returns {number} array registry id
+     */
+    function registerArray(elemType, volatile) {
+        if (volatile) {
+            let index = VOL_HEAP.ARR_COUNT++;
+            if (index >= VOL_HEAP.ARR_LEN) {
+                let buffer = new Uint32Array(VOL_HEAP.ARR_LEN *= 2);
+                buffer.set(V_ARRAYS);
+                VOL_HEAP.ARRAYS = V_ARRAYS = buffer;
+            }
+            V_ARRAYS[index] = elemType >>> 0;
+            return index;
+        }
+        let index = HEAP.ARR_COUNT++;
+        if (index >= HEAP.ARR_LEN) {
+            let buffer = new Uint32Array(HEAP.ARR_LEN *= 2);
+            buffer.set(ARRAYS);
+            HEAP.ARRAYS = ARRAYS = buffer;
+        }
+        ARRAYS[index] = elemType >>> 0;
+        return index;
+    }
+
+    /**
+     * Writes variant pairs to SLAB, registers in UNIONS.
+     * @param {!Array<number>} resolved - [keyId, typedef, ...] pairs
+     * @param {number} count - number of variants (resolved.length / 2)
+     * @param {number} discKeyId - discriminator key id
+     * @param {boolean} volatile
+     * @returns {number} union registry id
+     */
+    function registerUnion(resolved, count, discKeyId, volatile) {
+        let required = count * 2;
+        if (volatile) {
+            if (VOL_HEAP.PTR + required > VOL_HEAP.SLAB_LEN) {
+                let buffer = new Uint32Array(VOL_HEAP.SLAB_LEN *= 2);
+                buffer.set(V_SLAB);
+                VOL_HEAP.SLAB = V_SLAB = buffer;
+            }
+            let offset = VOL_HEAP.PTR;
+            for (let i = 0; i < required; i++) {
+                V_SLAB[offset + i] = resolved[i];
+            }
+            VOL_HEAP.PTR += required;
+            let id = VOL_HEAP.UNION_COUNT++;
+            if ((id + 1) * 3 > VOL_HEAP.UNION_LEN) {
+                let buffer = new Uint32Array(VOL_HEAP.UNION_LEN *= 2);
+                buffer.set(V_UNIONS);
+                VOL_HEAP.UNIONS = V_UNIONS = buffer;
+            }
+            V_UNIONS[id * 3] = offset;
+            V_UNIONS[id * 3 + 1] = count;
+            V_UNIONS[id * 3 + 2] = discKeyId;
+            return id;
+        }
+        if (HEAP.PTR + required > HEAP.SLAB_LEN) {
+            let buffer = new Uint32Array(HEAP.SLAB_LEN *= 2);
+            buffer.set(SLAB);
+            HEAP.SLAB = SLAB = buffer;
+        }
+        let offset = HEAP.PTR;
+        for (let i = 0; i < required; i++) {
+            SLAB[offset + i] = resolved[i];
+        }
+        HEAP.PTR += required;
+        let id = HEAP.UNION_COUNT++;
+        if ((id + 1) * 3 > HEAP.UNION_LEN) {
+            let buffer = new Uint32Array(HEAP.UNION_LEN *= 2);
+            buffer.set(UNIONS);
+            HEAP.UNIONS = UNIONS = buffer;
+        }
+        UNIONS[id * 3] = offset;
+        UNIONS[id * 3 + 1] = count;
+        UNIONS[id * 3 + 2] = discKeyId;
+        return id;
+    }
+
+    /**
+     * @type {uvd.cat.SchemaBuilder<R>}
      */
     const t = {
         object: (def, opts) => objectImpl(def, false, opts),
@@ -2646,7 +2659,7 @@ function catalog(cfg) {
     };
 
     /**
-     * @type {cat.SchemaBuilder<R>}
+     * @type {uvd.cat.SchemaBuilder<R>}
      */
     const v = {
         object: (def, opts) => {
@@ -2714,7 +2727,17 @@ function catalog(cfg) {
         KEY_INDEX,
     };
 
-    return { t, v, is, guard, conform, validate, diagnose, __heap: { HEAP, VOL_HEAP, DICT } };
+    return { t, v, is, guard, conform, validate, diagnose, __heap: {
+        HEAP, VOL_HEAP, DICT,
+        allocKind, allocValidator, allocOnSlab, lookup,
+        registerObject, registerArray, registerUnion,
+    } };
 }
 
-export { catalog };
+export {
+    catalog, sortByKeyId,
+    COMPLEX, NULLABLE, OPTIONAL, VOLATILE,
+    K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION, K_REFINE, K_TUPLE,
+    K_RECORD, K_OR, K_EXCLUSIVE, K_INTERSECT, K_NOT, K_CONDITIONAL,
+    HAS_VALIDATOR,
+};
