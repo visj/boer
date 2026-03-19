@@ -1,13 +1,14 @@
-import { describe, it, expect } from "bun:test";
+import { describe, test, expect } from "bun:test";
 import fs from "fs";
 import path from "path";
 
 // Import your internal uvd pipeline (adjust paths as needed)
-import { parseJsonSchema } from "../src/schema.js";
+// import { parseJsonSchema } from "../src/schema.js";
 import { compile } from "../src/ast.js";
 import { catalog } from "../src/catalog.js";
 
-const { validate } = catalog();
+const cat = catalog();
+const { validate } = cat;
 
 // Resolve the path to the draft2020-12 test suite
 // Bun's import.meta.dir points to the directory of the current file
@@ -46,8 +47,8 @@ for (const file of TARGET_FILES) {
 
                 // 1. We attempt to compile the schema ONCE per group
                 try {
-                    const ast = parseJsonSchema(group.schema);
-                    const compiled = compile(ast);
+                    const ast = {};// parseJsonSchema(group.schema);
+                    const compiled = compile(cat, ast);
                     compiledRoot = compiled.root;
                 } catch (err) {
                     // We catch the error but don't throw it yet. 
@@ -57,7 +58,7 @@ for (const file of TARGET_FILES) {
 
                 // 2. Loop through every payload test for this schema
                 for (const testCase of group.tests) {
-                    it(testCase.description, () => {
+                    test(testCase.description, () => {
                         
                         // If your parser or compiler isn't ready for this schema syntax, 
                         // the test fails immediately, telling you what you need to build next.
