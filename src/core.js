@@ -35,6 +35,13 @@ const K_OBJECT = 1;
 const K_ARRAY = 2;
 const K_UNION = 3;
 const K_REFINE = 4;
+const K_TUPLE = 5;
+const K_RECORD = 6;
+const K_OR = 7;
+const K_EXCLUSIVE = 8;
+const K_INTERSECT = 9;
+const K_NOT = 10;
+const K_CONDITIONAL = 11;
 
 const KIND_ENUM_MASK = 0xF;
 const HAS_VALIDATOR = 1 << 4;
@@ -96,14 +103,28 @@ const STRICT_MODE_MASK = 0b11;
 const U16 = 1;
 const U32 = 2;
 
+const ERR_ARRAY_ELEMENT_MUST_BE_NUMBER = 0;
+
+/**
+ * @type {!Array<string>}
+ */
+const ERROR_MESSAGES = [
+    'array element type must be a number typedef'
+]
+
 /** @const @type {symbol} */
 var FAIL = Symbol('FAIL');
 
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 
-// ---------------------------------------------------------------------------
-// Stateless helpers (module-level — no registry state needed)
-// ---------------------------------------------------------------------------
+/**
+ * 
+ * @param {*} val 
+ * @returns {boolean}
+ */
+function isNumber(val) {
+    return typeof val === 'number';
+}
 
 /**
  * @param {number} typedef
@@ -119,6 +140,18 @@ function nullable(typedef) {
  */
 function optional(typedef) {
     return (typedef | OPTIONAL) >>> 0;
+}
+
+/**
+ * @throws
+ * @param {boolean} condition 
+ * @param {number} errorId
+ * @returns {void}
+ */
+function assert(condition, errorId) {
+    if (!condition) {
+        throw new Error(ERROR_MESSAGES[errorId]);
+    }
 }
 
 /**
@@ -184,21 +217,6 @@ function sortByKeyId(buffer) {
     }
 
     quicksort(0, (buffer.length >> 1) - 1);
-}
-
-/**
- * @param {*} raw
- * @param {number} type
- * @returns {number}
- */
-function checkNullish(raw, type) {
-    return (
-        raw === void 0
-            ? ((type & OPTIONAL) ? 1 : 0)
-            : raw === null
-                ? ((type & NULLABLE) ? 1 : 0)
-                : -1
-    );
 }
 
 /**
@@ -313,12 +331,26 @@ function registry() {
     let ARRAYS = new Uint32Array(ARR_LEN);
     let ARR_COUNT = 0;
 
+    // --- UNIONS registry: [slabOffset, variantCount, discKeyId] triples ---
     let UNION_LEN = 128;
-    let UNION_TYPE = U16;
-    /** @const @type {!Array<!Uint32Array>} */
-    let DISC_UNIONS = [];
+    let UNION_COUNT = 0;
+    /** @type {!Uint32Array} */
+    let UNIONS = new Uint32Array(UNION_LEN);
+
+    // --- TUPLES registry: [slabOffset, count] pairs ---
+    let TUP_LEN = 128;
+    let TUP_TYPE = U16;
+    let TUP_COUNT = 0;
     /** @type {!Uint16Array | !Uint32Array} */
-    let UNIONS = new Uint16Array(UNION_LEN);
+    let TUPLES = new Uint16Array(TUP_LEN);
+
+    // --- MATCHES registry: used by K_OR, K_EXCLUSIVE, K_INTERSECT, K_CONDITIONAL ---
+    // Stores [slabOffset, count] pairs
+    let MAT_LEN = 256;
+    let MAT_TYPE = U16;
+    let MAT_COUNT = 0;
+    /** @type {!Uint16Array | !Uint32Array} */
+    let MATCHES = new Uint16Array(MAT_LEN);
 
     let KIND_LEN = 2048;
     let KIND_PTR = 0;
@@ -342,12 +374,23 @@ function registry() {
     let V_ARRAYS = new Uint32Array(V_ARR_LEN);
     let V_ARR_COUNT = 0;
 
+    // --- VOLATILE UNIONS registry ---
     let V_UNION_LEN = 32;
-    let V_UNION_TYPE = U16;
-    /** @const @type {!Array<!Uint32Array>} */
-    let V_DISC_UNIONS = [];
+    let V_UNION_COUNT = 0;
+    /** @type {!Uint32Array} */
+    let V_UNIONS = new Uint32Array(V_UNION_LEN);
+
+    let V_TUP_LEN = 32;
+    let V_TUP_TYPE = U16;
+    let V_TUP_COUNT = 0;
     /** @type {!Uint16Array | !Uint32Array} */
-    let V_UNIONS = new Uint16Array(V_UNION_LEN);
+    let V_TUPLES = new Uint16Array(V_TUP_LEN);
+
+    let V_MAT_LEN = 64;
+    let V_MAT_TYPE = U16;
+    let V_MAT_COUNT = 0;
+    /** @type {!Uint16Array | !Uint32Array} */
+    let V_MATCHES = new Uint16Array(V_MAT_LEN);
 
     let V_KIND_LEN = 512;
     let V_KIND_PTR = 0;
@@ -387,9 +430,11 @@ function registry() {
         V_PTR = 0;
         V_OBJ_COUNT = 0;
         V_ARR_COUNT = 0;
+        V_TUP_COUNT = 0;
+        V_MAT_COUNT = 0;
+        V_UNION_COUNT = 0;
         V_KIND_PTR = 0;
         V_VAL_PTR = 0;
-        V_DISC_UNIONS.length = 0;
         V_REGEX_CACHE.length = 0;
         V_CALLBACKS.length = 0;
         rewindPending = false;
@@ -598,14 +643,270 @@ function registry() {
     }
 
     /**
+     * Helper to normalize variadic (a, b, c) or array-first ([a, b, c]) args
+     * into a flat array of types.
+     * @param {*} first
+     * @param {*} second
+     * @param {*} third
+     * @returns {!Array<number>}
+     */
+    function normalizeTypeArgs(first, second, third) {
+        if (Array.isArray(first)) {
+            return first;
+        }
+        if (third !== void 0) {
+            return [first, second, third];
+        }
+        if (second !== void 0) {
+            return [first, second];
+        }
+        return [first];
+    }
+
+    /**
+     * Allocate entries on the SLAB and register in a typed registry (TUPLES or MATCHES).
+     * @param {!Array<number>} types
+     * @param {boolean} volatile
+     * @param {string} kind - 'tuple' or 'match'
+     * @returns {number} registry index
+     */
+    function allocOnSlab(types, volatile, kind) {
+        let count = types.length;
+        let slab = volatile ? V_SLAB : SLAB;
+        let ptr = volatile ? V_PTR : PTR;
+
+        // Grow slab if needed
+        if (volatile) {
+            if (ptr + count > V_SLAB_LEN) {
+                let buffer = new Uint32Array(V_SLAB_LEN *= 2);
+                buffer.set(V_SLAB);
+                V_SLAB = buffer;
+                slab = V_SLAB;
+            }
+        } else {
+            if (ptr + count > SLAB_LEN) {
+                let buffer = new Uint32Array(SLAB_LEN *= 2);
+                buffer.set(SLAB);
+                SLAB = buffer;
+                slab = SLAB;
+            }
+        }
+
+        let offset = ptr;
+        for (let i = 0; i < count; i++) {
+            slab[offset + i] = types[i] >>> 0;
+        }
+
+        if (volatile) {
+            V_PTR += count;
+        } else {
+            PTR += count;
+        }
+
+        // Register in the appropriate registry
+        if (kind === 'tuple') {
+            let tuples = volatile ? V_TUPLES : TUPLES;
+            let id = volatile ? V_TUP_COUNT++ : TUP_COUNT++;
+            let len = volatile ? V_TUP_LEN : TUP_LEN;
+
+            if ((id + 1) * 2 > len) {
+                if (volatile) {
+                    let buffer = V_TUP_TYPE === U16 ?
+                        new Uint16Array(V_TUP_LEN *= 2) :
+                        new Uint32Array(V_TUP_LEN *= 2);
+                    buffer.set(V_TUPLES);
+                    V_TUPLES = buffer;
+                    tuples = V_TUPLES;
+                } else {
+                    let buffer = TUP_TYPE === U16 ?
+                        new Uint16Array(TUP_LEN *= 2) :
+                        new Uint32Array(TUP_LEN *= 2);
+                    buffer.set(TUPLES);
+                    TUPLES = buffer;
+                    tuples = TUPLES;
+                }
+            }
+
+            // Check U16 overflow
+            if (volatile) {
+                if (V_TUP_TYPE === U16 && offset > 65535) {
+                    let buffer = new Uint32Array(V_TUP_LEN);
+                    buffer.set(V_TUPLES);
+                    V_TUPLES = buffer;
+                    V_TUP_TYPE = U32;
+                    tuples = V_TUPLES;
+                }
+            } else {
+                if (TUP_TYPE === U16 && offset > 65535) {
+                    let buffer = new Uint32Array(TUP_LEN);
+                    buffer.set(TUPLES);
+                    TUPLES = buffer;
+                    TUP_TYPE = U32;
+                    tuples = TUPLES;
+                }
+            }
+
+            tuples[id * 2] = offset;
+            tuples[id * 2 + 1] = count;
+            return id;
+        }
+
+        // kind === 'match'
+        let matches = volatile ? V_MATCHES : MATCHES;
+        let id = volatile ? V_MAT_COUNT++ : MAT_COUNT++;
+        let len = volatile ? V_MAT_LEN : MAT_LEN;
+
+        if ((id + 1) * 2 > len) {
+            if (volatile) {
+                let buffer = V_MAT_TYPE === U16 ?
+                    new Uint16Array(V_MAT_LEN *= 2) :
+                    new Uint32Array(V_MAT_LEN *= 2);
+                buffer.set(V_MATCHES);
+                V_MATCHES = buffer;
+                matches = V_MATCHES;
+            } else {
+                let buffer = MAT_TYPE === U16 ?
+                    new Uint16Array(MAT_LEN *= 2) :
+                    new Uint32Array(MAT_LEN *= 2);
+                buffer.set(MATCHES);
+                MATCHES = buffer;
+                matches = MATCHES;
+            }
+        }
+
+        if (volatile) {
+            if (V_MAT_TYPE === U16 && offset > 65535) {
+                let buffer = new Uint32Array(V_MAT_LEN);
+                buffer.set(V_MATCHES);
+                V_MATCHES = buffer;
+                V_MAT_TYPE = U32;
+                matches = V_MATCHES;
+            }
+        } else {
+            if (MAT_TYPE === U16 && offset > 65535) {
+                let buffer = new Uint32Array(MAT_LEN);
+                buffer.set(MATCHES);
+                MATCHES = buffer;
+                MAT_TYPE = U32;
+                matches = MATCHES;
+            }
+        }
+
+        matches[id * 2] = offset;
+        matches[id * 2 + 1] = count;
+        return id;
+    }
+
+    /**
+     * @param {!Array<number>} types
+     * @param {boolean} volatile
+     * @returns {number}
+     */
+    function tupleImpl(types, volatile) {
+        let id = allocOnSlab(types, volatile, 'tuple');
+        let kindPtr = allocKind(K_TUPLE, id, volatile, 2);
+        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
+    }
+
+    /**
+     * @param {number} valueType
+     * @param {boolean} volatile
+     * @returns {number}
+     */
+    function recordImpl(valueType, volatile) {
+        let kindPtr = allocKind(K_RECORD, valueType >>> 0, volatile, 2);
+        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
+    }
+
+    /**
+     * @param {!Array<number>} types
+     * @param {boolean} volatile
+     * @returns {number}
+     */
+    function orImpl(types, volatile) {
+        // Fast path: if all inputs are raw primitives (no COMPLEX bit),
+        // just OR the bits together — no allocation needed.
+        let allPrimitive = true;
+        let merged = 0;
+        let length = types.length;
+        for (let i = 0; i < length; i++) {
+            if (types[i] & COMPLEX) {
+                allPrimitive = false;
+                break;
+            }
+            merged |= types[i];
+        }
+        if (allPrimitive) {
+            return merged >>> 0;
+        }
+        let id = allocOnSlab(types, volatile, 'match');
+        let kindPtr = allocKind(K_OR, id, volatile, 2);
+        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
+    }
+
+    /**
+     * @param {!Array<number>} types
+     * @param {boolean} volatile
+     * @returns {number}
+     */
+    function exclusiveImpl(types, volatile) {
+        let id = allocOnSlab(types, volatile, 'match');
+        let kindPtr = allocKind(K_EXCLUSIVE, id, volatile, 2);
+        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
+    }
+
+    /**
+     * @param {!Array<number>} types
+     * @param {boolean} volatile
+     * @returns {number}
+     */
+    function intersectImpl(types, volatile) {
+        let id = allocOnSlab(types, volatile, 'match');
+        let kindPtr = allocKind(K_INTERSECT, id, volatile, 2);
+        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
+    }
+
+    /**
+     * @param {number} typedef
+     * @param {boolean} volatile
+     * @returns {number}
+     */
+    function notImpl(typedef, volatile) {
+        let kindPtr = allocKind(K_NOT, typedef >>> 0, volatile, 2);
+        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
+    }
+
+    /**
+     * @param {!Object} config - { if: number, then?: number, else?: number }
+     * @param {boolean} volatile
+     * @returns {number}
+     */
+    function whenImpl(config, volatile) {
+        // Always store 3 slots: [if, then, else]
+        // Use 0 as sentinel for "no constraint" (always passes)
+        let types = [
+            config.if >>> 0,
+            config.then !== void 0 ? config.then >>> 0 : 0,
+            config.else !== void 0 ? config.else >>> 0 : 0
+        ];
+        let id = allocOnSlab(types, volatile, 'match');
+        let kindPtr = allocKind(K_CONDITIONAL, id, volatile, 2);
+        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
+    }
+
+    /**
      * @param {number} type
      * @returns {string}
      */
     function describeType(type) {
         /** @type {!Array<string>} */
         let parts = [];
-        if (type & OPTIONAL) parts.push('undefined');
-        if (type & NULLABLE) parts.push('null');
+        if (type & OPTIONAL) {
+            parts.push('undefined');
+        }
+        if (type & NULLABLE) {
+            parts.push('null');
+        }
         if (type & COMPLEX) {
             let volatile = (type & VOLATILE) !== 0;
             let ptr = type & KIND_MASK;
@@ -640,6 +941,20 @@ function registry() {
                 parts.push('Object');
             } else if (ct === K_REFINE) {
                 parts.push('Refined');
+            } else if (ct === K_TUPLE) {
+                parts.push('Tuple');
+            } else if (ct === K_RECORD) {
+                parts.push('Record');
+            } else if (ct === K_OR) {
+                parts.push('Or');
+            } else if (ct === K_EXCLUSIVE) {
+                parts.push('Exclusive');
+            } else if (ct === K_INTERSECT) {
+                parts.push('Intersect');
+            } else if (ct === K_NOT) {
+                parts.push('Not');
+            } else if (ct === K_CONDITIONAL) {
+                parts.push('Conditional');
             }
         } else {
             if (type & BOOLEAN) {
@@ -704,7 +1019,7 @@ function registry() {
             resolved[j] = lookup(key);
             resolved[j + 1] = /** @type {number} */(type) >>> 0;
         }
-        /* 
+        /**
          * Every object is stored sorted by keyId into the slab storage.
          * The entire object is placed like this:
          * 
@@ -841,9 +1156,7 @@ function registry() {
      * @returns {number}
      */
     function arrayImpl(elemType, volatile, opts) {
-        if (typeof elemType !== 'number') {
-            throw new Error('array element type must be a number typedef');
-        }
+        assert(isNumber(elemType), ERR_ARRAY_ELEMENT_MUST_BE_NUMBER);
         let hasVal = opts !== void 0;
         let valIdx = 0;
         if (hasVal) {
@@ -923,52 +1236,74 @@ function registry() {
         }
         let keys = Object.keys(variants);
         let count = keys.length;
-        let storage = new Uint32Array(count * 2);
+        let required = count * 2;
+
+        // Resolve variant [keyId, type] pairs
+        /** @type {!Array<number>} */
+        let resolved = new Array(required);
         for (let i = 0; i < count; i++) {
             let type = variants[keys[i]];
             if (typeof type !== 'number') {
                 throw new Error('Invalid variant type for key ' + keys[i]);
             }
-            storage[i * 2] = lookup(keys[i]);
-            storage[i * 2 + 1] = type >>> 0;
+            resolved[i * 2] = lookup(keys[i]);
+            resolved[i * 2 + 1] = type >>> 0;
         }
+
+        let discKeyId = lookup(discriminator);
+
         if (volatile) {
-            let index = V_DISC_UNIONS.push(storage) - 1;
-            if (index >= V_UNION_LEN) {
-                let buffer = V_UNION_TYPE === U16 ?
-                    new Uint16Array(V_UNION_LEN *= 2) :
-                    new Uint32Array(V_UNION_LEN *= 2);
+            // Write variant pairs onto the volatile slab
+            if (V_PTR + required > V_SLAB_LEN) {
+                let buffer = new Uint32Array(V_SLAB_LEN *= 2);
+                buffer.set(V_SLAB);
+                V_SLAB = buffer;
+            }
+            let offset = V_PTR;
+            for (let i = 0; i < required; i++) {
+                V_SLAB[offset + i] = resolved[i];
+            }
+            V_PTR += required;
+
+            // Register in UNIONS: [slabOffset, variantCount, discKeyId]
+            let id = V_UNION_COUNT++;
+            if ((id + 1) * 3 > V_UNION_LEN) {
+                let buffer = new Uint32Array(V_UNION_LEN *= 2);
                 buffer.set(V_UNIONS);
                 V_UNIONS = buffer;
             }
-            let id = lookup(discriminator);
-            if (V_UNION_TYPE === U16 && keyseq > 65535) {
-                let buffer = new Uint32Array(V_UNION_LEN);
-                buffer.set(V_UNIONS);
-                V_UNIONS = buffer;
-                V_UNION_TYPE = U32;
-            }
-            V_UNIONS[index] = id;
-            let kindId = allocKind(K_UNION, index, true, 2);
+            V_UNIONS[id * 3] = offset;
+            V_UNIONS[id * 3 + 1] = count;
+            V_UNIONS[id * 3 + 2] = discKeyId;
+
+            let kindId = allocKind(K_UNION, id, true, 2);
             return (COMPLEX | VOLATILE | kindId) >>> 0;
         }
-        let index = DISC_UNIONS.push(storage) - 1;
-        if (index >= UNION_LEN) {
-            let buffer = UNION_TYPE === U16 ?
-                new Uint16Array(UNION_LEN *= 2) :
-                new Uint32Array(UNION_LEN *= 2);
+
+        // Permanent path: write variant pairs onto the slab
+        if (PTR + required > SLAB_LEN) {
+            let buffer = new Uint32Array(SLAB_LEN *= 2);
+            buffer.set(SLAB);
+            SLAB = buffer;
+        }
+        let offset = PTR;
+        for (let i = 0; i < required; i++) {
+            SLAB[offset + i] = resolved[i];
+        }
+        PTR += required;
+
+        // Register in UNIONS: [slabOffset, variantCount, discKeyId]
+        let id = UNION_COUNT++;
+        if ((id + 1) * 3 > UNION_LEN) {
+            let buffer = new Uint32Array(UNION_LEN *= 2);
             buffer.set(UNIONS);
             UNIONS = buffer;
         }
-        let id = lookup(discriminator);
-        if (UNION_TYPE === U16 && keyseq > 65535) {
-            let buffer = new Uint32Array(UNION_LEN);
-            buffer.set(UNIONS);
-            UNIONS = buffer;
-            UNION_TYPE = U32;
-        }
-        UNIONS[index] = id;
-        let kindId = allocKind(K_UNION, index, false, 2);
+        UNIONS[id * 3] = offset;
+        UNIONS[id * 3 + 1] = count;
+        UNIONS[id * 3 + 2] = discKeyId;
+
+        let kindId = allocKind(K_UNION, id, false, 2);
         return (COMPLEX | kindId) >>> 0;
     }
 
@@ -980,20 +1315,16 @@ function registry() {
      * @returns {boolean}
      */
     function _parseSlot(holder, slot, type, reify) {
-        let raw = holder[slot];
-        let nc = /*@__INLINE__*/ checkNullish(raw, type);
-        if (nc === 0) {
-            return false;
-        }
-        if (nc === 1) {
-            return true;
+        let data = holder[slot];
+        if (data == null) {
+            return (data === null ? (type & NULLABLE) : (type & OPTIONAL)) !== 0;
         }
         if (type & COMPLEX) {
-            return _conform(raw, type, reify);
+            return _conform(data, type, reify);
         }
         let vm = type & PRIM_MASK;
         if (vm !== 0) {
-            let result = parseValue(raw, vm, reify);
+            let result = parseValue(data, vm, reify);
             if (result === FAIL) return false;
             holder[slot] = result;
             return true;
@@ -1134,26 +1465,148 @@ function registry() {
                     return false;
                 }
                 let unions = volatile ? V_UNIONS : UNIONS;
-                let discKey = KEY_INDEX.get(unions[ri]);
+                let slab = volatile ? V_SLAB : SLAB;
+                let discKey = KEY_INDEX.get(unions[ri * 3 + 2]);
                 if (discKey === void 0) {
                     return false;
                 }
-                let discUnions = volatile ? V_DISC_UNIONS : DISC_UNIONS;
                 let valueId = KEY_DICT.get(data[discKey]);
                 if (valueId === void 0) {
                     return false;
                 }
-                let variants = discUnions[ri];
-                let length = variants.length;
-                for (let i = 0; i < length; i += 2) {
-                    if (variants[i] === valueId) {
-                        return _check(data, variants[i + 1], strict);
+                let offset = unions[ri * 3];
+                let length = unions[ri * 3 + 1];
+                for (let i = 0; i < length; i++) {
+                    if (slab[offset + i * 2] === valueId) {
+                        return _check(data, slab[offset + i * 2 + 1], strict);
                     }
                 }
                 return false;
             }
             if (ct === K_REFINE) {
                 return _check(data, ri, strict);
+            }
+            if (ct === K_TUPLE) {
+                if (!Array.isArray(data)) {
+                    return false;
+                }
+                let tuples = volatile ? V_TUPLES : TUPLES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = tuples[ri * 2];
+                let length = tuples[ri * 2 + 1];
+                if (data.length !== length) {
+                    return false;
+                }
+                for (let i = 0; i < length; i++) {
+                    let elemType = slab[offset + i];
+                    let item = data[i];
+                    if (item == null) {
+                        if ((item === null ? (elemType & NULLABLE) : (elemType & OPTIONAL)) === 0) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    if (elemType & COMPLEX) {
+                        if (!_check(item, elemType, strict)) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    if (elemType & PRIMITIVE) {
+                        if (!checkValue(item, elemType & PRIM_MASK)) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    return false;
+                }
+                return true;
+            }
+            if (ct === K_RECORD) {
+                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                    return false;
+                }
+                let valueType = ri;
+                let dataKeys = Object.keys(data);
+                for (let i = 0; i < dataKeys.length; i++) {
+                    let item = data[dataKeys[i]];
+                    if (item == null) {
+                        if ((item === null ? (valueType & NULLABLE) : (valueType & OPTIONAL)) === 0) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    if (valueType & COMPLEX) {
+                        if (!_check(item, valueType, strict)) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    if (valueType & PRIMITIVE) {
+                        if (!checkValue(item, valueType & PRIM_MASK)) {
+                            return false;
+                        }
+                        continue;
+                    }
+                    return false;
+                }
+                return true;
+            }
+            if (ct === K_OR) {
+                let matches = volatile ? V_MATCHES : MATCHES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = matches[ri * 2];
+                let count = matches[ri * 2 + 1];
+                for (let i = 0; i < count; i++) {
+                    if (_check(data, slab[offset + i], strict)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            if (ct === K_EXCLUSIVE) {
+                let matches = volatile ? V_MATCHES : MATCHES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = matches[ri * 2];
+                let count = matches[ri * 2 + 1];
+                let matchCount = 0;
+                for (let i = 0; i < count; i++) {
+                    if (_check(data, slab[offset + i], strict)) {
+                        matchCount++;
+                        if (matchCount > 1) {
+                            return false;
+                        }
+                    }
+                }
+                return matchCount === 1;
+            }
+            if (ct === K_INTERSECT) {
+                let matches = volatile ? V_MATCHES : MATCHES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = matches[ri * 2];
+                let count = matches[ri * 2 + 1];
+                for (let i = 0; i < count; i++) {
+                    if (!_check(data, slab[offset + i], strict)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            if (ct === K_NOT) {
+                return !_check(data, ri, strict);
+            }
+            if (ct === K_CONDITIONAL) {
+                let matches = volatile ? V_MATCHES : MATCHES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = matches[ri * 2];
+                let ifType = slab[offset];
+                let thenType = slab[offset + 1];
+                let elseType = slab[offset + 2];
+                if (_check(data, ifType, strict)) {
+                    return thenType === 0 ? true : _check(data, thenType, strict);
+                } else {
+                    return elseType === 0 ? true : _check(data, elseType, strict);
+                }
             }
             return false;
         }
@@ -1196,9 +1649,8 @@ function registry() {
      * @returns {boolean}
      */
     function _conform(data, typedef, reify) {
-        let nc = /*@__INLINE__*/ checkNullish(data, typedef);
-        if (nc !== -1) {
-            return nc === 1;
+        if (data == null) {
+            return (data === null ? (typedef & NULLABLE) : (typedef & OPTIONAL)) !== 0;
         }
         if (typedef & COMPLEX) {
             let volatile = (typedef & VOLATILE) !== 0;
@@ -1246,30 +1698,117 @@ function registry() {
                 return true;
             }
             if (ct === K_UNION) {
-                let unions = volatile ? V_UNIONS : UNIONS;
-                let discUnions = volatile ? V_DISC_UNIONS : DISC_UNIONS;
-                let discKey = KEY_INDEX.get(unions[ri]);
-                if (discKey === void 0) {
+                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                     return false;
                 }
-                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                let unions = volatile ? V_UNIONS : UNIONS;
+                let slab = volatile ? V_SLAB : SLAB;
+                let discKey = KEY_INDEX.get(unions[ri * 3 + 2]);
+                if (discKey === void 0) {
                     return false;
                 }
                 let valueId = KEY_DICT.get(data[discKey]);
                 if (valueId === void 0) {
                     return false;
                 }
-                let variants = discUnions[ri];
-                let count = variants.length;
-                for (let i = 0; i < count; i += 2) {
-                    if (variants[i] === valueId) {
-                        return _conform(data, variants[i + 1], reify);
+                let offset = unions[ri * 3];
+                let length = unions[ri * 3 + 1];
+                for (let i = 0; i < length; i++) {
+                    if (slab[offset + i * 2] === valueId) {
+                        return _conform(data, slab[offset + i * 2 + 1], reify);
                     }
                 }
                 return false;
             }
             if (ct === K_REFINE) {
                 return _conform(data, ri, reify);
+            }
+            if (ct === K_TUPLE) {
+                if (!Array.isArray(data)) {
+                    return false;
+                }
+                let tuples = volatile ? V_TUPLES : TUPLES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = tuples[ri * 2];
+                let length = tuples[ri * 2 + 1];
+                if (data.length !== length) {
+                    return false;
+                }
+                for (let i = 0; i < length; i++) {
+                    if (!_parseSlot(data, i, slab[offset + i], reify)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            if (ct === K_RECORD) {
+                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                    return false;
+                }
+                let valueType = ri;
+                let dataKeys = Object.keys(data);
+                for (let i = 0; i < dataKeys.length; i++) {
+                    if (!_parseSlot(data, dataKeys[i], valueType, reify)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            if (ct === K_OR) {
+                let matches = volatile ? V_MATCHES : MATCHES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = matches[ri * 2];
+                let count = matches[ri * 2 + 1];
+                for (let i = 0; i < count; i++) {
+                    if (_conform(data, slab[offset + i], reify)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            if (ct === K_EXCLUSIVE) {
+                let matches = volatile ? V_MATCHES : MATCHES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = matches[ri * 2];
+                let count = matches[ri * 2 + 1];
+                let matchCount = 0;
+                for (let i = 0; i < count; i++) {
+                    if (_conform(data, slab[offset + i], reify)) {
+                        matchCount++;
+                        if (matchCount > 1) {
+                            return false;
+                        }
+                    }
+                }
+                return matchCount === 1;
+            }
+            if (ct === K_INTERSECT) {
+                let matches = volatile ? V_MATCHES : MATCHES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = matches[ri * 2];
+                let count = matches[ri * 2 + 1];
+                for (let i = 0; i < count; i++) {
+                    if (!_conform(data, slab[offset + i], reify)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            if (ct === K_NOT) {
+                return !_conform(data, ri, reify);
+            }
+            if (ct === K_CONDITIONAL) {
+                let matches = volatile ? V_MATCHES : MATCHES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = matches[ri * 2];
+                let ifType = slab[offset];
+                let thenType = slab[offset + 1];
+                let elseType = slab[offset + 2];
+                if (_conform(data, ifType, reify)) {
+                    return thenType === 0 ? true : _conform(data, thenType, reify);
+                } else {
+                    return elseType === 0 ? true : _conform(data, elseType, reify);
+                }
             }
             return false;
         }
@@ -1351,8 +1890,8 @@ function registry() {
             }
             if (ct === K_UNION) {
                 let unions = volatile ? V_UNIONS : UNIONS;
-                let discUnions = volatile ? V_DISC_UNIONS : DISC_UNIONS;
-                let discKey = KEY_INDEX.get(unions[ri]);
+                let slab = volatile ? V_SLAB : SLAB;
+                let discKey = KEY_INDEX.get(unions[ri * 3 + 2]);
                 if (discKey === void 0) {
                     errors.push({ path, message: '!! CRITICAL ERROR !! Please file an issue at Github !!' });
                     return;
@@ -1366,11 +1905,11 @@ function registry() {
                     return;
                 }
                 let valueId = KEY_DICT.get(data[discKey]);
-                let arr = discUnions[ri];
-                let length = arr.length;
-                for (let i = 0; i < length; i += 2) {
-                    if (arr[i] === valueId) {
-                        _diagnose(data, arr[i + 1], path, errors);
+                let offset = unions[ri * 3];
+                let length = unions[ri * 3 + 1];
+                for (let i = 0; i < length; i++) {
+                    if (slab[offset + i * 2] === valueId) {
+                        _diagnose(data, slab[offset + i * 2 + 1], path, errors);
                         return;
                     }
                 }
@@ -1400,6 +1939,103 @@ function registry() {
             }
             if (ct === K_REFINE) {
                 _diagnose(data, ri, path, errors);
+                return;
+            }
+            if (ct === K_TUPLE) {
+                if (!Array.isArray(data)) {
+                    errors.push({ path, message: 'expected tuple, got ' + typeof data });
+                    return;
+                }
+                let tuples = volatile ? V_TUPLES : TUPLES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = tuples[ri * 2];
+                let length = tuples[ri * 2 + 1];
+                if (data.length !== length) {
+                    errors.push({ path, message: 'expected tuple of length ' + length + ', got length ' + data.length });
+                    return;
+                }
+                for (let i = 0; i < length; i++) {
+                    _diagnose(data[i], slab[offset + i], path + '[' + i + ']', errors);
+                }
+                return;
+            }
+            if (ct === K_RECORD) {
+                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                    errors.push({ path, message: 'expected object (record), got ' + typeof data });
+                    return;
+                }
+                let valueType = ri;
+                let dataKeys = Object.keys(data);
+                for (let i = 0; i < dataKeys.length; i++) {
+                    _diagnose(data[dataKeys[i]], valueType, path + (path ? '.' : '') + dataKeys[i], errors);
+                }
+                return;
+            }
+            if (ct === K_OR) {
+                let matches = volatile ? V_MATCHES : MATCHES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = matches[ri * 2];
+                let count = matches[ri * 2 + 1];
+                for (let i = 0; i < count; i++) {
+                    if (_check(data, slab[offset + i], NOT_STRICT)) {
+                        return;
+                    }
+                }
+                errors.push({ path, message: 'value did not match any of the expected types' });
+                return;
+            }
+            if (ct === K_EXCLUSIVE) {
+                let matches = volatile ? V_MATCHES : MATCHES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = matches[ri * 2];
+                let count = matches[ri * 2 + 1];
+                let matchCount = 0;
+                for (let i = 0; i < count; i++) {
+                    if (_check(data, slab[offset + i], NOT_STRICT)) {
+                        matchCount++;
+                    }
+                }
+                if (matchCount === 0) {
+                    errors.push({ path, message: 'value did not match any of the exclusive types' });
+                } else if (matchCount > 1) {
+                    errors.push({ path, message: 'value matched ' + matchCount + ' types, expected exactly 1' });
+                }
+                return;
+            }
+            if (ct === K_INTERSECT) {
+                let matches = volatile ? V_MATCHES : MATCHES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = matches[ri * 2];
+                let count = matches[ri * 2 + 1];
+                for (let i = 0; i < count; i++) {
+                    if (!_check(data, slab[offset + i], NOT_STRICT)) {
+                        _diagnose(data, slab[offset + i], path, errors);
+                    }
+                }
+                return;
+            }
+            if (ct === K_NOT) {
+                if (_check(data, ri, NOT_STRICT)) {
+                    errors.push({ path, message: 'value should NOT match the given type' });
+                }
+                return;
+            }
+            if (ct === K_CONDITIONAL) {
+                let matches = volatile ? V_MATCHES : MATCHES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = matches[ri * 2];
+                let ifType = slab[offset];
+                let thenType = slab[offset + 1];
+                let elseType = slab[offset + 2];
+                if (_check(data, ifType, NOT_STRICT)) {
+                    if (thenType !== 0) {
+                        _diagnose(data, thenType, path, errors);
+                    }
+                } else {
+                    if (elseType !== 0) {
+                        _diagnose(data, elseType, path, errors);
+                    }
+                }
                 return;
             }
             errors.push({ path, message: 'invalid type definition (unknown complex kind)' });
@@ -1537,9 +2173,9 @@ function registry() {
             }
         }
         if (vHeader & ARR_MAX_ITEMS) {
-             if (data.length > vals[p++]) {
+            if (data.length > vals[p++]) {
                 return false;
-             }
+            }
         }
         if (vHeader & ARR_UNIQUE) {
             let set = new Set(data);
@@ -1664,7 +2300,7 @@ function registry() {
                         missing = false;
                         break;
                     }
-                    if (sk < keyId) { 
+                    if (sk < keyId) {
                         lo = mid + 1;
                     } else {
                         hi = mid - 1;
@@ -1733,17 +2369,21 @@ function registry() {
                 return true;
             }
             if (ct === K_UNION) {
+                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                    return false;
+                }
                 let unions = volatile ? V_UNIONS : UNIONS;
-                let discUnions = volatile ? V_DISC_UNIONS : DISC_UNIONS;
-                let discKey = KEY_INDEX.get(unions[ri]);
-                if (discKey === void 0) return false;
-                if (typeof data !== 'object' || data === null || Array.isArray(data)) return false;
+                let slab = volatile ? V_SLAB : SLAB;
+                let discKey = KEY_INDEX.get(unions[ri * 3 + 2]);
+                if (discKey === void 0) {
+                    return false;
+                }
                 let valueId = KEY_DICT.get(data[discKey]);
-                let variants = discUnions[ri];
-                let length = variants.length;
-                for (let i = 0; i < length; i += 2) {
-                    if (variants[i] === valueId) {
-                        return _validate(data, variants[i + 1]);
+                let offset = unions[ri * 3];
+                let length = unions[ri * 3 + 1];
+                for (let i = 0; i < length; i++) {
+                    if (slab[offset + i * 2] === valueId) {
+                        return _validate(data, slab[offset + i * 2 + 1]);
                     }
                 }
                 return false;
@@ -1778,10 +2418,99 @@ function registry() {
                 let callbacks = volatile ? V_CALLBACKS : CALLBACKS;
                 return !!callbacks[kinds[ptr + 2]](data);
             }
+            if (ct === K_TUPLE) {
+                if (!Array.isArray(data)) {
+                    return false;
+                }
+                let tuples = volatile ? V_TUPLES : TUPLES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = tuples[ri * 2];
+                let length = tuples[ri * 2 + 1];
+                if (data.length !== length) {
+                    return false;
+                }
+                for (let i = 0; i < length; i++) {
+                    if (!_validateSlot(data[i], slab[offset + i])) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            if (ct === K_RECORD) {
+                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                    return false;
+                }
+                let valueType = ri;
+                let dataKeys = Object.keys(data);
+                for (let i = 0; i < dataKeys.length; i++) {
+                    if (!_validateSlot(data[dataKeys[i]], valueType)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            if (ct === K_OR) {
+                let matches = volatile ? V_MATCHES : MATCHES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = matches[ri * 2];
+                let count = matches[ri * 2 + 1];
+                for (let i = 0; i < count; i++) {
+                    if (_validate(data, slab[offset + i])) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            if (ct === K_EXCLUSIVE) {
+                let matches = volatile ? V_MATCHES : MATCHES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = matches[ri * 2];
+                let count = matches[ri * 2 + 1];
+                let matchCount = 0;
+                for (let i = 0; i < count; i++) {
+                    if (_validate(data, slab[offset + i])) {
+                        matchCount++;
+                        if (matchCount > 1) {
+                            return false;
+                        }
+                    }
+                }
+                return matchCount === 1;
+            }
+            if (ct === K_INTERSECT) {
+                let matches = volatile ? V_MATCHES : MATCHES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = matches[ri * 2];
+                let count = matches[ri * 2 + 1];
+                for (let i = 0; i < count; i++) {
+                    if (!_validate(data, slab[offset + i])) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            if (ct === K_NOT) {
+                return !_validate(data, ri);
+            }
+            if (ct === K_CONDITIONAL) {
+                let matches = volatile ? V_MATCHES : MATCHES;
+                let slab = volatile ? V_SLAB : SLAB;
+                let offset = matches[ri * 2];
+                let ifType = slab[offset];
+                let thenType = slab[offset + 1];
+                let elseType = slab[offset + 2];
+                if (_validate(data, ifType)) {
+                    return thenType === 0 ? true : _validate(data, thenType);
+                } else {
+                    return elseType === 0 ? true : _validate(data, elseType);
+                }
+            }
             return false;
         }
         let valueMask = typedef & PRIM_MASK;
-        if (valueMask === 0) return false;
+        if (valueMask === 0) {
+            return false;
+        }
         return checkValue(data, valueMask);
     }
 
@@ -1803,6 +2532,13 @@ function registry() {
         array: (type, opts) => arrayImpl(type, false, opts),
         union: (disc, variants) => unionImpl(disc, variants, false),
         refine: (typedef, fn) => refineImpl(typedef, fn, false),
+        tuple: (first, second, third) => tupleImpl(normalizeTypeArgs(first, second, third), false),
+        record: (valueType) => recordImpl(valueType, false),
+        or: (first, second, third) => orImpl(normalizeTypeArgs(first, second, third), false),
+        exclusive: (first, second, third) => exclusiveImpl(normalizeTypeArgs(first, second, third), false),
+        intersect: (first, second, third) => intersectImpl(normalizeTypeArgs(first, second, third), false),
+        not: (typedef) => notImpl(typedef, false),
+        when: (config) => whenImpl(config, false),
         optional: optional,
         nullable: nullable,
         string: primitiveImpl(STRING),
@@ -1835,6 +2571,34 @@ function registry() {
         refine: (typedef, fn) => {
             if (rewindPending) { rewindVolatile(); }
             return refineImpl(typedef, fn, true);
+        },
+        tuple: (first, second, third) => {
+            if (rewindPending) { rewindVolatile(); }
+            return tupleImpl(normalizeTypeArgs(first, second, third), true);
+        },
+        record: (valueType) => {
+            if (rewindPending) { rewindVolatile(); }
+            return recordImpl(valueType, true);
+        },
+        or: (first, second, third) => {
+            if (rewindPending) { rewindVolatile(); }
+            return orImpl(normalizeTypeArgs(first, second, third), true);
+        },
+        exclusive: (first, second, third) => {
+            if (rewindPending) { rewindVolatile(); }
+            return exclusiveImpl(normalizeTypeArgs(first, second, third), true);
+        },
+        intersect: (first, second, third) => {
+            if (rewindPending) { rewindVolatile(); }
+            return intersectImpl(normalizeTypeArgs(first, second, third), true);
+        },
+        not: (typedef) => {
+            if (rewindPending) { rewindVolatile(); }
+            return notImpl(typedef, true);
+        },
+        when: (config) => {
+            if (rewindPending) { rewindVolatile(); }
+            return whenImpl(config, true);
         },
         optional: optional,
         nullable: nullable,

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import * as v from 'valibot';
 import { Type } from '@sinclair/typebox';
 import Ajv from 'ajv';
-import { t, check, NUMBER, DATE, STRING, BOOLEAN, UNDEFINED, URI } from 'uvd';
+import { t, check, validate, NUMBER, DATE, STRING, BOOLEAN, UNDEFINED, URI } from 'uvd';
 import { registry } from 'uvd/core';
 
 const rawData = {
@@ -93,7 +93,7 @@ const TypeBoxItem = Type.Intersect([
     Type.Object({ type: Type.String() }),
     Type.Union([
         Type.Object({ type: Type.Literal("physical"), sku: Type.String(), weight: Type.Number() }),
-        Type.Object({ type: Type.Literal("digital"), sku: Type.String(), downloadUrl: Type.String({ format: 'uri' }) })
+        Type.Object({ type: Type.Literal("digital"), sku: Type.String(), downloadUrl: Type.String() })
     ])
 ]);
 
@@ -234,7 +234,7 @@ group('Pure Parsing (Setup Time Excluded)', () => {
     bench('uvd (In-Place Bitwise)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { check(data, UvdOrder); }
+            bench(data) { validate(data, UvdOrder); }
         };
     });
 
@@ -279,7 +279,7 @@ group('Pure Parsing (Second time after JIT is warmed up)', () => {
     bench('uvd (In-Place Bitwise)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { check(data, UvdOrder); }
+            bench(data) { validate(data, UvdOrder); }
         };
     });
 });

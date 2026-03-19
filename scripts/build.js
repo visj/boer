@@ -58,11 +58,6 @@ async function buildFormat(format, ext, isModule) {
                 dead_code: true,
                 inline: 3
             },
-            mangle: {
-                properties: {
-                    regex: /^_/
-                }
-            },
             nameCache
         });
         // Ugly hack, don't know how to fix it

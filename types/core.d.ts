@@ -51,10 +51,6 @@ export type StrictSchema<T, R> = {
     : T[K];
 };
 
-// ---------------------------------------------------------------------------
-// Validator Options
-// ---------------------------------------------------------------------------
-
 export interface StringValidators {
     minLength?: number;
     maxLength?: number;
@@ -88,10 +84,6 @@ export interface ObjectValidators {
     additionalProperties?: false;
 }
 
-// ---------------------------------------------------------------------------
-// Schema Builder
-// ---------------------------------------------------------------------------
-
 export interface SchemaBuilder<R> {
     object<T extends Schema<R>>(
         definition: T extends StrictSchema<T, R> ? T : StrictSchema<T, R>,
@@ -104,6 +96,37 @@ export interface SchemaBuilder<R> {
     ): Complex<{ [K in keyof T]: Infer<T[K]> & { [P in D]: K } }[keyof T], R>;
 
     refine<T>(typedef: Type<T, R>, fn: (data: T) => boolean): Complex<T, R>;
+
+    // Tuple (prefixItems)
+    tuple<A>(a: Type<A, R>): Complex<[A], R>;
+    tuple<A, B>(a: Type<A, R>, b: Type<B, R>): Complex<[A, B], R>;
+    tuple<A, B, C>(a: Type<A, R>, b: Type<B, R>, c: Type<C, R>): Complex<[A, B, C], R>;
+    tuple<T extends any[]>(types: { [K in keyof T]: Type<T[K], R> }): Complex<T, R>;
+
+    // Record
+    record<T>(valueType: Type<T, R>): Complex<Record<string, T>, R>;
+
+    // Or (anyOf) — first match wins
+    or<A, B>(a: Type<A, R>, b: Type<B, R>): Type<A | B, R>;
+    or<A, B, C>(a: Type<A, R>, b: Type<B, R>, c: Type<C, R>): Type<A | B | C, R>;
+    or<T>(types: Type<T, R>[]): Type<T, R>;
+
+    // Exclusive (oneOf) — exactly one must match
+    exclusive<A, B>(a: Type<A, R>, b: Type<B, R>): Complex<A | B, R>;
+    exclusive<A, B, C>(a: Type<A, R>, b: Type<B, R>, c: Type<C, R>): Complex<A | B | C, R>;
+    exclusive<T>(types: Type<T, R>[]): Complex<T, R>;
+
+    // Intersect (allOf) — all must match
+    intersect<A, B>(a: Type<A, R>, b: Type<B, R>): Complex<A & B, R>;
+    intersect<A, B, C>(a: Type<A, R>, b: Type<B, R>, c: Type<C, R>): Complex<A & B & C, R>;
+    intersect<T>(types: Type<T, R>[]): Complex<T, R>;
+
+    // Not — negation
+    not<T>(typedef: Type<T, R>): Complex<unknown, R>;
+
+    // When (if/then/else conditional)
+    when(config: { if: number; then?: number; else?: number }): Complex<unknown, R>;
+
     string(opts?: any): Primitive<string, R>;
     number(opts?: any): Primitive<number, R>;
     boolean(): Primitive<boolean, R>;
