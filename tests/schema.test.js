@@ -2,8 +2,7 @@ import { describe, test, expect } from "bun:test";
 import fs from "fs";
 import path from "path";
 
-// Import your internal uvd pipeline (adjust paths as needed)
-// import { parseJsonSchema } from "../src/schema.js";
+import { parseJsonSchema } from "../src/schema.js";
 import { compile } from "../src/ast.js";
 import { catalog } from "../src/catalog.js";
 
@@ -47,7 +46,7 @@ for (const file of TARGET_FILES) {
 
                 // 1. We attempt to compile the schema ONCE per group
                 try {
-                    const ast = {};// parseJsonSchema(group.schema);
+                    const ast = parseJsonSchema(group.schema);
                     const compiled = compile(cat, ast);
                     compiledRoot = compiled.root;
                 } catch (err) {

@@ -45,6 +45,7 @@
   "author": "Vilhelm Sjölund",
   "license": "Apache-2.0",
   "dependencies": {
-    "json-schema-typed": "^8.0.2"
+    "json-schema-typed": "^8.0.2",
+    "uri-js": "^4.4.1"
   }
 }

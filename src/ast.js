@@ -170,7 +170,12 @@ export function compile(cat, ast) {
                 }
                 let matchId = allocOnSlab(types, volatile, 'match');
                 let kindPtr = allocKind(K_OR, matchId, volatile, 2);
-                return (COMPLEX | kindPtr) >>> 0;
+                let flags = COMPLEX | kindPtr;
+                for (let i = 0; i < types.length; i++) {
+                    if (types[i] & NULLABLE) flags |= NULLABLE;
+                    if (types[i] & OPTIONAL) flags |= OPTIONAL;
+                }
+                return flags >>> 0;
             }
 
             case K_EXCLUSIVE: {

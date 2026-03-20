@@ -20,8 +20,9 @@ export const STRING = (1 << 25) >>> 0;
 export const BIGINT = (1 << 24) >>> 0;
 export const DATE = (1 << 23) >>> 0;
 export const URI = (1 << 22) >>> 0;
+export const INTEGER = (1 << 21) >>> 0;
 
-export const PRIMITIVE = (BOOLEAN | NUMBER | STRING | BIGINT | DATE | URI);
+export const PRIMITIVE = (BOOLEAN | NUMBER | STRING | BIGINT | DATE | URI | INTEGER);
 const PRIM_MASK = 0x0FFFFFFF;
 const KIND_MASK = 0x0FFFFFFF;
 
@@ -336,7 +337,7 @@ function _isValue(raw, mask) {
     let jsType = typeof raw;
     return (
         jsType === 'string' ? (mask & STRING) !== 0 :
-            jsType === 'number' ? (mask & NUMBER) !== 0 :
+            jsType === 'number' ? ((mask & NUMBER) !== 0 || ((mask & INTEGER) !== 0 && Number.isInteger(raw))) :
                 jsType === 'boolean' ? (mask & BOOLEAN) !== 0 :
                     jsType === 'bigint' ? (mask & BIGINT) !== 0 :
                         raw instanceof Date ? (mask & DATE) !== 0 :
@@ -909,7 +910,12 @@ function catalog(cfg) {
         }
         let id = allocOnSlab(types, volatile, 'match');
         let kindPtr = allocKind(K_OR, id, volatile, 2);
-        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
+        let flags = COMPLEX | (volatile ? VOLATILE : 0) | kindPtr;
+        for (let i = 0; i < length; i++) {
+            if (types[i] & NULLABLE) flags |= NULLABLE;
+            if (types[i] & OPTIONAL) flags |= OPTIONAL;
+        }
+        return flags >>> 0;
     }
 
     /**
@@ -1054,7 +1060,7 @@ function catalog(cfg) {
     /**
      * @throws
      * @template T
-     * @param {!uvd.cat.Schema<R>} definition
+     * @param {uvd.cat.Schema<R>} definition
      * @param {boolean} volatile
      * @param {uvd.cat.ObjectValidators=} opts
      * @returns {uvd.cat.Complex<uvd.cat.InferSchema<T>, R>}
@@ -1063,7 +1069,7 @@ function catalog(cfg) {
         let keys = Object.keys(definition);
         let count = keys.length;
         let required = count * 2;
-        /** @type {!Array<number>} */
+        /** @type {Array<number>} */
         let resolved = new Array(required);
         for (let i = 0, j = 0; i < count; i++, j += 2) {
             let key = keys[i];
@@ -2085,7 +2091,7 @@ function catalog(cfg) {
             }
             return true;
         }
-        if (primBits & NUMBER) {
+        if (primBits & (NUMBER | INTEGER)) {
             if (vHeader & NUM_MINIMUM) {
                 if (/** @type {number} */(value) < vals[p++]) {
                     return false;
