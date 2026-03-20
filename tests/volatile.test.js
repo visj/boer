@@ -1,7 +1,8 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    STRING, NUMBER, NULL, STRICT_REJECT, catalog
-} from 'uvd/catalog';
+    STRING, NUMBER, NULL, STRICT_REJECT
+} from 'uvd';
+import { catalog } from 'uvd/catalog';
 
 describe('volatile: basic usage', () => {
     test('v.object() creates a usable type', () => {

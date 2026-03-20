@@ -14,37 +14,30 @@ async function buildFormat(format, ext, isModule) {
     // ⚠️ NEW: create a fresh bundle per format
     const bundle = await rolldown({
         input: {
+            index: 'src/index.js',
             catalog: 'src/catalog.js',
-            index: 'src/index.js'
+            ast: 'src/ast.js',
+            inspect: 'src/inspect.js',
+            schema: 'src/schema.js'
         },
-        treeshake: {
-            moduleSideEffects: (id) => {
-                // Tell the bundler that types.js has absolutely zero side effects.
-                // This gives it permission to drop the unused imports entirely.
-                if (id.includes('types.js')) {
-                    return false;
-                }
-                // Keep default behavior for everything else
-                return true;
-            }
-        }
     });
 
     const { output } = await bundle.generate({
         format,
         sourcemap: true,
+        // Ensure shared code goes into a 'chunks' directory or stays clean
+        chunkFileNames: `[name]-[hash].${ext}`,
+        entryFileNames: `[name].${ext}`
     });
 
     // Load existing property map
     let nameCache = {};
-    // if (fs.existsSync(mangleFile)) {
-    //     nameCache = JSON.parse(fs.readFileSync(mangleFile, 'utf8'));
-    // }
 
     for (const chunk of output) {
+        // Handle both entry points and shared chunks
         if (chunk.type !== 'chunk') continue;
 
-        const fileName = `${chunk.name}.${ext}`;
+        const fileName = chunk.fileName;
 
         const minified = await minify(chunk.code, {
             sourceMap: {
@@ -57,16 +50,18 @@ async function buildFormat(format, ext, isModule) {
                 unsafe: true,
                 dead_code: true,
                 inline: 3
-            },
-            nameCache
+            }
         });
-        // Ugly hack, don't know how to fix it
-        if (fileName === 'index.cjs') {
-            minified.code = minified.code.replace('require("./catalog.js")', 'require("./catalog.cjs")');
+
+        const outputPath = path.resolve(outputDir, fileName);
+        const outputDirName = path.dirname(outputPath);
+
+        if (!fs.existsSync(outputDirName)) {
+            fs.mkdirSync(outputDirName, { recursive: true });
         }
 
-        fs.writeFileSync(path.resolve(outputDir, fileName), minified.code);
-        fs.writeFileSync(path.resolve(outputDir, `${fileName}.map`), minified.map);
+        fs.writeFileSync(outputPath, minified.code);
+        fs.writeFileSync(`${outputPath}.map`, minified.map);
     }
 }
 
@@ -83,13 +78,13 @@ async function build() {
     // ✅ Build CJS (separate graph → correct imports)
     await buildFormat('cjs', 'cjs', true);
 
-    // Copy types
-    if (fs.existsSync('types/catalog.d.ts')) {
-        fs.copyFileSync('types/catalog.d.ts', path.resolve(outputDir, 'catalog.d.ts'));
-    }
-    if (fs.existsSync('types/index.d.ts')) {
-        fs.copyFileSync('types/index.d.ts', path.resolve(outputDir, 'index.d.ts'));
-    }
+    const typesToCopy = ['index.d.ts', 'catalog.d.ts', 'ast.d.ts', 'inspect.d.ts', 'schema.d.ts'];
+    typesToCopy.forEach(file => {
+        const src = path.resolve('types', file);
+        if (fs.existsSync(src)) {
+            fs.copyFileSync(src, path.resolve(outputDir, file));
+        }
+    });
 
     console.log('Success! Outputs written to dist/');
 }

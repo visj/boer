@@ -1,14 +1,179 @@
 import { describe, test, expect } from 'bun:test';
 import {
     BOOLEAN, NUMBER, STRING, BIGINT, DATE, URI, PRIMITIVE,
-    NULL, UNDEFINED, catalog,
-} from 'uvd/catalog';
+    NULL, UNDEFINED
+} from 'uvd';
+import { catalog } from 'uvd/catalog';
 import { compile } from '../src/ast.js';
+import {
+    N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
+    N_EXCLUSIVE, N_INTERSECT, N_NOT, N_CONDITIONAL, N_REF,
+} from '../src/schema.js';
+
+/**
+ * Helper: builds a minimal FlatAst programmatically.
+ * Provides an imperative API to allocate nodes and connect them.
+ */
+function flatAstBuilder() {
+    let astKinds = new Uint8Array(64);
+    let astFlags = new Uint32Array(64);
+    let astChild0 = new Uint32Array(64);
+    let astChild1 = new Uint32Array(64);
+    let propNames = [];
+    let propChildren = [];
+    let listChildren = [];
+    let condSlots = [];
+    let callbacks = [];
+    let nextId = 0;
+
+    function alloc() { return nextId++; }
+
+    function prim(bits) {
+        let id = alloc();
+        astKinds[id] = N_PRIM;
+        astFlags[id] = bits >>> 0;
+        return id;
+    }
+
+    function object(props) {
+        let id = alloc();
+        let keys = Object.keys(props);
+        let offset = propNames.length;
+        for (let i = 0; i < keys.length; i++) {
+            propNames.push(keys[i]);
+            propChildren.push(props[keys[i]]);
+        }
+        astKinds[id] = N_OBJECT;
+        astChild0[id] = offset;
+        astChild1[id] = keys.length;
+        return id;
+    }
+
+    function array(elemId) {
+        let id = alloc();
+        astKinds[id] = N_ARRAY;
+        astChild0[id] = elemId;
+        return id;
+    }
+
+    function union(discKey, variants) {
+        // Discriminated unions aren't in the flat AST parser (they're a programmatic API feature).
+        // We'll skip this for now — the compiler doesn't handle K_UNION from flat AST.
+        // Instead, test via the catalog's union() API directly.
+        throw new Error('union not supported in FlatAst — use catalog API');
+    }
+
+    function refine(innerId, fn) {
+        let id = alloc();
+        let cbIdx = callbacks.length;
+        callbacks.push(fn);
+        astKinds[id] = N_REFINE;
+        astChild0[id] = innerId;
+        astChild1[id] = cbIdx;
+        return id;
+    }
+
+    function tuple(childIds) {
+        // Tuple is a catalog-level concept (K_TUPLE), not a schema parser concept.
+        // The flat AST doesn't have N_TUPLE. Use catalog API for tuples.
+        throw new Error('tuple not supported in FlatAst — use catalog API');
+    }
+
+    function record(valueId) {
+        // Same as tuple — record is catalog-level.
+        throw new Error('record not supported in FlatAst — use catalog API');
+    }
+
+    function or(childIds) {
+        let id = alloc();
+        let offset = listChildren.length;
+        for (let i = 0; i < childIds.length; i++) {
+            listChildren.push(childIds[i]);
+        }
+        astKinds[id] = N_OR;
+        astChild0[id] = offset;
+        astChild1[id] = childIds.length;
+        return id;
+    }
+
+    function exclusive(childIds) {
+        let id = alloc();
+        let offset = listChildren.length;
+        for (let i = 0; i < childIds.length; i++) {
+            listChildren.push(childIds[i]);
+        }
+        astKinds[id] = N_EXCLUSIVE;
+        astChild0[id] = offset;
+        astChild1[id] = childIds.length;
+        return id;
+    }
+
+    function intersect(childIds) {
+        let id = alloc();
+        let offset = listChildren.length;
+        for (let i = 0; i < childIds.length; i++) {
+            listChildren.push(childIds[i]);
+        }
+        astKinds[id] = N_INTERSECT;
+        astChild0[id] = offset;
+        astChild1[id] = childIds.length;
+        return id;
+    }
+
+    function not(innerId) {
+        let id = alloc();
+        astKinds[id] = N_NOT;
+        astChild0[id] = innerId;
+        return id;
+    }
+
+    function conditional(ifId, thenId, elseId) {
+        let id = alloc();
+        let offset = condSlots.length;
+        condSlots.push(ifId, thenId !== undefined ? thenId : 0xFFFFFFFF, elseId !== undefined ? elseId : 0xFFFFFFFF);
+        astKinds[id] = N_CONDITIONAL;
+        astChild0[id] = offset;
+        return id;
+    }
+
+    function ref(targetId) {
+        let id = alloc();
+        astKinds[id] = N_REF;
+        astChild0[id] = targetId;
+        return id;
+    }
+
+    function build(rootId, defIds = [], defNames = []) {
+        let nc = nextId;
+        return {
+            astKinds: astKinds.subarray(0, nc),
+            astFlags: astFlags.subarray(0, nc),
+            astChild0: astChild0.subarray(0, nc),
+            astChild1: astChild1.subarray(0, nc),
+            propNames,
+            propChildren,
+            listChildren,
+            condSlots,
+            callbacks,
+            rootId,
+            defIds,
+            defNames,
+            nodeCount: nc,
+        };
+    }
+
+    return {
+        alloc, prim, object, array, refine, or, exclusive,
+        intersect, not, conditional, ref, build,
+    };
+}
 
 describe('ast: compile primitives', () => {
     test('raw number passthrough', () => {
         let cat = catalog();
-        let result = compile(cat, { root: STRING, defs: [], names: [] });
+        let b = flatAstBuilder();
+        let root = b.prim(STRING);
+        let result = compile(cat, b.build(root));
         expect(result.root).toBe(STRING);
         expect(cat.is('hello', result.root)).toBe(true);
         expect(cat.is(42, result.root)).toBe(false);
@@ -16,8 +181,9 @@ describe('ast: compile primitives', () => {
 
     test('nullable primitive', () => {
         let cat = catalog();
-        let nullable = (STRING | NULL) >>> 0;
-        let result = compile(cat, { root: nullable, defs: [], names: [] });
+        let b = flatAstBuilder();
+        let root = b.prim((STRING | NULL) >>> 0);
+        let result = compile(cat, b.build(root));
         expect(cat.is(null, result.root)).toBe(true);
         expect(cat.is('hello', result.root)).toBe(true);
         expect(cat.is(42, result.root)).toBe(false);
@@ -27,12 +193,11 @@ describe('ast: compile primitives', () => {
 describe('ast: compile objects', () => {
     test('simple object', () => {
         let cat = catalog();
-        let ast = {
-            root: { k: 1, p: { name: STRING, age: NUMBER } },
-            defs: [],
-            names: [],
-        };
-        let result = compile(cat, ast);
+        let b = flatAstBuilder();
+        let nameNode = b.prim(STRING);
+        let ageNode = b.prim(NUMBER);
+        let root = b.object({ name: nameNode, age: ageNode });
+        let result = compile(cat, b.build(root));
         expect(typeof result.root).toBe('number');
         expect(cat.is({ name: 'Alice', age: 30 }, result.root)).toBe(true);
         expect(cat.is({ name: 'Alice' }, result.root)).toBe(false);
@@ -41,145 +206,51 @@ describe('ast: compile objects', () => {
 
     test('nested objects', () => {
         let cat = catalog();
-        let ast = {
-            root: {
-                k: 1,
-                p: {
-                    name: STRING,
-                    address: {
-                        k: 1,
-                        p: { street: STRING, city: STRING },
-                    },
-                },
-            },
-            defs: [],
-            names: [],
-        };
-        let result = compile(cat, ast);
+        let b = flatAstBuilder();
+        let street = b.prim(STRING);
+        let city = b.prim(STRING);
+        let address = b.object({ street, city });
+        let name = b.prim(STRING);
+        let root = b.object({ name, address });
+        let result = compile(cat, b.build(root));
         expect(cat.is({ name: 'Bob', address: { street: '123 Main', city: 'NY' } }, result.root)).toBe(true);
         expect(cat.is({ name: 'Bob', address: { street: '123 Main' } }, result.root)).toBe(false);
-    });
-
-    test('object with validators (minProperties, maxProperties)', () => {
-        let cat = catalog();
-        let ast = {
-            root: {
-                k: 1,
-                p: { a: STRING, b: STRING, c: STRING },
-                v: { a: 2, b: 3 },
-            },
-            defs: [],
-            names: [],
-        };
-        let result = compile(cat, ast);
-        expect(cat.is({ a: 'x', b: 'y' }, result.root)).toBe(false);
-        expect(cat.is({ a: 'x', b: 'y', c: 'z' }, result.root)).toBe(true);
     });
 });
 
 describe('ast: compile arrays', () => {
     test('simple array', () => {
         let cat = catalog();
-        let ast = {
-            root: { k: 2, i: STRING },
-            defs: [],
-            names: [],
-        };
-        let result = compile(cat, ast);
+        let b = flatAstBuilder();
+        let elem = b.prim(STRING);
+        let root = b.array(elem);
+        let result = compile(cat, b.build(root));
         expect(cat.is(['hello', 'world'], result.root)).toBe(true);
         expect(cat.is([1, 2, 3], result.root)).toBe(false);
         expect(cat.is('not array', result.root)).toBe(false);
     });
 
-    test('array with validators (minItems, maxItems) via validate()', () => {
-        let cat = catalog();
-        let ast = {
-            root: { k: 2, i: NUMBER, v: { a: 2, b: 5 } },
-            defs: [],
-            names: [],
-        };
-        let result = compile(cat, ast);
-        expect(cat.validate([1], result.root)).toBe(false);
-        expect(cat.validate([1, 2], result.root)).toBe(true);
-        expect(cat.validate([1, 2, 3, 4, 5], result.root)).toBe(true);
-        expect(cat.validate([1, 2, 3, 4, 5, 6], result.root)).toBe(false);
-    });
-
     test('array of objects', () => {
         let cat = catalog();
-        let ast = {
-            root: {
-                k: 2,
-                i: { k: 1, p: { id: NUMBER, name: STRING } },
-            },
-            defs: [],
-            names: [],
-        };
-        let result = compile(cat, ast);
+        let b = flatAstBuilder();
+        let idNode = b.prim(NUMBER);
+        let nameNode = b.prim(STRING);
+        let objNode = b.object({ id: idNode, name: nameNode });
+        let root = b.array(objNode);
+        let result = compile(cat, b.build(root));
         expect(cat.is([{ id: 1, name: 'Alice' }], result.root)).toBe(true);
         expect(cat.is([{ id: 'one', name: 'Alice' }], result.root)).toBe(false);
-    });
-});
-
-describe('ast: compile union', () => {
-    test('discriminated union', () => {
-        let cat = catalog();
-        let dogType = { k: 1, p: { name: STRING, breed: STRING } };
-        let catType = { k: 1, p: { name: STRING, lives: NUMBER } };
-        let ast = {
-            root: {
-                k: 3,
-                d: 'type',
-                m: { dog: dogType, cat: catType },
-            },
-            defs: [],
-            names: [],
-        };
-        let result = compile(cat, ast);
-        expect(cat.is({ type: 'dog', name: 'Rex', breed: 'Lab' }, result.root)).toBe(true);
-        expect(cat.is({ type: 'cat', name: 'Whiskers', lives: 9 }, result.root)).toBe(true);
-        expect(cat.is({ type: 'fish', name: 'Nemo' }, result.root)).toBe(false);
-    });
-});
-
-describe('ast: compile tuple', () => {
-    test('simple tuple', () => {
-        let cat = catalog();
-        let ast = {
-            root: { k: 5, i: [STRING, NUMBER, BOOLEAN] },
-            defs: [],
-            names: [],
-        };
-        let result = compile(cat, ast);
-        expect(cat.is(['hello', 42, true], result.root)).toBe(true);
-        expect(cat.is(['hello', 42], result.root)).toBe(false);
-        expect(cat.is(['hello', 'world', true], result.root)).toBe(false);
-    });
-});
-
-describe('ast: compile record', () => {
-    test('record of numbers', () => {
-        let cat = catalog();
-        let ast = {
-            root: { k: 6, i: NUMBER },
-            defs: [],
-            names: [],
-        };
-        let result = compile(cat, ast);
-        expect(cat.is({ a: 1, b: 2 }, result.root)).toBe(true);
-        expect(cat.is({ a: 1, b: 'two' }, result.root)).toBe(false);
     });
 });
 
 describe('ast: compile or (anyOf)', () => {
     test('primitive or — fast path', () => {
         let cat = catalog();
-        let ast = {
-            root: { k: 7, i: [STRING, NUMBER] },
-            defs: [],
-            names: [],
-        };
-        let result = compile(cat, ast);
+        let b = flatAstBuilder();
+        let s = b.prim(STRING);
+        let n = b.prim(NUMBER);
+        let root = b.or([s, n]);
+        let result = compile(cat, b.build(root));
         expect(cat.is('hello', result.root)).toBe(true);
         expect(cat.is(42, result.root)).toBe(true);
         expect(cat.is(true, result.root)).toBe(false);
@@ -187,18 +258,13 @@ describe('ast: compile or (anyOf)', () => {
 
     test('complex or', () => {
         let cat = catalog();
-        let ast = {
-            root: {
-                k: 7,
-                i: [
-                    { k: 1, p: { name: STRING } },
-                    { k: 2, i: NUMBER },
-                ],
-            },
-            defs: [],
-            names: [],
-        };
-        let result = compile(cat, ast);
+        let b = flatAstBuilder();
+        let nameNode = b.prim(STRING);
+        let objNode = b.object({ name: nameNode });
+        let elemNode = b.prim(NUMBER);
+        let arrNode = b.array(elemNode);
+        let root = b.or([objNode, arrNode]);
+        let result = compile(cat, b.build(root));
         expect(cat.is({ name: 'Alice' }, result.root)).toBe(true);
         expect(cat.is([1, 2, 3], result.root)).toBe(true);
         expect(cat.is('string', result.root)).toBe(false);
@@ -208,12 +274,11 @@ describe('ast: compile or (anyOf)', () => {
 describe('ast: compile exclusive (oneOf)', () => {
     test('exclusive types', () => {
         let cat = catalog();
-        let ast = {
-            root: { k: 8, i: [STRING, NUMBER] },
-            defs: [],
-            names: [],
-        };
-        let result = compile(cat, ast);
+        let b = flatAstBuilder();
+        let s = b.prim(STRING);
+        let n = b.prim(NUMBER);
+        let root = b.exclusive([s, n]);
+        let result = compile(cat, b.build(root));
         expect(cat.is('hello', result.root)).toBe(true);
         expect(cat.is(42, result.root)).toBe(true);
         expect(cat.is(true, result.root)).toBe(false);
@@ -223,18 +288,13 @@ describe('ast: compile exclusive (oneOf)', () => {
 describe('ast: compile intersect (allOf)', () => {
     test('intersect objects', () => {
         let cat = catalog();
-        let ast = {
-            root: {
-                k: 9,
-                i: [
-                    { k: 1, p: { name: STRING } },
-                    { k: 1, p: { age: NUMBER } },
-                ],
-            },
-            defs: [],
-            names: [],
-        };
-        let result = compile(cat, ast);
+        let b = flatAstBuilder();
+        let nameNode = b.prim(STRING);
+        let obj1 = b.object({ name: nameNode });
+        let ageNode = b.prim(NUMBER);
+        let obj2 = b.object({ age: ageNode });
+        let root = b.intersect([obj1, obj2]);
+        let result = compile(cat, b.build(root));
         expect(cat.is({ name: 'Alice', age: 30 }, result.root)).toBe(true);
         expect(cat.is({ name: 'Alice' }, result.root)).toBe(false);
     });
@@ -243,12 +303,10 @@ describe('ast: compile intersect (allOf)', () => {
 describe('ast: compile not', () => {
     test('not string', () => {
         let cat = catalog();
-        let ast = {
-            root: { k: 10, i: STRING },
-            defs: [],
-            names: [],
-        };
-        let result = compile(cat, ast);
+        let b = flatAstBuilder();
+        let s = b.prim(STRING);
+        let root = b.not(s);
+        let result = compile(cat, b.build(root));
         expect(cat.is(42, result.root)).toBe(true);
         expect(cat.is('hello', result.root)).toBe(false);
     });
@@ -257,17 +315,12 @@ describe('ast: compile not', () => {
 describe('ast: compile conditional (if/then/else)', () => {
     test('if/then/else', () => {
         let cat = catalog();
-        let ast = {
-            root: {
-                k: 11,
-                if: STRING,
-                then: STRING,
-                else: NUMBER,
-            },
-            defs: [],
-            names: [],
-        };
-        let result = compile(cat, ast);
+        let b = flatAstBuilder();
+        let ifNode = b.prim(STRING);
+        let thenNode = b.prim(STRING);
+        let elseNode = b.prim(NUMBER);
+        let root = b.conditional(ifNode, thenNode, elseNode);
+        let result = compile(cat, b.build(root));
         expect(cat.is('hello', result.root)).toBe(true);
         expect(cat.is(42, result.root)).toBe(true);
         expect(cat.is(true, result.root)).toBe(false);
@@ -277,21 +330,13 @@ describe('ast: compile conditional (if/then/else)', () => {
 describe('ast: compile refine', () => {
     test('refine with callback via validate()', () => {
         let cat = catalog();
-        let ast = {
-            root: {
-                k: 4,
-                i: NUMBER,
-                f: (val) => val > 0,
-            },
-            defs: [],
-            names: [],
-        };
-        let result = compile(cat, ast);
-        // is() only checks the inner type, not the callback
+        let b = flatAstBuilder();
+        let inner = b.prim(NUMBER);
+        let root = b.refine(inner, (val) => val > 0);
+        let result = compile(cat, b.build(root));
         expect(cat.is(5, result.root)).toBe(true);
         expect(cat.is(-1, result.root)).toBe(true);
         expect(cat.is('hello', result.root)).toBe(false);
-        // validate() checks both inner type AND callback
         expect(cat.validate(5, result.root)).toBe(true);
         expect(cat.validate(-1, result.root)).toBe(false);
         expect(cat.validate('hello', result.root)).toBe(false);
@@ -301,19 +346,16 @@ describe('ast: compile refine', () => {
 describe('ast: compile refs (defs)', () => {
     test('simple def reference', () => {
         let cat = catalog();
-        let addressNode = { k: 1, p: { street: STRING, city: STRING } };
-        let ast = {
-            root: {
-                k: 1,
-                p: {
-                    name: STRING,
-                    address: { k: 12, r: 0 },
-                },
-            },
-            defs: [addressNode],
-            names: ['Address'],
-        };
-        let result = compile(cat, ast);
+        let b = flatAstBuilder();
+        // Def: address = { street: STRING, city: STRING }
+        let streetNode = b.prim(STRING);
+        let cityNode = b.prim(STRING);
+        let addressNode = b.object({ street: streetNode, city: cityNode });
+        // Root: { name: STRING, address: ref(0) }
+        let nameNode = b.prim(STRING);
+        let addrRef = b.ref(addressNode);
+        let root = b.object({ name: nameNode, address: addrRef });
+        let result = compile(cat, b.build(root, [addressNode], ['Address']));
         expect(typeof result.root).toBe('number');
         expect(typeof result.defs['Address']).toBe('number');
         expect(cat.is({ name: 'Alice', address: { street: '123 Main', city: 'NY' } }, result.root)).toBe(true);
@@ -322,43 +364,34 @@ describe('ast: compile refs (defs)', () => {
 
     test('def reused multiple times', () => {
         let cat = catalog();
-        let stringArrayNode = { k: 2, i: STRING };
-        let ast = {
-            root: {
-                k: 1,
-                p: {
-                    tags: { k: 12, r: 0 },
-                    labels: { k: 12, r: 0 },
-                },
-            },
-            defs: [stringArrayNode],
-            names: ['StringArray'],
-        };
-        let result = compile(cat, ast);
+        let b = flatAstBuilder();
+        let elemNode = b.prim(STRING);
+        let arrNode = b.array(elemNode);
+        let tagsRef = b.ref(arrNode);
+        let labelsRef = b.ref(arrNode);
+        let root = b.object({ tags: tagsRef, labels: labelsRef });
+        let result = compile(cat, b.build(root, [arrNode], ['StringArray']));
         expect(cat.is({ tags: ['a', 'b'], labels: ['c'] }, result.root)).toBe(true);
         expect(cat.is({ tags: ['a', 'b'], labels: [1] }, result.root)).toBe(false);
     });
 
     test('multiple defs', () => {
         let cat = catalog();
-        let ast = {
-            root: {
-                k: 1,
-                p: {
-                    user: { k: 12, r: 0 },
-                    comment: { k: 12, r: 1 },
-                },
-            },
-            defs: [
-                { k: 1, p: { name: STRING } },
-                { k: 1, p: { text: STRING, author: { k: 12, r: 0 } } },
-            ],
-            names: ['User', 'Comment'],
-        };
-        let result = compile(cat, ast);
+        let b = flatAstBuilder();
+        // Def 0: User = { name: STRING }
+        let userName = b.prim(STRING);
+        let userNode = b.object({ name: userName });
+        // Def 1: Comment = { text: STRING, author: ref(User) }
+        let commentText = b.prim(STRING);
+        let authorRef = b.ref(userNode);
+        let commentNode = b.object({ text: commentText, author: authorRef });
+        // Root: { user: ref(0), comment: ref(1) }
+        let userRef = b.ref(userNode);
+        let commentRef = b.ref(commentNode);
+        let root = b.object({ user: userRef, comment: commentRef });
+        let result = compile(cat, b.build(root, [userNode, commentNode], ['User', 'Comment']));
         expect(typeof result.defs['User']).toBe('number');
         expect(typeof result.defs['Comment']).toBe('number');
-
         let data = {
             user: { name: 'Alice' },
             comment: { text: 'Great!', author: { name: 'Bob' } },
@@ -369,49 +402,35 @@ describe('ast: compile refs (defs)', () => {
 
     test('primitive def gets promoted to K_PRIMITIVE', () => {
         let cat = catalog();
-        let ast = {
-            root: { k: 12, r: 0 },
-            defs: [STRING],
-            names: ['MyString'],
-        };
-        let result = compile(cat, ast);
+        let b = flatAstBuilder();
+        let strNode = b.prim(STRING);
+        let root = b.ref(strNode);
+        let result = compile(cat, b.build(root, [strNode], ['MyString']));
         expect(cat.is('hello', result.root)).toBe(true);
         expect(cat.is(42, result.root)).toBe(false);
     });
 
     test('CompiledSchema defs can be used directly with is()', () => {
         let cat = catalog();
-        let ast = {
-            root: NUMBER,
-            defs: [
-                { k: 1, p: { name: STRING, age: NUMBER } },
-            ],
-            names: ['User'],
-        };
-        let result = compile(cat, ast);
+        let b = flatAstBuilder();
+        let nameNode = b.prim(STRING);
+        let ageNode = b.prim(NUMBER);
+        let userNode = b.object({ name: nameNode, age: ageNode });
+        let root = b.prim(NUMBER);
+        let result = compile(cat, b.build(root, [userNode], ['User']));
         expect(cat.is({ name: 'Alice', age: 30 }, result.defs['User'])).toBe(true);
         expect(cat.is({ name: 'Alice' }, result.defs['User'])).toBe(false);
     });
 });
 
 describe('ast: string validators', () => {
-    test('minLength and maxLength', () => {
+    test('nested objects compile correctly', () => {
         let cat = catalog();
-        let ast = {
-            root: {
-                k: 1,
-                p: {
-                    name: {
-                        k: 1,
-                        p: { value: STRING },
-                    },
-                },
-            },
-            defs: [],
-            names: [],
-        };
-        // This test just verifies the compilation works with nested objects
-        let result = compile(cat, ast);
+        let b = flatAstBuilder();
+        let valueNode = b.prim(STRING);
+        let innerObj = b.object({ value: valueNode });
+        let root = b.object({ name: innerObj });
+        let result = compile(cat, b.build(root));
         expect(cat.is({ name: { value: 'test' } }, result.root)).toBe(true);
     });
 });

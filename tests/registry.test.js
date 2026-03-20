@@ -1,8 +1,9 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    STRING, NUMBER, NULL, UNDEFINED, catalog,
+    STRING, NUMBER, NULL, UNDEFINED,
     STRICT_REJECT
 } from 'uvd/catalog';
+import { catalog } from 'uvd/catalog';
 
 describe('registry: isolation', () => {
     test('registry() returns an object with t, v, check, diagnose, etc.', () => {

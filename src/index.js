@@ -1,7 +1,10 @@
 import {
-    catalog,
     PRIMITIVE, NULL, UNDEFINED, BOOLEAN,
-    NUMBER, STRING, DATE, URI,
+    NUMBER, STRING, DATE, URI, BIGINT,
+    STRICT_REJECT, STRICT_DELETE, STRICT_PROTO
+} from './const.js';
+import {
+    catalog
 } from "./catalog.js";
 
 const uvd = catalog();
@@ -14,4 +17,8 @@ export const conform = uvd.conform;
 export const validate = uvd.validate;
 export const diagnose = uvd.diagnose;
 
-export { PRIMITIVE, NULL, UNDEFINED, BOOLEAN, NUMBER, STRING, DATE, URI }
+export { 
+    PRIMITIVE, NULL, UNDEFINED, BOOLEAN,
+    NUMBER, STRING, DATE, URI, BIGINT,
+    STRICT_REJECT, STRICT_DELETE, STRICT_PROTO
+}

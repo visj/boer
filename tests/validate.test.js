@@ -1,8 +1,9 @@
 import { describe, test, expect } from 'bun:test';
 import {
     BOOLEAN, NUMBER, STRING,
-    BIGINT, DATE, URI, catalog
-} from 'uvd/catalog';
+    BIGINT, DATE, URI
+} from 'uvd';
+import { catalog } from 'uvd/catalog';
 
 const { t, v, is, validate } = catalog();
 

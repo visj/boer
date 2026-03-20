@@ -1,434 +1,34 @@
 /// <reference path="../global.d.ts" />
-
-// --- BIT LAYOUT ---
-// Bit 31:  COMPLEX   (0 = primitive typedef, 1 = complex typedef)
-// Bit 30:  NULLABLE  (typedef accepts null)
-// Bit 29:  OPTIONAL  (typedef accepts undefined)
-// Bit 28:  VOLATILE  (typedef lives in volatile storage)
-// Bits 0-27:
-//   If COMPLEX=0: primitive type flags (up to 28 type slots)
-//   If COMPLEX=1: index into KIND table
-
-const COMPLEX = (1 << 31) >>> 0;
-const NULLABLE = (1 << 30) >>> 0;
-const OPTIONAL = (1 << 29) >>> 0;
-const VOLATILE = (1 << 28) >>> 0;
-
-export const BOOLEAN = (1 << 27) >>> 0;
-export const NUMBER = (1 << 26) >>> 0;
-export const STRING = (1 << 25) >>> 0;
-export const BIGINT = (1 << 24) >>> 0;
-export const DATE = (1 << 23) >>> 0;
-export const URI = (1 << 22) >>> 0;
-export const INTEGER = (1 << 21) >>> 0;
-
-export const PRIMITIVE = (BOOLEAN | NUMBER | STRING | BIGINT | DATE | URI | INTEGER);
-const PRIM_MASK = 0x0FFFFFFF;
-const KIND_MASK = 0x0FFFFFFF;
-
-// Backward-compatible aliases
-export { NULLABLE as NULL, OPTIONAL as UNDEFINED };
-
-// Complex kind enum (sequential, not bit flags)
-const K_PRIMITIVE = 0;
-const K_OBJECT = 1;
-const K_ARRAY = 2;
-const K_UNION = 3;
-const K_REFINE = 4;
-const K_TUPLE = 5;
-const K_RECORD = 6;
-const K_OR = 7;
-const K_EXCLUSIVE = 8;
-const K_INTERSECT = 9;
-const K_NOT = 10;
-const K_CONDITIONAL = 11;
-
-const KIND_ENUM_MASK = 0xF;
-const HAS_VALIDATOR = 1 << 4;
-
-// --- Validator opt flags (scoped by context) ---
-
-// String validator flags
-const STR_MIN_LENGTH = 1;
-const STR_MAX_LENGTH = 2;
-const STR_PATTERN = 4;
-const STR_FORMAT = 8;
-
-// Number validator flags
-const NUM_MINIMUM = 1;
-const NUM_MAXIMUM = 2;
-const NUM_EX_MIN = 4;
-const NUM_EX_MAX = 8;
-const NUM_MULTIPLE_OF = 16;
-
-// Array validator flags
-const ARR_MIN_ITEMS = 1;
-const ARR_MAX_ITEMS = 2;
-const ARR_UNIQUE = 4;
-const ARR_CONTAINS = 8;
-const ARR_MIN_CONTAINS = 16;
-const ARR_MAX_CONTAINS = 32;
-
-// Object validator flags
-const OBJ_MIN_PROPS = 1;
-const OBJ_MAX_PROPS = 2;
-const OBJ_PATTERN_PROPS = 4;
-const OBJ_PROP_NAMES = 8;
-const OBJ_DEP_REQUIRED = 16;
-const OBJ_NO_ADDITIONAL = 32;
-
-// Format enum values (string format validator)
-const FMT_EMAIL = 1;
-const FMT_IPV4 = 2;
-const FMT_UUID = 3;
-const FMT_DATETIME = 4;
-
-// Format validation regexes
-const FMT_RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const FMT_RE_IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/;
-const FMT_RE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const FMT_RE_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
-
-const FMT_MAP = { email: FMT_EMAIL, ipv4: FMT_IPV4, uuid: FMT_UUID, 'date-time': FMT_DATETIME };
-
-export const STRIP = true;
-export const PLAIN = true;
-
-export const NOT_STRICT = 0;
-export const STRICT_REJECT = 1;
-export const STRICT_DELETE = 2;
-export const STRICT_PROTO = 4;
-const STRICT_MODE_MASK = 0b11;
-
-const U8 = 1;
-const U16 = 2;
-const U32 = 3;
-
-const ERR_ARRAY_ELEMENT_MUST_BE_NUMBER = 0;
-const ERR_CONFIG_FIELD_MUST_BE_NUMBER = 1;
-
-/**
- * @type {!Array<string>}
- */
-const ERROR_MESSAGES = [
-    'array element type must be a number typedef',
-    'config field must be a number',
-]
-
-/** @const @type {symbol} */
-var FAIL = Symbol('FAIL');
+import { config, malloc } from './config.js';
+import {
+    COMPLEX, NULLABLE, OPTIONAL, VOLATILE,
+    BOOLEAN, NUMBER, STRING, BIGINT, DATE,
+    URI, INTEGER, PRIMITIVE, PRIM_MASK, KIND_MASK,
+    K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION,
+    K_REFINE, K_TUPLE, K_RECORD, K_OR, K_EXCLUSIVE,
+    K_INTERSECT, K_NOT, K_CONDITIONAL,
+    KIND_ENUM_MASK, HAS_VALIDATOR,
+    STR_MIN_LENGTH, STR_MAX_LENGTH, STR_PATTERN, STR_FORMAT,
+    NUM_MINIMUM, NUM_MAXIMUM, NUM_EX_MIN, NUM_EX_MAX, NUM_MULTIPLE_OF,
+    ARR_MIN_ITEMS, ARR_MAX_ITEMS, ARR_UNIQUE, ARR_CONTAINS, ARR_MIN_CONTAINS,
+    ARR_MAX_CONTAINS, OBJ_MIN_PROPS, OBJ_MAX_PROPS, OBJ_PATTERN_PROPS,
+    OBJ_PROP_NAMES, OBJ_DEP_REQUIRED, OBJ_NO_ADDITIONAL,
+    FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME, FMT_MAP,
+    FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
+    STRIP, PLAIN, NOT_STRICT, STRICT_REJECT, STRICT_DELETE, STRICT_PROTO,
+    STRICT_MODE_MASK, U8, U16, U32, FAIL
+} from './const.js';
+import {
+    assert, assertIsNumber, assertIsObject,
+    ERR_ARRAY_ELEMENT_MUST_BE_NUMBER,
+    ERR_CONFIG_FIELD_MUST_BE_NUMBER
+} from './error.js';
+import {
+    nullable, optional, isNumber, isObject,
+    sortByKeyId, parseValue, _isValue, describeType
+} from './util.js';
 
 const hasOwnProperty = Object.prototype.hasOwnProperty;
-
-/**
- * @template T
- * @template {uvd.cat.Primitive<T> | uvd.cat.Complex<T>} D
- * @param {D} typedef
- * @returns {D}
- */
-function nullable(typedef) {
-    //@ts-ignore
-    return (typedef | NULLABLE) >>> 0;
-}
-
-/**
- * @template T
- * @template {uvd.cat.Primitive<T> | uvd.cat.Complex<T>} D
- * @param {D} typedef
- * @returns {D}
- */
-function optional(typedef) {
-    //@ts-ignore
-    return (typedef | OPTIONAL) >>> 0;
-}
-
-/**
- * 
- * @param {*} value 
- * @returns {value is number}
- */
-function isNumber(value) {
-    return typeof value === 'number';
-}
-
-/**
- * 
- * @param {*} value 
- * @returns {value is Record<string, any>}
- */
-function isObject(value) {
-    return value !== null && typeof value === 'object';
-}
-
-/**
- * @throws
- * @template T
- * @param {any} value
- * @param {(v: any) => v is T} predicate
- * @param {number} errorId
- * @returns {asserts value is T}
- */
-function assert(value, predicate, errorId) {
-    if (!predicate(value)) {
-        throw new Error(ERROR_MESSAGES[errorId]);
-    }
-}
-
-/**
- * @throws
- * @param {any} value
- * @param {number} errorId
- * @returns {asserts value is number}
- */
-function assertIsNumber(value, errorId) {
-    if (typeof value !== 'number') {
-        throw new Error(ERROR_MESSAGES[errorId]);
-    }
-}
-
-/**
- * @throws
- * @param {any} value
- * @param {number} errorId
- * @returns {asserts value is number}
- */
-function assertIsObject(value, errorId) {
-    if (value === null || typeof value !== 'object') {
-        throw new Error(ERROR_MESSAGES[errorId]);
-    }
-}
-
-/**
- * 
- * @param {!Array<number>} buffer
- * @returns {void} 
- */
-function sortByKeyId(buffer) {
-    /**
-     * 
-     * @param {number} i 
-     * @param {number} j 
-     */
-    function swap(i, j) {
-        let i2 = i << 1;
-        let j2 = j << 1;
-
-        let tmp = buffer[i2];
-        buffer[i2] = buffer[j2];
-        buffer[j2] = tmp;
-
-        tmp = buffer[i2 + 1];
-        buffer[i2 + 1] = buffer[j2 + 1];
-        buffer[j2 + 1] = tmp;
-    }
-
-    /**
-     * 
-     * @param {number} low 
-     * @param {number} high 
-     * @returns {void}
-     */
-    function quicksort(low, high) {
-        if (low >= high) {
-            return;
-        }
-
-        let pivot = buffer[((low + high) >>> 1) << 1];
-        let start = low;
-        let end = high;
-
-        while (start <= end) {
-            while (buffer[start << 1] < pivot) {
-                start++;
-            }
-            while (buffer[end << 1] > pivot) {
-                end--;
-            }
-
-            if (start <= end) {
-                swap(start, end);
-                start++;
-                end--;
-            }
-        }
-
-        if (low < end) {
-            quicksort(low, end);
-        }
-        if (start < high) {
-            quicksort(start, high);
-        }
-    }
-
-    quicksort(0, (buffer.length >> 1) - 1);
-}
-
-/**
- * @param {*} raw
- * @param {number} mask - only VALUE bits
- * @param {boolean} reify
- * @returns {*} parsed value, or FAIL
- */
-function parseValue(raw, mask, reify) {
-    let jsType = typeof raw;
-    if (jsType === 'boolean') {
-        return (mask & BOOLEAN) ? raw : FAIL;
-    }
-    if (jsType === 'number') {
-        if (mask & NUMBER) {
-            return raw;
-        }
-        if (reify) {
-            if (mask & BIGINT) {
-                if (!Number.isInteger(/** @type {number} */(raw))) {
-                    return FAIL;
-                }
-                return BigInt(/** @type {number} */(raw));
-            }
-            if (mask & DATE) {
-                let date = new Date(/** @type {number} */(raw));
-                if (!isNaN(date.valueOf())) {
-                    return date;
-                }
-            }
-        }
-        return FAIL;
-    }
-    if (jsType === 'string') {
-        if (reify) {
-            if (mask & DATE) {
-                let date = new Date(/** @type {string} */(raw));
-                if (!isNaN(date.valueOf())) {
-                    return date;
-                }
-            }
-            if ((mask & URI)) {
-                try {
-                    return new URL(/** @type {string} */(raw));
-                } catch (_) { /* fall through */ }
-            }
-            if (mask & BIGINT) {
-                try {
-                    return BigInt(/** @type {string} */(raw));
-                } catch (_) { /* fall through */ }
-            }
-        }
-        if (mask & STRING) {
-            return raw;
-        }
-        return FAIL;
-    }
-    if (
-        ((mask & BIGINT) && jsType === 'bigint') ||
-        ((mask & DATE) && raw instanceof Date) ||
-        ((mask & URI) && raw instanceof URL)
-    ) {
-        return raw;
-    }
-    return FAIL;
-}
-
-/**
- * @param {*} raw
- * @param {number} mask - only VALUE bits
- * @returns {boolean}
- */
-function _isValue(raw, mask) {
-    let jsType = typeof raw;
-    return (
-        jsType === 'string' ? (mask & STRING) !== 0 :
-            jsType === 'number' ? ((mask & NUMBER) !== 0 || ((mask & INTEGER) !== 0 && Number.isInteger(raw))) :
-                jsType === 'boolean' ? (mask & BOOLEAN) !== 0 :
-                    jsType === 'bigint' ? (mask & BIGINT) !== 0 :
-                        raw instanceof Date ? (mask & DATE) !== 0 :
-                            raw instanceof URL ? (mask & URI) !== 0 : false
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Config & Storage
-// ---------------------------------------------------------------------------
-
-const DEFAULT_T = { slab: 16384, objects: 4096, arrays: 256, unions: 128, tuples: 128, matches: 256, kinds: 2048, validators: 512 };
-const DEFAULT_V = { slab: 1024, objects: 256, arrays: 64, unions: 32, tuples: 32, matches: 64, kinds: 512, validators: 128 };
-/**
- * @type {readonly (keyof uvd.cat.HeapConfig)[]}
- */
-const CONFIG_KEYS = ['slab', 'objects', 'arrays', 'unions', 'tuples', 'matches', 'kinds', 'validators'];
-
-/**
- * @param {uvd.cat.Config=} cfg
- * @returns {uvd.cat.Config}
- */
-function config(cfg) {
-    /** @type {uvd.cat.HeapConfig} */
-    let t = { slab: DEFAULT_T.slab, objects: DEFAULT_T.objects, arrays: DEFAULT_T.arrays, unions: DEFAULT_T.unions, tuples: DEFAULT_T.tuples, matches: DEFAULT_T.matches, kinds: DEFAULT_T.kinds, validators: DEFAULT_T.validators };
-    let v = { slab: DEFAULT_V.slab, objects: DEFAULT_V.objects, arrays: DEFAULT_V.arrays, unions: DEFAULT_V.unions, tuples: DEFAULT_V.tuples, matches: DEFAULT_V.matches, kinds: DEFAULT_V.kinds, validators: DEFAULT_V.validators };
-    if (cfg) {
-        const cfg_t = cfg.t;
-        if (cfg_t) {
-            for (let i = 0; i < CONFIG_KEYS.length; i++) {
-                let key = CONFIG_KEYS[i];
-                const val = cfg_t[key];
-                assertIsNumber(val, 0);
-                t[key] = val;
-            }
-        }
-        const cfg_v = cfg.v;
-        if (cfg_v) {
-            for (let i = 0; i < CONFIG_KEYS.length; i++) {
-                let key = CONFIG_KEYS[i];
-                const val = cfg_v[key];
-                assertIsNumber(val, ERR_CONFIG_FIELD_MUST_BE_NUMBER);
-                v[key] = val;
-            }
-        }
-    }
-    return { t, v };
-}
-
-/**
- * 
- * @param {uvd.cat.HeapConfig} cfg 
- * @returns {uvd.cat.Heap}
- */
-function malloc(cfg) {
-    return {
-        PTR: 0,
-        SLAB_LEN: cfg.slab,
-        OBJ_LEN: cfg.objects,
-        OBJ_TYPE: U16,
-        OBJ_COUNT: 0,
-        ARR_LEN: cfg.arrays,
-        ARR_COUNT: 0,
-        UNION_LEN: cfg.unions,
-        UNION_COUNT: 0,
-        TUP_LEN: cfg.tuples,
-        TUP_TYPE: U16,
-        TUP_COUNT: 0,
-        MAT_LEN: cfg.matches,
-        MAT_TYPE: U16,
-        MAT_COUNT: 0,
-        KIND_LEN: cfg.kinds,
-        KIND_PTR: 0,
-        VAL_LEN: cfg.validators,
-        VAL_PTR: 0,
-        SLAB: new Uint32Array(cfg.slab),
-        OBJECTS: new Uint16Array(cfg.objects),
-        ARRAYS: new Uint32Array(cfg.arrays),
-        UNIONS: new Uint32Array(cfg.unions),
-        TUPLES: new Uint16Array(cfg.tuples),
-        MATCHES: new Uint16Array(cfg.matches),
-        KINDS: new Uint32Array(cfg.kinds),
-        VALIDATORS: new Float64Array(cfg.validators),
-        REGEX_CACHE: [],
-        CALLBACKS: [],
-    };
-}
-
-// ---------------------------------------------------------------------------
-// Registry factory
-// ---------------------------------------------------------------------------
 
 /**
  * @template R
@@ -472,8 +72,6 @@ function catalog(cfg) {
     let KEY_INDEX = new Map();
 
     let rewindPending = false;
-
-    // --- INTERNAL HELPERS ---
 
     /**
      * @returns {void}
@@ -864,13 +462,15 @@ function catalog(cfg) {
     // }
 
     /**
+     * @template T
      * @param {!Array<number>} types
      * @param {boolean} volatile
-     * @returns {number}
+     * @returns {uvd.cat.Complex<T>}
      */
     function tupleArrayImpl(types, volatile) {
         let id = allocOnSlab(types, volatile, 'tuple');
         let kindPtr = allocKind(K_TUPLE, id, volatile, 2);
+        //@ts-ignore
         return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
     }
 
@@ -878,7 +478,7 @@ function catalog(cfg) {
      * @template T
      * @param {uvd.cat.Type<T,R>} valueType
      * @param {boolean} volatile
-     * @returns {uvd.cat.Complex<T,R>}
+     * @returns {uvd.cat.Complex<Record<string,T>,R>}
      */
     function recordImpl(valueType, volatile) {
         assertIsNumber(valueType, 0);
@@ -888,9 +488,10 @@ function catalog(cfg) {
     }
 
     /**
+     * @template T
      * @param {!Array<number>} types
      * @param {boolean} volatile
-     * @returns {number}
+     * @returns {uvd.cat.Complex<T,R>}
      */
     function orImpl(types, volatile) {
         // Fast path: if all inputs are raw primitives (no COMPLEX bit),
@@ -906,6 +507,7 @@ function catalog(cfg) {
             merged |= types[i];
         }
         if (allPrimitive) {
+            //@ts-ignore
             return merged >>> 0;
         }
         let id = allocOnSlab(types, volatile, 'match');
@@ -915,47 +517,54 @@ function catalog(cfg) {
             if (types[i] & NULLABLE) flags |= NULLABLE;
             if (types[i] & OPTIONAL) flags |= OPTIONAL;
         }
+        //@ts-ignore
         return flags >>> 0;
     }
 
     /**
+     * @template T
      * @param {!Array<number>} types
      * @param {boolean} volatile
-     * @returns {number}
+     * @returns {uvd.cat.Complex<T,R>}
      */
     function exclusiveImpl(types, volatile) {
         let id = allocOnSlab(types, volatile, 'match');
         let kindPtr = allocKind(K_EXCLUSIVE, id, volatile, 2);
-        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
-    }
-
-    /**
-     * @param {!Array<number>} types
-     * @param {boolean} volatile
-     * @returns {number}
-     */
-    function intersectImpl(types, volatile) {
-        let id = allocOnSlab(types, volatile, 'match');
-        let kindPtr = allocKind(K_INTERSECT, id, volatile, 2);
+        //@ts-ignore
         return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
     }
 
     /**
      * @template T
-     * @param {!uvd.cat.Type<T,R>} typedef
+     * @param {Array<number>} types
      * @param {boolean} volatile
-     * @returns {number}
+     * @returns {uvd.cat.Complex<T,R>}
      */
-    function notImpl(typedef, volatile) {
-        assertIsNumber(typedef, 0);
-        let kindPtr = allocKind(K_NOT, typedef >>> 0, volatile, 2);
+    function intersectImpl(types, volatile) {
+        let id = allocOnSlab(types, volatile, 'match');
+        let kindPtr = allocKind(K_INTERSECT, id, volatile, 2);
+        //@ts-ignore
         return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
     }
 
     /**
-     * @param {!uvd.cat.WhenValidators} config
+     * @template T
+     * @param {uvd.cat.Type<T,R>} typedef
      * @param {boolean} volatile
-     * @returns {number}
+     * @returns {uvd.cat.Complex<T,R>}
+     */
+    function notImpl(typedef, volatile) {
+        assertIsNumber(typedef, 0);
+        let kindPtr = allocKind(K_NOT, typedef >>> 0, volatile, 2);
+        //@ts-ignore
+        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
+    }
+
+    /**
+     * @template T
+     * @param {uvd.cat.WhenValidators} config
+     * @param {boolean} volatile
+     * @returns {uvd.cat.Complex<T,R>}
      */
     function whenImpl(config, volatile) {
         // Always store 3 slots: [if, then, else]
@@ -967,93 +576,11 @@ function catalog(cfg) {
         ];
         let id = allocOnSlab(types, volatile, 'match');
         let kindPtr = allocKind(K_CONDITIONAL, id, volatile, 2);
+        //@ts-ignore
         return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
     }
 
-    /**
-     * @param {number} type
-     * @returns {string}
-     */
-    function describeType(type) {
-        /** @type {!Array<string>} */
-        let parts = [];
-        if (type & OPTIONAL) {
-            parts.push('undefined');
-        }
-        if (type & NULLABLE) {
-            parts.push('null');
-        }
-        if (type & COMPLEX) {
-            let volatile = (type & VOLATILE) !== 0;
-            let ptr = type & KIND_MASK;
-            let kinds = volatile ? V_KINDS : KINDS;
-            let header = kinds[ptr];
-            let ct = header & KIND_ENUM_MASK;
-            if (ct === K_PRIMITIVE) {
-                let primBits = header & PRIMITIVE;
-                if (primBits & BOOLEAN) {
-                    parts.push('boolean');
-                }
-                if (primBits & NUMBER) {
-                    parts.push('number');
-                }
-                if (primBits & STRING) {
-                    parts.push('string');
-                }
-                if (primBits & BIGINT) {
-                    parts.push('bigint');
-                }
-                if (primBits & DATE) {
-                    parts.push('Date');
-                }
-                if (primBits & URI) {
-                    parts.push('URL');
-                }
-            } else if (ct === K_ARRAY) {
-                parts.push('Array');
-            } else if (ct === K_UNION) {
-                parts.push('Union');
-            } else if (ct === K_OBJECT) {
-                parts.push('Object');
-            } else if (ct === K_REFINE) {
-                parts.push('Refined');
-            } else if (ct === K_TUPLE) {
-                parts.push('Tuple');
-            } else if (ct === K_RECORD) {
-                parts.push('Record');
-            } else if (ct === K_OR) {
-                parts.push('Or');
-            } else if (ct === K_EXCLUSIVE) {
-                parts.push('Exclusive');
-            } else if (ct === K_INTERSECT) {
-                parts.push('Intersect');
-            } else if (ct === K_NOT) {
-                parts.push('Not');
-            } else if (ct === K_CONDITIONAL) {
-                parts.push('Conditional');
-            }
-        } else {
-            if (type & BOOLEAN) {
-                parts.push('boolean');
-            }
-            if (type & NUMBER) {
-                parts.push('number');
-            }
-            if (type & STRING) {
-                parts.push('string');
-            }
-            if (type & BIGINT) {
-                parts.push('bigint');
-            }
-            if (type & DATE) {
-                parts.push('Date');
-            }
-            if (type & URI) {
-                parts.push('URL');
-            }
-        }
-        return parts.join(' | ') || 'unknown';
-    }
+
 
     // --- SCHEMA BUILDERS ---
 
@@ -1805,15 +1332,16 @@ function catalog(cfg) {
      * @returns {void}
      */
     function _diagnose(data, typedef, path, errors) {
+        const kinds = (typedef & VOLATILE) === 0 ? KINDS : V_KINDS;
         if (data === void 0) {
             if (!(typedef & OPTIONAL)) {
-                errors.push({ path, message: 'unexpected undefined, expected ' + describeType(typedef) });
+                errors.push({ path, message: 'unexpected undefined, expected ' + describeType(typedef, kinds) });
             }
             return;
         }
         if (data === null) {
             if (!(typedef & NULLABLE)) {
-                errors.push({ path, message: 'unexpected null, expected ' + describeType(typedef) });
+                errors.push({ path, message: 'unexpected null, expected ' + describeType(typedef, kinds) });
             }
             return;
         }
@@ -1836,7 +1364,7 @@ function catalog(cfg) {
                             type = 'URL';
                         }
                     }
-                    errors.push({ path, message: 'expected ' + describeType(typedef) + ', got ' + type });
+                    errors.push({ path, message: 'expected ' + describeType(typedef, kinds) + ', got ' + type });
                 }
                 return;
             }
@@ -2021,7 +1549,7 @@ function catalog(cfg) {
                     type = 'URL';
                 }
             }
-            errors.push({ path, message: 'expected ' + describeType(typedef) + ', got ' + type });
+            errors.push({ path, message: 'expected ' + describeType(typedef, kinds) + ', got ' + type });
         }
     }
 
@@ -2747,3 +2275,5 @@ export {
     K_RECORD, K_OR, K_EXCLUSIVE, K_INTERSECT, K_NOT, K_CONDITIONAL,
     HAS_VALIDATOR,
 };
+
+export * from './const.js';

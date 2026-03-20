@@ -1,7 +1,10 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, BOOLEAN, NUMBER,
-    STRING, BIGINT, DATE, URI, catalog
+    STRING, BIGINT, DATE, URI,
+} from 'uvd';
+import {
+    catalog
 } from 'uvd/catalog';
 
 const { t, is, conform } = catalog();

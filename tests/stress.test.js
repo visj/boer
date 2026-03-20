@@ -1,8 +1,9 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    BOOLEAN, NUMBER, STRING, DATE, catalog,
+    BOOLEAN, NUMBER, STRING, DATE,
     STRICT_DELETE
-} from 'uvd/catalog';
+} from 'uvd';
+import { catalog } from 'uvd/catalog';
 
 const { t, is, conform } = catalog();
 

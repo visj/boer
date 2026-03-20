@@ -1,90 +1,28 @@
-export declare const K_REF = 12;
+export declare const N_PRIM = 0;
+export declare const N_OBJECT = 1;
+export declare const N_ARRAY = 2;
+export declare const N_REFINE = 4;
+export declare const N_OR = 7;
+export declare const N_EXCLUSIVE = 8;
+export declare const N_INTERSECT = 9;
+export declare const N_NOT = 10;
+export declare const N_CONDITIONAL = 11;
+export declare const N_REF = 12;
 
-export interface AstObject {
-    readonly k: 1;
-    readonly p: Record<string, AstNode>;
-    readonly v?: Record<string, number | true>;
-}
-
-export interface AstArray {
-    readonly k: 2;
-    readonly i: AstNode;
-    readonly v?: Record<string, number | true>;
-}
-
-export interface AstUnion {
-    readonly k: 3;
-    readonly d: string;
-    readonly m: Record<string, AstNode>;
-}
-
-export interface AstRefine {
-    readonly k: 4;
-    readonly i: AstNode;
-    readonly f: (data: any) => boolean;
-}
-
-export interface AstTuple {
-    readonly k: 5;
-    readonly i: AstNode[];
-}
-
-export interface AstRecord {
-    readonly k: 6;
-    readonly i: AstNode;
-}
-
-export interface AstOr {
-    readonly k: 7;
-    readonly i: AstNode[];
-}
-
-export interface AstExclusive {
-    readonly k: 8;
-    readonly i: AstNode[];
-}
-
-export interface AstIntersect {
-    readonly k: 9;
-    readonly i: AstNode[];
-}
-
-export interface AstNot {
-    readonly k: 10;
-    readonly i: AstNode;
-}
-
-export interface AstConditional {
-    readonly k: 11;
-    readonly if: AstNode;
-    readonly then?: AstNode;
-    readonly else?: AstNode;
-}
-
-export interface AstRef {
-    readonly k: 12;
-    readonly r: number;
-}
-
-export type AstNode =
-    | number
-    | AstObject
-    | AstArray
-    | AstUnion
-    | AstRefine
-    | AstTuple
-    | AstRecord
-    | AstOr
-    | AstExclusive
-    | AstIntersect
-    | AstNot
-    | AstConditional
-    | AstRef;
-
-export interface AstRoot {
-    readonly root: AstNode;
-    readonly defs: AstNode[];
-    readonly names: string[];
+export interface FlatAst {
+    readonly astKinds: Uint8Array;
+    readonly astFlags: Uint32Array;
+    readonly astChild0: Uint32Array;
+    readonly astChild1: Uint32Array;
+    readonly propNames: string[];
+    readonly propChildren: number[];
+    readonly listChildren: number[];
+    readonly condSlots: number[];
+    readonly callbacks: Array<(data: any) => boolean>;
+    readonly rootId: number;
+    readonly defIds: number[];
+    readonly defNames: string[];
+    readonly nodeCount: number;
 }
 
 export interface CompiledSchema {
@@ -92,4 +30,4 @@ export interface CompiledSchema {
     readonly defs: Record<string, number>;
 }
 
-export function compile(catalog: any, ast: AstRoot): CompiledSchema;
+export function compile(catalog: any, ast: FlatAst): CompiledSchema;

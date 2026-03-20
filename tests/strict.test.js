@@ -1,8 +1,9 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, NUMBER, STRING, STRICT_DELETE,
-    STRICT_REJECT, catalog
-} from 'uvd/catalog';
+    STRICT_REJECT
+} from 'uvd';
+import { catalog } from 'uvd/catalog';
 
 const { t, is } = catalog();
 
