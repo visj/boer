@@ -2,8 +2,10 @@
 import { config, malloc } from './config.js';
 import {
     COMPLEX, NULLABLE, OPTIONAL, VOLATILE,
-    BOOLEAN, NUMBER, STRING, BIGINT, DATE,
-    URI, INTEGER, PRIMITIVE, PRIM_MASK, KIND_MASK,
+    ANY, NEVER, FALSE, TRUE, BOOLEAN,
+    NUMBER, STRING, INTEGER, BIGINT,
+    ARRAY, OBJECT, DATE, URI,
+    SIMPLE, PRIM_MASK, KIND_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION,
     K_REFINE, K_TUPLE, K_RECORD, K_OR, K_EXCLUSIVE,
     K_INTERSECT, K_NOT, K_CONDITIONAL,
@@ -16,7 +18,7 @@ import {
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME, FMT_MAP,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
     STRIP, PLAIN, NOT_STRICT, STRICT_REJECT, STRICT_DELETE, STRICT_PROTO,
-    STRICT_MODE_MASK, U8, U16, U32, FAIL
+    STRICT_MODE_MASK, U8, U16, U32, FAIL, hasOwnProperty, toString
 } from './const.js';
 import {
     assert, assertIsNumber, assertIsObject,
@@ -28,11 +30,10 @@ import {
     sortByKeyId, parseValue, _isValue, describeType
 } from './util.js';
 
-const hasOwnProperty = Object.prototype.hasOwnProperty;
-
 /**
- * @template R
+ * @template {symbol} R
  * @param {uvd.cat.Config=} cfg 
+ * @returns {uvd.cat.Catalog<R>}
  */
 function catalog(cfg) {
     cfg = config(cfg);
@@ -489,22 +490,31 @@ function catalog(cfg) {
 
     /**
      * @template T
-     * @param {!Array<number>} types
+     * @param {uvd.cat.Type<T,R>[]} types
      * @param {boolean} volatile
-     * @returns {uvd.cat.Complex<T,R>}
+     * @returns {uvd.cat.Type<T,R>}
      */
     function orImpl(types, volatile) {
         // Fast path: if all inputs are raw primitives (no COMPLEX bit),
         // just OR the bits together — no allocation needed.
         let allPrimitive = true;
         let merged = 0;
+        let j = 0;
+        let flags = COMPLEX | (volatile ? VOLATILE : 0)
         let length = types.length;
-        for (let i = 0; i < length; i++) {
-            if (types[i] & COMPLEX) {
+        for (let i = 0; i < length; i++, j++) {
+            const type = /** @type {number} */(types[i]);
+            if (type & NULLABLE) {
+                flags |= NULLABLE;
+            }
+            if (type & OPTIONAL) {
+                flags |= OPTIONAL;
+            }
+            if (type & COMPLEX) {
                 allPrimitive = false;
                 break;
             }
-            merged |= types[i];
+            merged |= type;
         }
         if (allPrimitive) {
             //@ts-ignore
@@ -512,10 +522,15 @@ function catalog(cfg) {
         }
         let id = allocOnSlab(types, volatile, 'match');
         let kindPtr = allocKind(K_OR, id, volatile, 2);
-        let flags = COMPLEX | (volatile ? VOLATILE : 0) | kindPtr;
-        for (let i = 0; i < length; i++) {
-            if (types[i] & NULLABLE) flags |= NULLABLE;
-            if (types[i] & OPTIONAL) flags |= OPTIONAL;
+        flags |= kindPtr;
+        for (; j < length; j++) {
+            const type = /** @type {number} */(types[j]);
+            if (type & NULLABLE) {
+                flags |= NULLABLE;
+            }
+            if (type & OPTIONAL) {
+                flags |= OPTIONAL;
+            }
         }
         //@ts-ignore
         return flags >>> 0;
@@ -586,11 +601,11 @@ function catalog(cfg) {
 
     /**
      * @throws
-     * @template T
-     * @param {uvd.cat.Schema<R>} definition
+     * @template {uvd.cat.StrictSchema<any,R>} T
+     * @param {T} definition
      * @param {boolean} volatile
      * @param {uvd.cat.ObjectValidators=} opts
-     * @returns {uvd.cat.Complex<uvd.cat.InferSchema<T>, R>}
+     * @returns {uvd.cat.Complex<uvd.cat.InferStrictSchema<T,R>, R>}
      */
     function objectImpl(definition, volatile, opts) {
         let keys = Object.keys(definition);
@@ -659,7 +674,7 @@ function catalog(cfg) {
                 for (let i = 0; i < patterns.length; i++) {
                     const pattern = patterns[i];
                     const match = patternProperties[pattern];
-                    assertIsNumber(match, 0); 
+                    assertIsNumber(match, 0);
                     let re = new RegExp(patterns[i]);
                     let idx = cache.push(re) - 1;
                     payloads.push(idx);
@@ -706,10 +721,10 @@ function catalog(cfg) {
     /**
      * @throws
      * @template T
-     * @param {number} elemType
+     * @param {uvd.cat.Type<T,R>} elemType
      * @param {boolean} volatile
      * @param {uvd.cat.ArrayValidators=} opts
-     * @returns {uvd.cat.Complex<uvd.cat.InferSchema<T>, R>}
+     * @returns {uvd.cat.Complex<T[], R>}
      */
     function arrayImpl(elemType, volatile, opts) {
         assertIsNumber(elemType, ERR_ARRAY_ELEMENT_MUST_BE_NUMBER);
@@ -758,10 +773,10 @@ function catalog(cfg) {
 
     /**
      * @throws
-     * @template T
+     * @template {Record<string, uvd.cat.Type<any,R>>} T
      * @template {string} D
      * @param {D} discriminator
-     * @param {!Record<string,number>} variants
+     * @param {T} variants
      * @param {boolean} volatile
      * @returns {uvd.cat.Complex<{ [K in keyof T]: uvd.cat.Infer<T[K]> & { [P in D]: K } }[keyof T], R>}
      */
@@ -769,7 +784,7 @@ function catalog(cfg) {
         if (
             variants === null ||
             typeof variants !== 'object' ||
-            Object.prototype.toString.call(variants) !== '[object Object]'
+            toString.call(variants) !== '[object Object]'
         ) {
             throw new Error('discriminated variants must be an object literal { key: type }');
         }
@@ -831,6 +846,7 @@ function catalog(cfg) {
      * @returns {boolean}
      */
     function _is(data, typedef, strict) {
+        if (typedef & ANY) return true;
         if (data == null) {
             return (data === null ? (typedef & NULLABLE) : (typedef & OPTIONAL)) !== 0;
         }
@@ -842,7 +858,7 @@ function catalog(cfg) {
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
             if (ct === K_PRIMITIVE) {
-                return _isValue(data, header & PRIMITIVE);
+                return _isValue(data, header & SIMPLE);
             }
             if (ct === K_ARRAY) {
                 if (!Array.isArray(data)) {
@@ -865,7 +881,7 @@ function catalog(cfg) {
                         }
                         continue;
                     }
-                    if (innerType & PRIMITIVE) {
+                    if (innerType & SIMPLE) {
                         if (!_isValue(item, innerType & PRIM_MASK)) {
                             return false;
                         }
@@ -902,7 +918,7 @@ function catalog(cfg) {
                         }
                         continue;
                     }
-                    if (type & PRIMITIVE) {
+                    if (type & SIMPLE) {
                         if (!_isValue(item, type & PRIM_MASK)) {
                             return false;
                         }
@@ -1004,7 +1020,7 @@ function catalog(cfg) {
                         }
                         continue;
                     }
-                    if (elemType & PRIMITIVE) {
+                    if (elemType & SIMPLE) {
                         if (!_isValue(item, elemType & PRIM_MASK)) {
                             return false;
                         }
@@ -1034,7 +1050,7 @@ function catalog(cfg) {
                         }
                         continue;
                     }
-                    if (valueType & PRIMITIVE) {
+                    if (valueType & SIMPLE) {
                         if (!_isValue(item, valueType & PRIM_MASK)) {
                             return false;
                         }
@@ -1123,12 +1139,16 @@ function catalog(cfg) {
     }
 
     /**
+     * @template T
      * @param {*} data
-     * @param {number} typedef
+     * @param {uvd.cat.Type<T,R>} typedef
      * @param {boolean=} preserve
-     * @returns {boolean}
+     * @returns {data is T}
      */
     function conform(data, typedef, preserve) {
+        if (typeof typedef !== 'number') {
+            return false;
+        }
         rewindPending = true;
         let result = _conform(data, typedef, !preserve);
         return result;
@@ -1141,6 +1161,7 @@ function catalog(cfg) {
      * @returns {boolean}
      */
     function _conform(data, typedef, reify) {
+        if (typedef & ANY) return true;
         if (data == null) {
             return (data === null ? (typedef & NULLABLE) : (typedef & OPTIONAL)) !== 0;
         }
@@ -1152,7 +1173,7 @@ function catalog(cfg) {
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
             if (ct === K_PRIMITIVE) {
-                let vm = header & PRIMITIVE;
+                let vm = header & SIMPLE;
                 return vm !== 0 && parseValue(data, vm, reify) !== FAIL;
             }
             if (ct === K_ARRAY) {
@@ -1353,7 +1374,7 @@ function catalog(cfg) {
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
             if (ct === K_PRIMITIVE) {
-                let primBits = header & PRIMITIVE;
+                let primBits = header & SIMPLE;
                 if (primBits === 0 || !_isValue(data, primBits)) {
                     /** @type {string} */
                     let type = typeof data;
@@ -1554,12 +1575,16 @@ function catalog(cfg) {
     }
 
     /**
+     * @template T
      * @param {*} data
-     * @param {number} typedef
+     * @param {uvd.cat.Type<T,R>} typedef
      * @param {number=} strict
-     * @returns {boolean}
+     * @returns {data is T}
      */
     function is(data, typedef, strict) {
+        if (typeof typedef !== 'number') {
+            return false;
+        }
         rewindPending = true;
         let _strict = NOT_STRICT;
         if (typeof strict === 'number') {
@@ -1818,7 +1843,7 @@ function catalog(cfg) {
             raw === void 0 ? (type & OPTIONAL) !== 0 :
                 raw === null ? (type & NULLABLE) !== 0 :
                     (type & COMPLEX) ? _validate(raw, type) :
-                        (type & PRIMITIVE) ? _isValue(raw, type & PRIM_MASK) :
+                        (type & SIMPLE) ? _isValue(raw, type & PRIM_MASK) :
                             false
         );
     }
@@ -1829,6 +1854,7 @@ function catalog(cfg) {
      * @returns {boolean}
      */
     function _validate(data, typedef) {
+        if (typedef & ANY) return true;
         if (data == null) {
             return (data === null ? (typedef & NULLABLE) : (typedef & OPTIONAL)) !== 0;
         }
@@ -1840,7 +1866,7 @@ function catalog(cfg) {
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
             if (ct === K_PRIMITIVE) {
-                let primBits = header & PRIMITIVE;
+                let primBits = header & SIMPLE;
                 if (!_isValue(data, primBits)) {
                     return false;
                 }
@@ -2009,11 +2035,15 @@ function catalog(cfg) {
     }
 
     /**
+     * @template T
      * @param {*} data
-     * @param {number} typedef
-     * @returns {boolean}
+     * @param {uvd.cat.Type<T,R>} typedef
+     * @returns {data is T}
      */
     function validate(data, typedef) {
+        if (typeof typedef !== 'number') {
+            return false;
+        }
         rewindPending = true;
         let result = _validate(data, typedef);
         return result;
@@ -2261,11 +2291,13 @@ function catalog(cfg) {
         KEY_INDEX,
     };
 
-    return { t, v, is, guard, conform, validate, diagnose, __heap: {
-        HEAP, VOL_HEAP, DICT,
-        allocKind, allocValidator, allocOnSlab, lookup,
-        registerObject, registerArray, registerUnion,
-    } };
+    return {
+        t, v, is, guard, conform, validate, diagnose, __heap: {
+            HEAP, VOL_HEAP, DICT,
+            allocKind, allocValidator, allocOnSlab, lookup,
+            registerObject, registerArray, registerUnion,
+        }
+    };
 }
 
 export {

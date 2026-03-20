@@ -4,7 +4,7 @@
 // Bit 29:  OPTIONAL  (typedef accepts undefined)
 // Bit 28:  VOLATILE  (typedef lives in volatile storage)
 // Bits 0-27:
-//   If COMPLEX=0: primitive type flags (up to 28 type slots)
+//   If COMPLEX=0: primitive type flags (layered bit mask)
 //   If COMPLEX=1: index into KIND table
 
 const COMPLEX = (1 << 31) >>> 0;
@@ -12,15 +12,43 @@ const NULLABLE = (1 << 30) >>> 0;
 const OPTIONAL = (1 << 29) >>> 0;
 const VOLATILE = (1 << 28) >>> 0;
 
-const BOOLEAN = (1 << 27) >>> 0;
-const NUMBER = (1 << 26) >>> 0;
-const STRING = (1 << 25) >>> 0;
-const BIGINT = (1 << 24) >>> 0;
-const DATE = (1 << 23) >>> 0;
-const URI = (1 << 22) >>> 0;
+/**
+ * Primitive type bits (bits 16-27)
+ *
+ * Layer 1: Meta types
+ *   27: ANY    - matches everything (JSON Schema true/{})
+ *   26: NEVER  - matches nothing (JSON Schema false)
+ *
+ * Layer 2: JS value types
+ *   25: FALSE    24: TRUE     (BOOLEAN = FALSE | TRUE)
+ *   23: NUMBER   22: STRING   21: INTEGER   20: BIGINT
+ *   19: ARRAY    18: OBJECT   17: DATE      16: URI
+ *
+ * Bits 9-15: Reserved for future use
+ * Bit 8: CONTEXT (payload flag for sub-type enum in bits 0-7)
+ * Bits 0-7: Payload data (when CONTEXT=1)
+ */
+const ANY = (1 << 27) >>> 0;
+const NEVER = (1 << 26) >>> 0;
+const FALSE = (1 << 25) >>> 0;
+const TRUE = (1 << 24) >>> 0;
+const BOOLEAN = (FALSE | TRUE) >>> 0;
+const NUMBER = (1 << 23) >>> 0;
+const STRING = (1 << 22) >>> 0;
 const INTEGER = (1 << 21) >>> 0;
+const BIGINT = (1 << 20) >>> 0;
+const ARRAY = (1 << 19) >>> 0;
+const OBJECT = (1 << 18) >>> 0;
+const DATE = (1 << 17) >>> 0;
+const URI = (1 << 16) >>> 0;
+const CONTEXT = (1 << 8) >>> 0;
 
-const PRIMITIVE = (BOOLEAN | NUMBER | STRING | BIGINT | DATE | URI | INTEGER);
+/**
+ * SIMPLE: all non-header type bits (used internally for masking kind headers)
+ * PRIMITIVE: true value types only (no containers, no meta types)
+ */
+const SIMPLE = (ANY | NEVER | FALSE | TRUE | NUMBER | STRING | INTEGER | BIGINT | ARRAY | OBJECT | DATE | URI);
+const PRIMITIVE = (FALSE | TRUE | NUMBER | STRING | INTEGER | BIGINT | DATE | URI);
 const PRIM_MASK = 0x0FFFFFFF;
 const KIND_MASK = 0x0FFFFFFF;
 
@@ -101,10 +129,15 @@ const U32 = 3;
 /** @const @type {symbol} */
 const FAIL = Symbol('FAIL');
 
-export { 
+const toString = Object.prototype.toString;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
+
+export {
     COMPLEX, NULLABLE, OPTIONAL, VOLATILE,
-    BOOLEAN, NUMBER, STRING, BIGINT, DATE,
-    URI, INTEGER, PRIMITIVE, PRIM_MASK, KIND_MASK,
+    ANY, NEVER, FALSE, TRUE, BOOLEAN,
+    NUMBER, STRING, INTEGER, BIGINT,
+    ARRAY, OBJECT, DATE, URI,
+    CONTEXT, SIMPLE, PRIMITIVE, PRIM_MASK, KIND_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION,
     K_REFINE, K_TUPLE, K_RECORD, K_OR, K_EXCLUSIVE,
     K_INTERSECT, K_NOT, K_CONDITIONAL,
@@ -117,7 +150,7 @@ export {
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME, FMT_MAP,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
     STRIP, PLAIN, NOT_STRICT, STRICT_REJECT, STRICT_DELETE, STRICT_PROTO,
-    STRICT_MODE_MASK, U8, U16, U32, FAIL
+    STRICT_MODE_MASK, U8, U16, U32, FAIL, toString, hasOwnProperty
 }
 
 // Backward-compatible aliases

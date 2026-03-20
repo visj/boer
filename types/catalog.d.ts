@@ -1,11 +1,11 @@
 declare const complex: unique symbol;
 declare const catalogId: unique symbol;
 
-export type Primitive<T, R = unknown> = number & {
+export type Primitive<T, R extends symbol = any> = number & {
     readonly __phantom?: T;
     readonly [catalogId]?: (tag: R) => R;
 };
-export interface Complex<T, R = unknown> {
+export interface Complex<T, R extends symbol = any> {
     readonly __phantom?: T;
     readonly [complex]: never;
     readonly [catalogId]?: (tag: R) => R;
@@ -14,34 +14,40 @@ export interface Complex<T, R = unknown> {
 export const NULL: Primitive<null, any>;
 export const UNDEFINED: Primitive<undefined, any>;
 export const BOOLEAN: Primitive<boolean, any>;
+export const TRUE: Primitive<true, any>;
+export const FALSE: Primitive<false, any>;
 export const NUMBER: Primitive<number, any>;
 export const STRING: Primitive<string, any>;
 export const BIGINT: Primitive<bigint, any>;
 export const DATE: Primitive<Date, any>;
 export const URI: Primitive<URL, any>;
+export const ARRAY: Primitive<any[], any>;
+export const OBJECT: Primitive<Record<string, any>, any>;
+export const ANY: Primitive<any, any>;
+export const NEVER: Primitive<never, any>;
 
 export const PRIMITIVE: Primitive<boolean, any> | Primitive<number, any> | Primitive<string, any> | Primitive<bigint, any> | Primitive<Date, any> | Primitive<URL, any>;
 
-export type Type<T, R = unknown> = Primitive<T, R> | Complex<T, R>;
+export type Type<T, R extends symbol = any> = Primitive<T, R> | Complex<T, R>;
 
-export type Infer<T> =
-    T extends Primitive<infer U, any> ? U :
-    T extends Complex<infer U, any> ? U :
+export type Infer<T, R extends symbol = any> =
+    T extends Primitive<infer U, R> ? U :
+    T extends Complex<infer U, R> ? U :
     never;
 
-export interface Schema<R> {
+export interface Schema<R extends symbol> {
     [key: string]: number | Type<any, R> | Schema<R>;
 }
 
-export type InferSchema<T extends Schema<any>> = {
-    [K in keyof T]: T[K] extends Primitive<infer U, any> ? U :
-    T[K] extends Complex<infer U, any> ? U :
+export type InferSchema<T extends Schema<any>, R extends symbol = any> = {
+    [K in keyof T]: T[K] extends Primitive<infer U, R> ? U :
+    T[K] extends Complex<infer U, R> ? U :
     T[K] extends number ? any :
-    T[K] extends Schema<any> ? InferSchema<T[K]> :
+    T[K] extends Schema<R> ? InferSchema<T[K]> :
     never;
 };
 
-export type StrictSchema<T, R> = {
+export type StrictSchema<T, R extends symbol> = {
     [K in keyof T]: T[K] extends Type<any, any>
     ? (T[K] extends Type<any, R> ? T[K] : { readonly __error: "Cross-registry type detected!" })
     : T[K] extends number
@@ -49,6 +55,14 @@ export type StrictSchema<T, R> = {
     : T[K] extends object
     ? StrictSchema<T[K], R>
     : T[K];
+};
+
+export type InferStrictSchema<T extends StrictSchema<any,any>, R extends symbol = any> = {
+    [K in keyof T]: T[K] extends Primitive<infer U, any> ? U :
+    T[K] extends Complex<infer U, any> ? U :
+    T[K] extends number ? any :
+    T[K] extends StrictSchema<any,R> ? InferStrictSchema<T[K],R> :
+    never;
 };
 
 export interface StringValidators {
@@ -94,13 +108,13 @@ export type Validators = StringValidators | NumberValidators | ArrayValidators |
 
 export interface Transformers { }
 
-export interface SchemaBuilder<R> {
-    object<T extends StrictSchema<R>>(
+export interface SchemaBuilder<R extends symbol> {
+    object<T extends StrictSchema<any, R>>(
         definition: T extends StrictSchema<T, R> ? T : StrictSchema<T, R>,
         opts?: any
-    ): Complex<InferSchema<T>, R>;
-    array<T>(itemType: Primitive<T, R>, opts?: any): Complex<T[], R>;
-    union<T extends Record<string, Primitive<any, R>>, D extends string>(
+    ): Complex<InferStrictSchema<T, R>, R>;
+    array<T>(itemType: Type<T, R>, opts?: any): Complex<T[], R>;
+    union<T extends Record<string, Type<any, R>>, D extends string>(
         discriminator: D,
         variants: T
     ): Complex<{ [K in keyof T]: Infer<T[K]> & { [P in D]: K } }[keyof T], R>;
@@ -167,7 +181,7 @@ export interface PathError {
     message: string;
 }
 
-export interface Catalog<R> {
+export interface Catalog<R extends symbol> {
     t: SchemaBuilder<R>;
     v: SchemaBuilder<R>;
 

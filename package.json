@@ -1,7 +1,7 @@
 {
   "name": "uvd",
-  "version": "0.8.0",
-  "description": "Zero allocation type guard and validation against schemas",
+  "version": "0.2.0",
+  "description": "A javascript type validation runtime",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -50,7 +50,8 @@
     "valibot": "^1.2.0",
     "zod": "^4.3.6",
     "rolldown": "^1.0.0-rc.9",
-    "terser": "^5.46.0"
+    "terser": "^5.46.0",
+    "json-schema-typed": "^8.0.2"
   },
   "keywords": [
     "JSON",
@@ -60,7 +61,6 @@
   "author": "Vilhelm Sjölund",
   "license": "Apache-2.0",
   "dependencies": {
-    "json-schema-typed": "^8.0.2",
     "uri-js": "^4.4.1"
   }
 }

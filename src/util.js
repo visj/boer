@@ -1,19 +1,14 @@
 import {
     COMPLEX, NULLABLE, OPTIONAL, VOLATILE,
-    BOOLEAN, NUMBER, STRING, BIGINT, DATE,
-    URI, INTEGER, PRIMITIVE, PRIM_MASK, KIND_MASK,
+    ANY, NEVER, FALSE, TRUE, BOOLEAN,
+    NUMBER, STRING, INTEGER, BIGINT,
+    ARRAY, OBJECT, DATE, URI,
+    SIMPLE, PRIM_MASK, KIND_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION,
     K_REFINE, K_TUPLE, K_RECORD, K_OR, K_EXCLUSIVE,
     K_INTERSECT, K_NOT, K_CONDITIONAL,
     KIND_ENUM_MASK, HAS_VALIDATOR,
-    STR_MIN_LENGTH, STR_MAX_LENGTH, STR_PATTERN, STR_FORMAT,
-    NUM_MINIMUM, NUM_MAXIMUM, NUM_EX_MIN, NUM_EX_MAX, NUM_MULTIPLE_OF,
-    ARR_MIN_ITEMS, ARR_MAX_ITEMS, ARR_UNIQUE, ARR_CONTAINS, ARR_MIN_CONTAINS,
-    ARR_MAX_CONTAINS, OBJ_MIN_PROPS, OBJ_MAX_PROPS, OBJ_PATTERN_PROPS,
-    OBJ_PROP_NAMES, OBJ_DEP_REQUIRED, OBJ_NO_ADDITIONAL,
-    FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME, FMT_MAP,
-    STRIP, PLAIN, NOT_STRICT, STRICT_REJECT, STRICT_DELETE, STRICT_PROTO,
-    STRICT_MODE_MASK, U8, U16, U32, FAIL
+    FAIL, toString
 } from './const.js';
 
 /**
@@ -128,9 +123,10 @@ function sortByKeyId(buffer) {
  * @returns {*} parsed value, or FAIL
  */
 function parseValue(raw, mask, reify) {
+    if (mask & ANY) return raw;
     let jsType = typeof raw;
     if (jsType === 'boolean') {
-        return (mask & BOOLEAN) ? raw : FAIL;
+        return (raw ? (mask & TRUE) : (mask & FALSE)) ? raw : FAIL;
     }
     if (jsType === 'number') {
         if (mask & NUMBER) {
@@ -176,11 +172,17 @@ function parseValue(raw, mask, reify) {
         }
         return FAIL;
     }
+    if (Array.isArray(raw)) {
+        return (mask & ARRAY) ? raw : FAIL;
+    }
     if (
         ((mask & BIGINT) && jsType === 'bigint') ||
         ((mask & DATE) && raw instanceof Date) ||
         ((mask & URI) && raw instanceof URL)
     ) {
+        return raw;
+    }
+    if ((mask & OBJECT) && toString.call(raw) === '[object Object]') {
         return raw;
     }
     return FAIL;
@@ -192,100 +194,93 @@ function parseValue(raw, mask, reify) {
  * @returns {boolean}
  */
 function _isValue(raw, mask) {
+    if (mask & ANY) return true;
     let jsType = typeof raw;
     return (
         jsType === 'string' ? (mask & STRING) !== 0 :
             jsType === 'number' ? ((mask & NUMBER) !== 0 || ((mask & INTEGER) !== 0 && Number.isInteger(raw))) :
-                jsType === 'boolean' ? (mask & BOOLEAN) !== 0 :
+                jsType === 'boolean' ? (raw ? (mask & TRUE) : (mask & FALSE)) !== 0 :
                     jsType === 'bigint' ? (mask & BIGINT) !== 0 :
-                        raw instanceof Date ? (mask & DATE) !== 0 :
-                            raw instanceof URL ? (mask & URI) !== 0 : false
+                        Array.isArray(raw) ? (mask & ARRAY) !== 0 :
+                            raw instanceof Date ? (mask & DATE) !== 0 :
+                                raw instanceof URL ? (mask & URI) !== 0 :
+                                    (mask & OBJECT) !== 0 && toString.call(raw) === '[object Object]'
     );
 }
 
-    /**
-     * @param {number} type
-     * @param {Uint32Array} kinds
-     * @returns {string}
-     */
-    function describeType(type, kinds) {
-        /** @type {!Array<string>} */
-        let parts = [];
-        if (type & OPTIONAL) {
-            parts.push('undefined');
-        }
-        if (type & NULLABLE) {
-            parts.push('null');
-        }
-        if (type & COMPLEX) {
-            let ptr = type & KIND_MASK;
-            let header = kinds[ptr];
-            let ct = header & KIND_ENUM_MASK;
-            if (ct === K_PRIMITIVE) {
-                let primBits = header & PRIMITIVE;
-                if (primBits & BOOLEAN) {
-                    parts.push('boolean');
-                }
-                if (primBits & NUMBER) {
-                    parts.push('number');
-                }
-                if (primBits & STRING) {
-                    parts.push('string');
-                }
-                if (primBits & BIGINT) {
-                    parts.push('bigint');
-                }
-                if (primBits & DATE) {
-                    parts.push('Date');
-                }
-                if (primBits & URI) {
-                    parts.push('URL');
-                }
-            } else if (ct === K_ARRAY) {
-                parts.push('Array');
-            } else if (ct === K_UNION) {
-                parts.push('Union');
-            } else if (ct === K_OBJECT) {
-                parts.push('Object');
-            } else if (ct === K_REFINE) {
-                parts.push('Refined');
-            } else if (ct === K_TUPLE) {
-                parts.push('Tuple');
-            } else if (ct === K_RECORD) {
-                parts.push('Record');
-            } else if (ct === K_OR) {
-                parts.push('Or');
-            } else if (ct === K_EXCLUSIVE) {
-                parts.push('Exclusive');
-            } else if (ct === K_INTERSECT) {
-                parts.push('Intersect');
-            } else if (ct === K_NOT) {
-                parts.push('Not');
-            } else if (ct === K_CONDITIONAL) {
-                parts.push('Conditional');
-            }
-        } else {
-            if (type & BOOLEAN) {
-                parts.push('boolean');
-            }
-            if (type & NUMBER) {
-                parts.push('number');
-            }
-            if (type & STRING) {
-                parts.push('string');
-            }
-            if (type & BIGINT) {
-                parts.push('bigint');
-            }
-            if (type & DATE) {
-                parts.push('Date');
-            }
-            if (type & URI) {
-                parts.push('URL');
-            }
-        }
-        return parts.join(' | ') || 'unknown';
+
+/**
+ * Appends primitive type labels from bit flags to parts array.
+ * @param {number} bits
+ * @param {!Array<string>} parts
+ */
+function describePrimBits(bits, parts) {
+    if (bits & ANY) { parts.push('any'); return; }
+    if (bits & NEVER) { parts.push('never'); return; }
+    if ((bits & BOOLEAN) === BOOLEAN) {
+        parts.push('boolean');
+    } else {
+        if (bits & TRUE) parts.push('true');
+        if (bits & FALSE) parts.push('false');
     }
+    if (bits & NUMBER) parts.push('number');
+    if (bits & STRING) parts.push('string');
+    if (bits & INTEGER) parts.push('integer');
+    if (bits & BIGINT) parts.push('bigint');
+    if (bits & ARRAY) parts.push('Array');
+    if (bits & OBJECT) parts.push('Object');
+    if (bits & DATE) parts.push('Date');
+    if (bits & URI) parts.push('URL');
+}
+
+/**
+ * @param {number} type
+ * @param {Uint32Array} kinds
+ * @returns {string}
+ */
+function describeType(type, kinds) {
+    /** @type {!Array<string>} */
+    let parts = [];
+    if (type & OPTIONAL) {
+        parts.push('undefined');
+    }
+    if (type & NULLABLE) {
+        parts.push('null');
+    }
+    if (type & COMPLEX) {
+        let ptr = type & KIND_MASK;
+        let header = kinds[ptr];
+        let ct = header & KIND_ENUM_MASK;
+        if (ct === K_PRIMITIVE) {
+            describePrimBits(header & SIMPLE, parts);
+        } else if (ct === K_ARRAY) {
+            parts.push('Array');
+        } else if (ct === K_UNION) {
+            parts.push('Union');
+        } else if (ct === K_OBJECT) {
+            parts.push('Object');
+        } else if (ct === K_REFINE) {
+            parts.push('Refined');
+        } else if (ct === K_TUPLE) {
+            parts.push('Tuple');
+        } else if (ct === K_RECORD) {
+            parts.push('Record');
+        } else if (ct === K_OR) {
+            parts.push('Or');
+        } else if (ct === K_EXCLUSIVE) {
+            parts.push('Exclusive');
+        } else if (ct === K_INTERSECT) {
+            parts.push('Intersect');
+        } else if (ct === K_NOT) {
+            parts.push('Not');
+        } else if (ct === K_CONDITIONAL) {
+            parts.push('Conditional');
+        }
+    } else {
+        describePrimBits(type & PRIM_MASK, parts);
+    }
+    return parts.join(' | ') || 'unknown';
+}
 
 export {
     nullable, optional, isNumber, isObject,

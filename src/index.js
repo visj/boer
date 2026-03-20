@@ -1,6 +1,7 @@
 import {
     PRIMITIVE, NULL, UNDEFINED, BOOLEAN,
     NUMBER, STRING, DATE, URI, BIGINT,
+    ANY, NEVER, TRUE, FALSE, ARRAY, OBJECT,
     STRICT_REJECT, STRICT_DELETE, STRICT_PROTO
 } from './const.js';
 import {
@@ -17,8 +18,9 @@ export const conform = uvd.conform;
 export const validate = uvd.validate;
 export const diagnose = uvd.diagnose;
 
-export { 
+export {
     PRIMITIVE, NULL, UNDEFINED, BOOLEAN,
     NUMBER, STRING, DATE, URI, BIGINT,
+    ANY, NEVER, TRUE, FALSE, ARRAY, OBJECT,
     STRICT_REJECT, STRICT_DELETE, STRICT_PROTO
 }

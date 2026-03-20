@@ -1,6 +1,6 @@
 /// <reference path="../global.d.ts" />
 import { resolve } from "uri-js";
-import { STRING, NUMBER, INTEGER, BOOLEAN, NULLABLE } from "./catalog.js";
+import { ANY, NEVER, STRING, NUMBER, INTEGER, BOOLEAN, NULLABLE, ARRAY, OBJECT } from "./const.js";
 
 // AST node kind constants
 export const N_PRIM = 0;
@@ -153,7 +153,7 @@ function collectValidators(schema) {
  * Maps a single JSON Schema type string to a primitive bitmask or a kind constant.
  * Returns [isPrimitive, value] where value is either a bitmask or a kind.
  * @param {string} type
- * @returns {number} primitive bitmask, or -1 for 'object', -2 for 'array'
+ * @returns {number} primitive bitmask
  */
 function mapSingleTypePrim(type) {
     switch (type) {
@@ -162,34 +162,17 @@ function mapSingleTypePrim(type) {
         case 'integer': return INTEGER;
         case 'boolean': return BOOLEAN;
         case 'null':    return NULLABLE;
-        case 'object':  return -1;
-        case 'array':   return -2;
+        case 'object':  return OBJECT;
+        case 'array':   return ARRAY;
     }
     throw new Error('Unknown JSON Schema type: ' + type);
 }
 
 /**
- * @typedef {object} FlatAst
- * @property {Uint8Array} astKinds
- * @property {Uint32Array} astFlags
- * @property {Uint32Array} astChild0
- * @property {Uint32Array} astChild1
- * @property {string[]} propNames
- * @property {number[]} propChildren
- * @property {number[]} listChildren
- * @property {number[]} condSlots
- * @property {Array<(data: any) => boolean>} callbacks
- * @property {number} rootId
- * @property {number[]} defIds
- * @property {string[]} defNames
- * @property {number} nodeCount
- */
-
-/**
  * Parses a JSON Schema object into a FlatAst suitable for compile().
  * Two-pass: Parse (iterative walk) then Link ($ref resolution).
  * @param {import('json-schema-typed').JSONSchema | boolean} schema
- * @returns {FlatAst}
+ * @returns {uvd.ast.FlatAst}
  */
 export function parseJsonSchema(schema) {
     // Flat AST storage
@@ -217,7 +200,6 @@ export function parseJsonSchema(schema) {
     let symbolTable = new Map();
 
     let nextNodeId = 0;
-    let anyNodeId = -1;
 
     // Stack (parallel arrays)
     let frameSchema = new Array(MAX_DEPTH);
@@ -292,59 +274,6 @@ export function parseJsonSchema(schema) {
         }
     }
 
-    /**
-     * Lazily creates the "any" type (matches all JSON values).
-     * Returns the nodeId of the any definition.
-     */
-    function ensureAnyType() {
-        if (anyNodeId >= 0) return anyNodeId;
-
-        // Create the OR node
-        let orId = allocNode();
-        anyNodeId = orId;
-
-        // Create an empty object node
-        let objId = allocNode();
-        astKinds[objId] = N_OBJECT;
-        astChild0[objId] = propNames.length; // offset (no properties)
-        astChild1[objId] = 0; // count = 0
-
-        // Create an array node pointing to a ref back to the OR
-        let arrId = allocNode();
-        let refId = allocNode();
-        astKinds[refId] = N_REF;
-        astChild0[refId] = orId; // self-referential
-
-        astKinds[arrId] = N_ARRAY;
-        astChild0[arrId] = refId; // element type = ref to OR
-
-        // Create a primitive node for STRING | NUMBER | BOOLEAN | NULLABLE
-        let primId = allocNode();
-        astKinds[primId] = N_PRIM;
-        astFlags[primId] = (STRING | NUMBER | BOOLEAN | NULLABLE) >>> 0;
-
-        // Set up the OR node
-        let listOffset = listChildren.length;
-        listChildren.push(primId, objId, arrId);
-        astKinds[orId] = N_OR;
-        astChild0[orId] = listOffset;
-        astChild1[orId] = 3;
-
-        return orId;
-    }
-
-    /**
-     * Creates an N_REF node pointing to the any type.
-     * @returns {number} nodeId of the ref
-     */
-    function makeAnyRef() {
-        let anyId = ensureAnyType();
-        let refId = allocNode();
-        astKinds[refId] = N_REF;
-        astChild0[refId] = anyId;
-        return refId;
-    }
-
     // --- Pre-scan $defs ---
     if (typeof schema === 'object' && schema !== null && schema.$defs) {
         let defKeys = Object.keys(schema.$defs);
@@ -379,18 +308,13 @@ export function parseJsonSchema(schema) {
 
         // --- Boolean schemas ---
         if (sch === true) {
-            let anyId = ensureAnyType();
-            astKinds[nodeId] = N_REF;
-            astChild0[nodeId] = anyId;
+            astKinds[nodeId] = N_PRIM;
+            astFlags[nodeId] = (ANY | NULLABLE) >>> 0;
             continue;
         }
         if (sch === false) {
-            let anyId = ensureAnyType();
-            let anyRefId = allocNode();
-            astKinds[anyRefId] = N_REF;
-            astChild0[anyRefId] = anyId;
-            astKinds[nodeId] = N_NOT;
-            astChild0[nodeId] = anyRefId;
+            astKinds[nodeId] = N_PRIM;
+            astFlags[nodeId] = NEVER;
             continue;
         }
 
@@ -474,9 +398,8 @@ export function parseJsonSchema(schema) {
 
         if (!hasType && checks.length === 0) {
             // Empty schema {} → matches everything
-            let anyId = ensureAnyType();
-            astKinds[nodeId] = N_REF;
-            astChild0[nodeId] = anyId;
+            astKinds[nodeId] = N_PRIM;
+            astFlags[nodeId] = (ANY | NULLABLE) >>> 0;
             continue;
         }
 
@@ -506,8 +429,10 @@ export function parseJsonSchema(schema) {
                 typeNodeId = innerId;
             } else {
                 // No type → inner is "any"
-                let anyRef = makeAnyRef();
-                astChild0[nodeId] = anyRef;
+                let anyId = allocNode();
+                astKinds[anyId] = N_PRIM;
+                astFlags[anyId] = (ANY | NULLABLE) >>> 0;
+                astChild0[nodeId] = anyId;
                 continue;
             }
         }
@@ -516,70 +441,19 @@ export function parseJsonSchema(schema) {
             let type = sch.type;
 
             if (typeof type === 'string') {
-                let prim = mapSingleTypePrim(type);
-                if (prim === -1) {
-                    // object
-                    astKinds[typeNodeId] = N_OBJECT;
-                    astChild0[typeNodeId] = propNames.length;
-                    astChild1[typeNodeId] = 0;
-                } else if (prim === -2) {
-                    // array — element type is "any"
-                    let elemRef = makeAnyRef();
-                    astKinds[typeNodeId] = N_ARRAY;
-                    astChild0[typeNodeId] = elemRef;
-                } else {
-                    // primitive
-                    astKinds[typeNodeId] = N_PRIM;
-                    astFlags[typeNodeId] = prim >>> 0;
-                }
+                astKinds[typeNodeId] = N_PRIM;
+                astFlags[typeNodeId] = mapSingleTypePrim(type) >>> 0;
+            } else if (type.length === 1) {
+                astKinds[typeNodeId] = N_PRIM;
+                astFlags[typeNodeId] = mapSingleTypePrim(type[0]) >>> 0;
             } else {
-                // Array of types
-                if (type.length === 1) {
-                    let prim = mapSingleTypePrim(type[0]);
-                    if (prim === -1) {
-                        astKinds[typeNodeId] = N_OBJECT;
-                        astChild0[typeNodeId] = propNames.length;
-                        astChild1[typeNodeId] = 0;
-                    } else if (prim === -2) {
-                        let elemRef = makeAnyRef();
-                        astKinds[typeNodeId] = N_ARRAY;
-                        astChild0[typeNodeId] = elemRef;
-                    } else {
-                        astKinds[typeNodeId] = N_PRIM;
-                        astFlags[typeNodeId] = prim >>> 0;
-                    }
-                } else {
-                    // Multiple types → N_OR
-                    // Pre-allocate all child nodeIds and listChildren slots
-                    // BEFORE building children, to avoid interleaving with
-                    // ensureAnyType() allocations into listChildren.
-                    let listOffset = listChildren.length;
-                    let childIds = new Array(type.length);
-                    for (let i = 0; i < type.length; i++) {
-                        childIds[i] = allocNode();
-                        listChildren.push(childIds[i]);
-                    }
-                    astKinds[typeNodeId] = N_OR;
-                    astChild0[typeNodeId] = listOffset;
-                    astChild1[typeNodeId] = type.length;
-                    // Now build each child
-                    for (let i = 0; i < type.length; i++) {
-                        let prim = mapSingleTypePrim(type[i]);
-                        let childId = childIds[i];
-                        if (prim === -1) {
-                            astKinds[childId] = N_OBJECT;
-                            astChild0[childId] = propNames.length;
-                            astChild1[childId] = 0;
-                        } else if (prim === -2) {
-                            let elemRef = makeAnyRef();
-                            astKinds[childId] = N_ARRAY;
-                            astChild0[childId] = elemRef;
-                        } else {
-                            astKinds[childId] = N_PRIM;
-                            astFlags[childId] = prim >>> 0;
-                        }
-                    }
+                // Multiple types → merge into a single N_PRIM bitmask
+                let merged = 0;
+                for (let i = 0; i < type.length; i++) {
+                    merged |= mapSingleTypePrim(type[i]);
                 }
+                astKinds[typeNodeId] = N_PRIM;
+                astFlags[typeNodeId] = merged >>> 0;
             }
         }
     }

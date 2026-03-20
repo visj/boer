@@ -3,8 +3,8 @@ import { z } from 'zod';
 import * as v from 'valibot';
 import { Type } from '@sinclair/typebox';
 import Ajv from 'ajv';
-import { t, check, validate, NUMBER, DATE, STRING, BOOLEAN, UNDEFINED, URI } from 'uvd';
-import { registry } from 'uvd/core';
+import { t, is, validate, NUMBER, DATE, STRING, BOOLEAN, UNDEFINED, URI } from 'uvd';
+import { catalog } from 'uvd/catalog';
 
 const rawData = {
     id: 123456,
@@ -116,7 +116,7 @@ const TypeBoxOrder = Type.Object({
 const ajv = new Ajv({ coerceTypes: false, formats: { uri: true, 'date-time': true } });
 const ajvValidate = ajv.compile(TypeBoxOrder);
 
-const setupRegistry = registry();
+const setupCatalog = catalog();
 
 group('Building schema (Setup time)', () => {
     bench('Zod', function () {
@@ -143,7 +143,7 @@ group('Building schema (Setup time)', () => {
     });
 
     bench('uvd (In-Place Bitwise)', function () {
-        const { t } = setupRegistry;
+        const { t } = setupCatalog;
         const UvdItem = t.union("type", {
             physical: t.object({ type: STRING, sku: STRING, weight: NUMBER }),
             digital: t.object({ type: STRING, sku: STRING, downloadUrl: URI })

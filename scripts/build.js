@@ -11,6 +11,8 @@ const mangleFile = path.resolve(buildDir, 'mangle.json');
 async function buildFormat(format, ext, isModule) {
     console.log(`2. Generating ${format.toUpperCase()} build...`);
 
+    fs.rmSync(outputDir, { recursive: true, force: true });
+    fs.mkdirSync(outputDir);
     // ⚠️ NEW: create a fresh bundle per format
     const bundle = await rolldown({
         input: {
@@ -76,7 +78,7 @@ async function build() {
     await buildFormat('esm', 'js', true);
 
     // ✅ Build CJS (separate graph → correct imports)
-    await buildFormat('cjs', 'cjs', true);
+    // await buildFormat('cjs', 'cjs', true);
 
     const typesToCopy = ['index.d.ts', 'catalog.d.ts', 'ast.d.ts', 'inspect.d.ts', 'schema.d.ts'];
     typesToCopy.forEach(file => {
