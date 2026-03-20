@@ -10,15 +10,16 @@ import {
     K_REFINE, K_TUPLE, K_RECORD, K_OR, K_EXCLUSIVE,
     K_INTERSECT, K_NOT, K_CONDITIONAL,
     KIND_ENUM_MASK, HAS_VALIDATOR,
-    STR_MIN_LENGTH, STR_MAX_LENGTH, STR_PATTERN, STR_FORMAT,
-    NUM_MINIMUM, NUM_MAXIMUM, NUM_EX_MIN, NUM_EX_MAX, NUM_MULTIPLE_OF,
-    ARR_MIN_ITEMS, ARR_MAX_ITEMS, ARR_UNIQUE, ARR_CONTAINS, ARR_MIN_CONTAINS,
-    ARR_MAX_CONTAINS, OBJ_MIN_PROPS, OBJ_MAX_PROPS, OBJ_PATTERN_PROPS,
-    OBJ_PROP_NAMES, OBJ_DEP_REQUIRED, OBJ_NO_ADDITIONAL,
+    V_STR_MIN_LEN, V_STR_MAX_LEN, V_STR_PATTERN, V_STR_FORMAT,
+    V_NUM_MIN, V_NUM_MAX, V_NUM_MULTIPLE, V_NUM_EX_MIN, V_NUM_EX_MAX,
+    V_ARR_MIN, V_ARR_MAX, V_ARR_CONTAINS, V_ARR_MIN_CT, V_ARR_MAX_CT,
+    V_ARR_UNIQUE, V_OBJ_MIN, V_OBJ_MAX, V_OBJ_PAT_PROP, V_OBJ_PROP_NAM,
+    V_OBJ_NO_ADD, V_OBJ_DEP_REQ,
+    popcnt16,
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME, FMT_MAP,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
     STRIP, PLAIN, NOT_STRICT, STRICT_REJECT, STRICT_DELETE, STRICT_PROTO,
-    STRICT_MODE_MASK, U8, U16, U32, FAIL, hasOwnProperty, toString
+    STRICT_MODE_MASK, U8, U16, U32, FAIL, codepointLen, hasOwnProperty, toString
 } from './const.js';
 import {
     assert, assertIsNumber, assertIsObject,
@@ -186,15 +187,15 @@ function catalog(cfg) {
         if (primConst & STRING) {
             const strOpts = /** @type {uvd.cat.StringValidators} */(opts);
             if (strOpts.minLength !== void 0) {
-                vHeader |= STR_MIN_LENGTH;
+                vHeader |= V_STR_MIN_LEN;
                 payloads.push(strOpts.minLength);
             }
             if (strOpts.maxLength !== void 0) {
-                vHeader |= STR_MAX_LENGTH;
+                vHeader |= V_STR_MAX_LEN;
                 payloads.push(strOpts.maxLength);
             }
             if (strOpts.pattern !== void 0) {
-                vHeader |= STR_PATTERN;
+                vHeader |= V_STR_PATTERN;
                 let cache = volatile ? V_REGEX_CACHE : REGEX_CACHE;
                 let idx = cache.push(strOpts.pattern instanceof RegExp ? strOpts.pattern : new RegExp(strOpts.pattern)) - 1;
                 payloads.push(idx);
@@ -204,29 +205,47 @@ function catalog(cfg) {
                 if (fmt === void 0) {
                     throw new Error('Unknown string format: ' + strOpts.format);
                 }
-                vHeader |= STR_FORMAT;
+                vHeader |= V_STR_FORMAT;
                 payloads.push(fmt);
             }
-        } else if (primConst & NUMBER) {
+        } else if (primConst & (NUMBER | INTEGER)) {
             const nbrOpts = /** @type {!uvd.cat.NumberValidators} */(opts);
-            if (nbrOpts.minimum !== void 0) {
-                vHeader |= NUM_MINIMUM;
-                payloads.push(nbrOpts.minimum);
+            let min = nbrOpts.minimum;
+            let exMin = nbrOpts.exclusiveMinimum;
+            if (min !== void 0 && exMin !== void 0) {
+                if (exMin >= min) {
+                    vHeader |= V_NUM_MIN | V_NUM_EX_MIN;
+                    payloads.push(exMin);
+                } else {
+                    vHeader |= V_NUM_MIN;
+                    payloads.push(min);
+                }
+            } else if (min !== void 0) {
+                vHeader |= V_NUM_MIN;
+                payloads.push(min);
+            } else if (exMin !== void 0) {
+                vHeader |= V_NUM_MIN | V_NUM_EX_MIN;
+                payloads.push(exMin);
             }
-            if (nbrOpts.maximum !== void 0) {
-                vHeader |= NUM_MAXIMUM;
-                payloads.push(nbrOpts.maximum);
-            }
-            if (nbrOpts.exclusiveMinimum !== void 0) {
-                vHeader |= NUM_EX_MIN;
-                payloads.push(nbrOpts.exclusiveMinimum);
-            }
-            if (nbrOpts.exclusiveMaximum !== void 0) {
-                vHeader |= NUM_EX_MAX;
-                payloads.push(nbrOpts.exclusiveMaximum);
+            let max = nbrOpts.maximum;
+            let exMax = nbrOpts.exclusiveMaximum;
+            if (max !== void 0 && exMax !== void 0) {
+                if (exMax <= max) {
+                    vHeader |= V_NUM_MAX | V_NUM_EX_MAX;
+                    payloads.push(exMax);
+                } else {
+                    vHeader |= V_NUM_MAX;
+                    payloads.push(max);
+                }
+            } else if (max !== void 0) {
+                vHeader |= V_NUM_MAX;
+                payloads.push(max);
+            } else if (exMax !== void 0) {
+                vHeader |= V_NUM_MAX | V_NUM_EX_MAX;
+                payloads.push(exMax);
             }
             if (nbrOpts.multipleOf !== void 0) {
-                vHeader |= NUM_MULTIPLE_OF;
+                vHeader |= V_NUM_MULTIPLE;
                 payloads.push(nbrOpts.multipleOf);
             }
         }
@@ -655,19 +674,19 @@ function catalog(cfg) {
             const minProperties = opts.minProperties;
             if (minProperties !== void 0) {
                 assertIsNumber(minProperties, 0);
-                vHeader |= OBJ_MIN_PROPS;
+                vHeader |= V_OBJ_MIN;
                 payloads.push(minProperties);
             }
             const maxProperties = opts.maxProperties;
             if (maxProperties !== void 0) {
                 assertIsNumber(maxProperties, 0);
-                vHeader |= OBJ_MAX_PROPS;
+                vHeader |= V_OBJ_MAX;
                 payloads.push(maxProperties);
             }
             const patternProperties = opts.patternProperties;
             if (patternProperties !== void 0) {
                 assertIsObject(patternProperties, 0);
-                vHeader |= OBJ_PATTERN_PROPS;
+                vHeader |= V_OBJ_PAT_PROP;
                 let patterns = Object.keys(patternProperties);
                 let cache = volatile ? V_REGEX_CACHE : REGEX_CACHE;
                 payloads.push(patterns.length);
@@ -684,11 +703,11 @@ function catalog(cfg) {
             const propertyNames = opts.propertyNames;
             if (propertyNames !== void 0) {
                 assertIsNumber(propertyNames, 0);
-                vHeader |= OBJ_PROP_NAMES;
+                vHeader |= V_OBJ_PROP_NAM;
                 payloads.push(propertyNames >>> 0);
             }
             if (opts.dependentRequired !== void 0) {
-                vHeader |= OBJ_DEP_REQUIRED;
+                vHeader |= V_OBJ_DEP_REQ;
                 let triggers = Object.keys(opts.dependentRequired);
                 payloads.push(triggers.length);
                 for (let i = 0; i < triggers.length; i++) {
@@ -702,7 +721,7 @@ function catalog(cfg) {
                 }
             }
             if (opts.additionalProperties === false) {
-                vHeader |= OBJ_NO_ADDITIONAL;
+                vHeader |= V_OBJ_NO_ADD;
             }
             valIdx = allocValidator(vHeader, payloads, volatile);
         }
@@ -735,26 +754,26 @@ function catalog(cfg) {
             /** @type {!Array<number>} */
             let payloads = [];
             if (opts.minItems !== void 0) {
-                vHeader |= ARR_MIN_ITEMS;
+                vHeader |= V_ARR_MIN;
                 payloads.push(opts.minItems);
             }
             if (opts.maxItems !== void 0) {
-                vHeader |= ARR_MAX_ITEMS;
+                vHeader |= V_ARR_MAX;
                 payloads.push(opts.maxItems);
             }
             if (opts.uniqueItems) {
-                vHeader |= ARR_UNIQUE;
+                vHeader |= V_ARR_UNIQUE;
             }
             if (opts.contains !== void 0) {
-                vHeader |= ARR_CONTAINS;
+                vHeader |= V_ARR_CONTAINS;
                 payloads.push(opts.contains >>> 0);
             }
             if (opts.minContains !== void 0) {
-                vHeader |= ARR_MIN_CONTAINS;
+                vHeader |= V_ARR_MIN_CT;
                 payloads.push(opts.minContains);
             }
             if (opts.maxContains !== void 0) {
-                vHeader |= ARR_MAX_CONTAINS;
+                vHeader |= V_ARR_MAX_CT;
                 payloads.push(opts.maxContains);
             }
             valIdx = allocValidator(vHeader, payloads, volatile);
@@ -781,11 +800,7 @@ function catalog(cfg) {
      * @returns {uvd.cat.Complex<{ [K in keyof T]: uvd.cat.Infer<T[K]> & { [P in D]: K } }[keyof T], R>}
      */
     function unionImpl(discriminator, variants, volatile) {
-        if (
-            variants === null ||
-            typeof variants !== 'object' ||
-            toString.call(variants) !== '[object Object]'
-        ) {
+        if (!isObject(variants) || Array.isArray(variants)) {
             throw new Error('discriminated variants must be an object literal { key: type }');
         }
         if (typeof discriminator !== 'string') {
@@ -930,7 +945,7 @@ function catalog(cfg) {
                     let reject = (strict & STRICT_REJECT) !== 0;
                     let proto = (strict & STRICT_PROTO) !== 0;
                     for (let key in data) {
-                        if (proto && !hasOwnProperty.call(data, key)) {
+                        if (!hasOwnProperty.call(data, key)) {
                             continue;
                         }
                         let keyId = KEY_DICT.get(key);
@@ -1614,63 +1629,93 @@ function catalog(cfg) {
     function runPrimValidator(value, primBits, valIdx, volatile) {
         let vals = volatile ? V_VALIDATORS : VALIDATORS;
         let vHeader = vals[valIdx] | 0;
-        let p = valIdx + 1;
-        if (primBits & STRING) {
-            if (vHeader & STR_MIN_LENGTH) {
-                if ((/** @type {string} */(value)).length < vals[p++]) {
+        let base = valIdx + 1;
+        if (typeof value === 'string') {
+            if (vHeader & V_STR_MIN_LEN) {
+                let p = base + popcnt16(vHeader & (V_STR_MIN_LEN - 1));
+                if (codepointLen(value) < vals[p]) {
                     return false;
                 }
             }
-            if (vHeader & STR_MAX_LENGTH) {
-                if ((/** @type {string} */(value)).length > vals[p++]) {
+            if (vHeader & V_STR_MAX_LEN) {
+                let p = base + popcnt16(vHeader & (V_STR_MAX_LEN - 1));
+                if (codepointLen(value) > vals[p]) {
                     return false;
                 }
             }
-            if (vHeader & STR_PATTERN) {
+            if (vHeader & V_STR_PATTERN) {
+                let p = base + popcnt16(vHeader & (V_STR_PATTERN - 1));
                 let regexCache = volatile ? V_REGEX_CACHE : REGEX_CACHE;
-                if (!regexCache[vals[p++] | 0].test(/** @type {string} */(value))) {
+                if (!regexCache[vals[p] | 0].test(value)) {
                     return false;
                 }
             }
-            if (vHeader & STR_FORMAT) {
-                let fmt = vals[p++] | 0;
+            if (vHeader & V_STR_FORMAT) {
+                let p = base + popcnt16(vHeader & (V_STR_FORMAT - 1));
+                let fmt = vals[p] | 0;
                 let re = fmt === FMT_EMAIL ? FMT_RE_EMAIL :
                     fmt === FMT_IPV4 ? FMT_RE_IPV4 :
                         fmt === FMT_UUID ? FMT_RE_UUID :
                             fmt === FMT_DATETIME ? FMT_RE_DATETIME : null;
-                if (re && !re.test(/** @type {string} */(value))) {
+                if (re && !re.test(value)) {
                     return false;
                 }
             }
-            return true;
-        }
-        if (primBits & (NUMBER | INTEGER)) {
-            if (vHeader & NUM_MINIMUM) {
-                if (/** @type {number} */(value) < vals[p++]) {
+        } else if (typeof value === 'number') {
+            if (vHeader & V_NUM_MIN) {
+                let p = base + popcnt16(vHeader & (V_NUM_MIN - 1));
+                if ((vHeader & V_NUM_EX_MIN) ? value <= vals[p] : value < vals[p]) {
                     return false;
                 }
             }
-            if (vHeader & NUM_MAXIMUM) {
-                if (/** @type {number} */(value) > vals[p++]) {
+            if (vHeader & V_NUM_MAX) {
+                let p = base + popcnt16(vHeader & (V_NUM_MAX - 1));
+                if ((vHeader & V_NUM_EX_MAX) ? value >= vals[p] : value > vals[p]) {
                     return false;
                 }
             }
-            if (vHeader & NUM_EX_MIN) {
-                if (/** @type {number} */(value) <= vals[p++]) {
+            if (vHeader & V_NUM_MULTIPLE) {
+                let p = base + popcnt16(vHeader & (V_NUM_MULTIPLE - 1));
+                if (value % vals[p] !== 0) {
                     return false;
                 }
             }
-            if (vHeader & NUM_EX_MAX) {
-                if (/** @type {number} */(value) >= vals[p++]) {
+        } else if (Array.isArray(value)) {
+            if (vHeader & V_ARR_MIN) {
+                let p = base + popcnt16(vHeader & (V_ARR_MIN - 1));
+                if (value.length < vals[p]) {
                     return false;
                 }
             }
-            if (vHeader & NUM_MULTIPLE_OF) {
-                if (/** @type {number} */(value) % vals[p++] !== 0) {
+            if (vHeader & V_ARR_MAX) {
+                let p = base + popcnt16(vHeader & (V_ARR_MAX - 1));
+                if (value.length > vals[p]) {
                     return false;
                 }
             }
-            return true;
+            if (vHeader & V_ARR_UNIQUE) {
+                let seen = new Set();
+                for (let i = 0; i < value.length; i++) {
+                    let key = typeof value[i] === 'object' ? JSON.stringify(value[i]) : value[i];
+                    if (seen.has(key)) {
+                        return false;
+                    }
+                    seen.add(key);
+                }
+            }
+        } else if (toString.call(value) === '[object Object]') {
+            if (vHeader & V_OBJ_MIN) {
+                let p = base + popcnt16(vHeader & (V_OBJ_MIN - 1));
+                if (Object.keys(value).length < vals[p]) {
+                    return false;
+                }
+            }
+            if (vHeader & V_OBJ_MAX) {
+                let p = base + popcnt16(vHeader & (V_OBJ_MAX - 1));
+                if (Object.keys(value).length > vals[p]) {
+                    return false;
+                }
+            }
         }
         return true;
     }
@@ -1684,27 +1729,30 @@ function catalog(cfg) {
     function runArrayValidator(data, valIdx, volatile) {
         let vals = volatile ? V_VALIDATORS : VALIDATORS;
         let vHeader = vals[valIdx] | 0;
-        let p = valIdx + 1;
-        if (vHeader & ARR_MIN_ITEMS) {
-            if (data.length < vals[p++]) {
+        let base = valIdx + 1;
+        if (vHeader & V_ARR_MIN) {
+            let p = base + popcnt16(vHeader & (V_ARR_MIN - 1));
+            if (data.length < vals[p]) {
                 return false;
             }
         }
-        if (vHeader & ARR_MAX_ITEMS) {
-            if (data.length > vals[p++]) {
+        if (vHeader & V_ARR_MAX) {
+            let p = base + popcnt16(vHeader & (V_ARR_MAX - 1));
+            if (data.length > vals[p]) {
                 return false;
             }
         }
-        if (vHeader & ARR_UNIQUE) {
+        if (vHeader & V_ARR_UNIQUE) {
             let set = new Set(data);
             if (set.size !== data.length) {
                 return false;
             }
         }
-        if (vHeader & ARR_CONTAINS) {
-            let containsType = vals[p++] >>> 0;
-            let minC = (vHeader & ARR_MIN_CONTAINS) ? vals[p++] : 1;
-            let maxC = (vHeader & ARR_MAX_CONTAINS) ? vals[p++] : Infinity;
+        if (vHeader & V_ARR_CONTAINS) {
+            let cp = base + popcnt16(vHeader & (V_ARR_CONTAINS - 1));
+            let containsType = vals[cp] >>> 0;
+            let minC = (vHeader & V_ARR_MIN_CT) ? vals[base + popcnt16(vHeader & (V_ARR_MIN_CT - 1))] : 1;
+            let maxC = (vHeader & V_ARR_MAX_CT) ? vals[base + popcnt16(vHeader & (V_ARR_MAX_CT - 1))] : Infinity;
             let matchCount = 0;
             let length = data.length;
             for (let i = 0; i < length; i++) {
@@ -1717,14 +1765,6 @@ function catalog(cfg) {
             }
             if (matchCount < minC) {
                 return false;
-            }
-        } else {
-            // Skip minContains/maxContains payloads if no contains
-            if (vHeader & ARR_MIN_CONTAINS) {
-                p++;
-            }
-            if (vHeader & ARR_MAX_CONTAINS) {
-                p++;
             }
         }
         return true;
@@ -1744,18 +1784,17 @@ function catalog(cfg) {
         let p = valIdx + 1;
         let keys = Object.keys(data);
         let keyCount = keys.length;
-        if (vHeader & OBJ_MIN_PROPS) {
+        if (vHeader & V_OBJ_MIN) {
             if (keyCount < vals[p++]) {
                 return false;
             }
         }
-        if (vHeader & OBJ_MAX_PROPS) {
+        if (vHeader & V_OBJ_MAX) {
             if (keyCount > vals[p++]) {
                 return false;
             }
         }
-        if (vHeader & OBJ_PATTERN_PROPS) {
-            // patternProperties: count, then [regexIdx, typeId] pairs
+        if (vHeader & V_OBJ_PAT_PROP) {
             let patternCount = vals[p++] | 0;
             for (let pi = 0; pi < patternCount; pi++) {
                 let reIdx = vals[p++] | 0;
@@ -1770,8 +1809,7 @@ function catalog(cfg) {
                 }
             }
         }
-        if (vHeader & OBJ_PROP_NAMES) {
-            // propertyNames: typeId of a string schema
+        if (vHeader & V_OBJ_PROP_NAM) {
             let nameSchema = vals[p++] >>> 0;
             for (let ki = 0; ki < keyCount; ki++) {
                 if (!_validate(keys[ki], nameSchema)) {
@@ -1779,8 +1817,7 @@ function catalog(cfg) {
                 }
             }
         }
-        if (vHeader & OBJ_DEP_REQUIRED) {
-            // dependentRequired: triggerCount, then [triggerKeyId, depCount, ...depKeyIds]
+        if (vHeader & V_OBJ_DEP_REQ) {
             let triggerCount = vals[p++] | 0;
             for (let ti = 0; ti < triggerCount; ti++) {
                 let triggerKeyId = vals[p++] | 0;
@@ -1799,7 +1836,7 @@ function catalog(cfg) {
                 }
             }
         }
-        if (vHeader & OBJ_NO_ADDITIONAL) {
+        if (vHeader & V_OBJ_NO_ADD) {
             let objects = volatile ? V_OBJECTS : OBJECTS;
             let slab = volatile ? V_SLAB : SLAB;
             let offset = objects[ri * 2];
@@ -1856,7 +1893,11 @@ function catalog(cfg) {
     function _validate(data, typedef) {
         if (typedef & ANY) return true;
         if (data == null) {
-            return (data === null ? (typedef & NULLABLE) : (typedef & OPTIONAL)) !== 0;
+            let nullBit = data === null ? NULLABLE : OPTIONAL;
+            if (typedef & nullBit) return true;
+            // For non-COMPLEX types, null/undefined is a mismatch
+            if (!(typedef & COMPLEX)) return false;
+            // COMPLEX types: fall through to kind handler (needed for K_CONDITIONAL)
         }
         if (typedef & COMPLEX) {
             let volatile = (typedef & VOLATILE) !== 0;
@@ -1922,7 +1963,16 @@ function catalog(cfg) {
                         return false;
                     }
                     let type = slab[offset + (i * 2) + 1];
-                    if (!_validateSlot(data[key], type)) {
+                    let val = data[key];
+
+                    // 2. THE GUARD: Only pay the 'hasOwnProperty' tax if it looks like a prototype leak!
+                    if (val !== void 0 && (typeof val === 'function' || key === '__proto__')) {
+                        // We only execute this slow code 0.001% of the time.
+                        if (!hasOwnProperty.call(data, key)) {
+                            val = void 0;
+                        }
+                    }
+                    if (!_validateSlot(val, type)) {
                         return false;
                     }
                 }

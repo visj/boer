@@ -69,36 +69,58 @@ const K_CONDITIONAL = 11;
 const KIND_ENUM_MASK = 0xF;
 const HAS_VALIDATOR = 1 << 4;
 
-// --- Validator opt flags (scoped by context) ---
+// --- Validator bit flags (globally unique, unified layout) ---
+//
+// Payload flags (bits 0–13): each set bit pushes exactly 1 Float64 to the payload slab.
+// Boolean flags (bits 16–31): no payload, just toggle behavior.
+//
+// Offset of any payload flag's value = popcnt16(vHeader & (FLAG - 1))
+//
 
-// String validator flags
-const STR_MIN_LENGTH = 1;
-const STR_MAX_LENGTH = 2;
-const STR_PATTERN = 4;
-const STR_FORMAT = 8;
+// String payload flags
+const V_STR_MIN_LEN = 1;
+const V_STR_MAX_LEN = 1 << 1;
+const V_STR_PATTERN = 1 << 2;
+const V_STR_FORMAT = 1 << 3;
+// Number payload flags
+const V_NUM_MIN = 1 << 4;
+const V_NUM_MAX = 1 << 5;
+const V_NUM_MULTIPLE = 1 << 6;
+// Array payload flags
+const V_ARR_MIN = 1 << 7;
+const V_ARR_MAX = 1 << 8;
+const V_ARR_CONTAINS = 1 << 9;
+const V_ARR_MIN_CT = 1 << 10;
+const V_ARR_MAX_CT = 1 << 11;
+// Object payload flags
+const V_OBJ_MIN = 1 << 12;
+const V_OBJ_MAX = 1 << 13;
+// Object variable-length payload flags (sequential p++ only, NOT popcount-compatible).
+// These are only used by K_OBJECT (catalog API), never by K_PRIMITIVE (JSON Schema).
+// Payloads must be written and read in ascending bit order after the single-payload flags.
+const V_OBJ_PAT_PROP = 1 << 14;
+const V_OBJ_PROP_NAM = 1 << 15;
 
-// Number validator flags
-const NUM_MINIMUM = 1;
-const NUM_MAXIMUM = 2;
-const NUM_EX_MIN = 4;
-const NUM_EX_MAX = 8;
-const NUM_MULTIPLE_OF = 16;
+// Boolean modifier flags (no payload)
+const V_NUM_EX_MIN = 1 << 16;
+const V_NUM_EX_MAX = 1 << 17;
+const V_ARR_UNIQUE = 1 << 18;
+const V_OBJ_NO_ADD = 1 << 19;
+const V_OBJ_DEP_REQ = 1 << 20;
+// Bits 21–31 reserved
 
-// Array validator flags
-const ARR_MIN_ITEMS = 1;
-const ARR_MAX_ITEMS = 2;
-const ARR_UNIQUE = 4;
-const ARR_CONTAINS = 8;
-const ARR_MIN_CONTAINS = 16;
-const ARR_MAX_CONTAINS = 32;
-
-// Object validator flags
-const OBJ_MIN_PROPS = 1;
-const OBJ_MAX_PROPS = 2;
-const OBJ_PATTERN_PROPS = 4;
-const OBJ_PROP_NAMES = 8;
-const OBJ_DEP_REQUIRED = 16;
-const OBJ_NO_ADDITIONAL = 32;
+/**
+ * SWAR popcount for lower 16 bits. Returns the number of set bits in x & 0xFFFF.
+ * Used to compute payload offset: popcnt16(vHeader & (FLAG - 1))
+ * @param {number} x
+ * @returns {number}
+ */
+function popcnt16(x) {
+    x = x - ((x >> 1) & 0x5555);
+    x = (x & 0x3333) + ((x >> 2) & 0x3333);
+    x = (x + (x >> 4)) & 0x0F0F;
+    return (x + (x >> 8)) & 0x1F;
+}
 
 // Format enum values (string format validator)
 const FMT_EMAIL = 1;
@@ -129,6 +151,24 @@ const U32 = 3;
 /** @const @type {symbol} */
 const FAIL = Symbol('FAIL');
 
+/**
+ * Returns the number of Unicode code points in a string.
+ * JSON Schema counts code points, not UTF-16 code units.
+ * @param {string} str
+ * @returns {number}
+ */
+function codepointLen(str) {
+    let len = 0;
+    for (let i = 0; i < str.length; i++) {
+        let code = str.charCodeAt(i);
+        if (code >= 0xD800 && code <= 0xDBFF) {
+            i++;
+        }
+        len++;
+    }
+    return len;
+}
+
 const toString = Object.prototype.toString;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 
@@ -142,15 +182,16 @@ export {
     K_REFINE, K_TUPLE, K_RECORD, K_OR, K_EXCLUSIVE,
     K_INTERSECT, K_NOT, K_CONDITIONAL,
     KIND_ENUM_MASK, HAS_VALIDATOR,
-    STR_MIN_LENGTH, STR_MAX_LENGTH, STR_PATTERN, STR_FORMAT,
-    NUM_MINIMUM, NUM_MAXIMUM, NUM_EX_MIN, NUM_EX_MAX, NUM_MULTIPLE_OF,
-    ARR_MIN_ITEMS, ARR_MAX_ITEMS, ARR_UNIQUE, ARR_CONTAINS, ARR_MIN_CONTAINS,
-    ARR_MAX_CONTAINS, OBJ_MIN_PROPS, OBJ_MAX_PROPS, OBJ_PATTERN_PROPS,
-    OBJ_PROP_NAMES, OBJ_DEP_REQUIRED, OBJ_NO_ADDITIONAL,
+    V_STR_MIN_LEN, V_STR_MAX_LEN, V_STR_PATTERN, V_STR_FORMAT,
+    V_NUM_MIN, V_NUM_MAX, V_NUM_MULTIPLE, V_NUM_EX_MIN, V_NUM_EX_MAX,
+    V_ARR_MIN, V_ARR_MAX, V_ARR_CONTAINS, V_ARR_MIN_CT, V_ARR_MAX_CT,
+    V_ARR_UNIQUE, V_OBJ_MIN, V_OBJ_MAX, V_OBJ_PAT_PROP, V_OBJ_PROP_NAM,
+    V_OBJ_NO_ADD, V_OBJ_DEP_REQ,
+    popcnt16,
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME, FMT_MAP,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
     STRIP, PLAIN, NOT_STRICT, STRICT_REJECT, STRICT_DELETE, STRICT_PROTO,
-    STRICT_MODE_MASK, U8, U16, U32, FAIL, toString, hasOwnProperty
+    STRICT_MODE_MASK, U8, U16, U32, FAIL, codepointLen, toString, hasOwnProperty
 }
 
 // Backward-compatible aliases

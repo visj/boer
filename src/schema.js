@@ -1,6 +1,15 @@
 /// <reference path="../global.d.ts" />
 import { resolve } from "uri-js";
-import { ANY, NEVER, STRING, NUMBER, INTEGER, BOOLEAN, NULLABLE, ARRAY, OBJECT } from "./const.js";
+import {
+    ANY, NEVER, STRING, NUMBER, INTEGER, BOOLEAN, NULLABLE, ARRAY, OBJECT,
+    V_STR_MIN_LEN, V_STR_MAX_LEN,
+    V_NUM_MIN, V_NUM_MAX, V_NUM_MULTIPLE, V_NUM_EX_MIN, V_NUM_EX_MAX,
+    V_ARR_MIN, V_ARR_MAX, V_ARR_UNIQUE,
+    V_OBJ_MIN, V_OBJ_MAX,
+} from "./const.js";
+
+/** @typedef {import('json-schema-typed').JSONSchema} */
+let JsonSchema;
 
 // AST node kind constants
 export const N_PRIM = 0;
@@ -12,7 +21,7 @@ export const N_EXCLUSIVE = 8;
 export const N_INTERSECT = 9;
 export const N_NOT = 10;
 export const N_CONDITIONAL = 11;
-export const N_REF = 12;
+export const N_REF = 255;
 
 // Stack link types (how child connects to parent)
 const LINK_ROOT = 0;
@@ -29,124 +38,142 @@ const SENTINEL = 0xFFFFFFFF;
 const INITIAL_CAPACITY = 256;
 const MAX_DEPTH = 512;
 
-/**
- * Returns the number of Unicode code points in a string.
- * JSON Schema counts code points, not UTF-16 code units.
- * @param {string} str
- * @returns {number}
- */
-function codePointLength(str) {
-    let len = 0;
-    for (let i = 0; i < str.length; i++) {
-        let code = str.charCodeAt(i);
-        if (code >= 0xD800 && code <= 0xDBFF) {
-            i++; // skip low surrogate
-        }
-        len++;
-    }
-    return len;
-}
 
 /**
- * Collects validator callbacks from a JSON Schema object.
- * Each callback returns true if valid, implementing the "ignores non-matching types" semantics.
- * @param {object} schema
- * @returns {Array<(data: any) => boolean>}
+ * Collects validators from a JSON Schema object.
+ * Built-in validators produce bit flags + payloads. Callbacks remain for enum/const/pattern.
+ * Payloads are pushed in ascending bit order so popcount-based offset works.
+ * @param {JsonSchema} schema
+ * @returns {{vHeader: number, payloads: !Array<number>, callbacks: !Array<function(*): boolean>}}
  */
 function collectValidators(schema) {
-    let checks = [];
+    let vHeader = 0;
+    /** @type {!Array<number>} */
+    let payloads = [];
+    /** @type {!Array<function(*): boolean>} */
+    let callbacks = [];
 
-    // String validators
+    // --- Payload flags (in bit order) ---
+
+    // V_STR_MIN_LEN (bit 0)
     if ('minLength' in schema) {
-        let n = schema.minLength;
-        checks.push(/** @param {*} d */ (d) => typeof d !== 'string' || codePointLength(d) >= n);
+        vHeader |= V_STR_MIN_LEN;
+        payloads.push(schema.minLength);
     }
+    // V_STR_MAX_LEN (bit 1)
     if ('maxLength' in schema) {
-        let n = schema.maxLength;
-        checks.push(/** @param {*} d */ (d) => typeof d !== 'string' || codePointLength(d) <= n);
+        vHeader |= V_STR_MAX_LEN;
+        payloads.push(schema.maxLength);
     }
+    // V_STR_PATTERN (bit 2) — leave as callback for now
+    // V_STR_FORMAT (bit 3) — leave as callback for now
+
+    // V_NUM_MIN (bit 4) + V_NUM_EX_MIN (bit 16) modifier
+    let hasMin = 'minimum' in schema;
+    let hasExMin = 'exclusiveMinimum' in schema;
+    if (hasMin && hasExMin) {
+        if (schema.exclusiveMinimum >= schema.minimum) {
+            vHeader |= V_NUM_MIN | V_NUM_EX_MIN;
+            payloads.push(schema.exclusiveMinimum);
+        } else {
+            vHeader |= V_NUM_MIN;
+            payloads.push(schema.minimum);
+        }
+    } else if (hasMin) {
+        vHeader |= V_NUM_MIN;
+        payloads.push(schema.minimum);
+    } else if (hasExMin) {
+        vHeader |= V_NUM_MIN | V_NUM_EX_MIN;
+        payloads.push(schema.exclusiveMinimum);
+    }
+    // V_NUM_MAX (bit 5) + V_NUM_EX_MAX (bit 17) modifier
+    let hasMax = 'maximum' in schema;
+    let hasExMax = 'exclusiveMaximum' in schema;
+    if (hasMax && hasExMax) {
+        if (schema.exclusiveMaximum <= schema.maximum) {
+            vHeader |= V_NUM_MAX | V_NUM_EX_MAX;
+            payloads.push(schema.exclusiveMaximum);
+        } else {
+            vHeader |= V_NUM_MAX;
+            payloads.push(schema.maximum);
+        }
+    } else if (hasMax) {
+        vHeader |= V_NUM_MAX;
+        payloads.push(schema.maximum);
+    } else if (hasExMax) {
+        vHeader |= V_NUM_MAX | V_NUM_EX_MAX;
+        payloads.push(schema.exclusiveMaximum);
+    }
+    // V_NUM_MULTIPLE (bit 6)
+    if ('multipleOf' in schema) {
+        vHeader |= V_NUM_MULTIPLE;
+        payloads.push(schema.multipleOf);
+    }
+
+    // V_ARR_MIN (bit 7)
+    if ('minItems' in schema) {
+        vHeader |= V_ARR_MIN;
+        payloads.push(schema.minItems);
+    }
+    // V_ARR_MAX (bit 8)
+    if ('maxItems' in schema) {
+        vHeader |= V_ARR_MAX;
+        payloads.push(schema.maxItems);
+    }
+    // V_ARR_CONTAINS (bit 9), V_ARR_MIN_CT (bit 10), V_ARR_MAX_CT (bit 11) — later
+
+    // V_OBJ_MIN (bit 12)
+    if ('minProperties' in schema) {
+        vHeader |= V_OBJ_MIN;
+        payloads.push(schema.minProperties);
+    }
+    // V_OBJ_MAX (bit 13)
+    if ('maxProperties' in schema) {
+        vHeader |= V_OBJ_MAX;
+        payloads.push(schema.maxProperties);
+    }
+
+    // --- Boolean flags (no payload) ---
+
+    // V_ARR_UNIQUE (bit 18)
+    if ('uniqueItems' in schema && schema.uniqueItems) {
+        vHeader |= V_ARR_UNIQUE;
+    }
+
+    // --- Callbacks (no bit-flag equivalent) ---
+
     if ('pattern' in schema) {
         let re = new RegExp(schema.pattern);
-        checks.push(/** @param {*} d */ (d) => typeof d !== 'string' || re.test(d));
+        callbacks.push(/** @param {*} d */(d) => typeof d !== 'string' || re.test(d));
     }
-
-    // Number validators
-    if ('minimum' in schema) {
-        let n = schema.minimum;
-        checks.push(/** @param {*} d */ (d) => typeof d !== 'number' || d >= n);
-    }
-    if ('maximum' in schema) {
-        let n = schema.maximum;
-        checks.push(/** @param {*} d */ (d) => typeof d !== 'number' || d <= n);
-    }
-    if ('exclusiveMinimum' in schema) {
-        let n = schema.exclusiveMinimum;
-        checks.push(/** @param {*} d */ (d) => typeof d !== 'number' || d > n);
-    }
-    if ('exclusiveMaximum' in schema) {
-        let n = schema.exclusiveMaximum;
-        checks.push(/** @param {*} d */ (d) => typeof d !== 'number' || d < n);
-    }
-    if ('multipleOf' in schema) {
-        let n = schema.multipleOf;
-        checks.push(/** @param {*} d */ (d) => typeof d !== 'number' || d % n === 0);
-    }
-
-    // Array validators
-    if ('minItems' in schema) {
-        let n = schema.minItems;
-        checks.push(/** @param {*} d */ (d) => !Array.isArray(d) || d.length >= n);
-    }
-    if ('maxItems' in schema) {
-        let n = schema.maxItems;
-        checks.push(/** @param {*} d */ (d) => !Array.isArray(d) || d.length <= n);
-    }
-    if ('uniqueItems' in schema && schema.uniqueItems) {
-        checks.push(/** @param {*} d */ (d) => {
-            if (!Array.isArray(d)) return true;
-            let seen = new Set();
-            for (let i = 0; i < d.length; i++) {
-                let key = typeof d[i] === 'object' ? JSON.stringify(d[i]) : d[i];
-                if (seen.has(key)) return false;
-                seen.add(key);
-            }
-            return true;
-        });
-    }
-
-    // Object validators
-    if ('minProperties' in schema) {
-        let n = schema.minProperties;
-        checks.push(/** @param {*} d */ (d) => typeof d !== 'object' || d === null || Array.isArray(d) || Object.keys(d).length >= n);
-    }
-    if ('maxProperties' in schema) {
-        let n = schema.maxProperties;
-        checks.push(/** @param {*} d */ (d) => typeof d !== 'object' || d === null || Array.isArray(d) || Object.keys(d).length <= n);
-    }
-
-    // Enum
     if ('enum' in schema) {
         let values = schema.enum;
-        checks.push(/** @param {*} d */ (d) => {
+        callbacks.push(/** @param {*} d */(d) => {
             for (let i = 0; i < values.length; i++) {
-                if (d === values[i]) return true;
-                if (typeof d === 'object' && d !== null && JSON.stringify(d) === JSON.stringify(values[i])) return true;
+                if (d === values[i]) {
+                    return true;
+                }
+                if (typeof d === 'object' && d !== null && JSON.stringify(d) === JSON.stringify(values[i])) {
+                    return true;
+                }
+            }
+            return false;
+        });
+    }
+    if ('const' in schema) {
+        let val = schema.const;
+        callbacks.push(/** @param {*} d */(d) => {
+            if (d === val) {
+                return true;
+            }
+            if (typeof d === 'object' && d !== null) {
+                return JSON.stringify(d) === JSON.stringify(val);
             }
             return false;
         });
     }
 
-    // Const
-    if ('const' in schema) {
-        let val = schema.const;
-        checks.push(/** @param {*} d */ (d) => {
-            if (d === val) return true;
-            if (typeof d === 'object' && d !== null) return JSON.stringify(d) === JSON.stringify(val);
-            return false;
-        });
-    }
-
-    return checks;
+    return { vHeader, payloads, callbacks };
 }
 
 /**
@@ -157,13 +184,13 @@ function collectValidators(schema) {
  */
 function mapSingleTypePrim(type) {
     switch (type) {
-        case 'string':  return STRING;
-        case 'number':  return NUMBER;
+        case 'string': return STRING;
+        case 'number': return NUMBER;
         case 'integer': return INTEGER;
         case 'boolean': return BOOLEAN;
-        case 'null':    return NULLABLE;
-        case 'object':  return OBJECT;
-        case 'array':   return ARRAY;
+        case 'null': return NULLABLE;
+        case 'object': return OBJECT;
+        case 'array': return ARRAY;
     }
     throw new Error('Unknown JSON Schema type: ' + type);
 }
@@ -171,7 +198,7 @@ function mapSingleTypePrim(type) {
 /**
  * Parses a JSON Schema object into a FlatAst suitable for compile().
  * Two-pass: Parse (iterative walk) then Link ($ref resolution).
- * @param {import('json-schema-typed').JSONSchema | boolean} schema
+ * @param {JsonSchema | boolean} schema
  * @returns {uvd.ast.FlatAst}
  */
 export function parseJsonSchema(schema) {
@@ -188,11 +215,19 @@ export function parseJsonSchema(schema) {
     /** @type {number[]} */
     let propChildren = [];
     /** @type {number[]} */
+    let propFlags = [];
+    /** @type {number[]} */
     let listChildren = [];
     /** @type {number[]} */
     let condSlots = [];
     /** @type {Array<(data: any) => boolean>} */
     let callbacks = [];
+
+    // Validator bit-flag storage (per-node)
+    let astVHeaders = new Uint32Array(capacity);
+    let astVOffset = new Uint32Array(capacity);
+    /** @type {number[]} */
+    let vPayloads = [];
 
     /** @type {Map<number, string>} */
     let unresolvedRefs = new Map();
@@ -219,14 +254,20 @@ export function parseJsonSchema(schema) {
         let newFlags = new Uint32Array(newCap);
         let newChild0 = new Uint32Array(newCap);
         let newChild1 = new Uint32Array(newCap);
+        let newVHeaders = new Uint32Array(newCap);
+        let newVOffset = new Uint32Array(newCap);
         newKinds.set(astKinds);
         newFlags.set(astFlags);
         newChild0.set(astChild0);
         newChild1.set(astChild1);
+        newVHeaders.set(astVHeaders);
+        newVOffset.set(astVOffset);
         astKinds = newKinds;
         astFlags = newFlags;
         astChild0 = newChild0;
         astChild1 = newChild1;
+        astVHeaders = newVHeaders;
+        astVOffset = newVOffset;
         capacity = newCap;
     }
 
@@ -392,43 +433,55 @@ export function parseJsonSchema(schema) {
             continue;
         }
 
-        // --- type keyword + validators ---
-        let checks = collectValidators(sch);
+        // --- type keyword + validators + structural keywords ---
+        let { vHeader, payloads: vPayloadArr, callbacks: cbs } = collectValidators(sch);
         let hasType = 'type' in sch;
+        let hasVHeader = vHeader !== 0;
+        let hasCbs = cbs.length > 0;
+        let hasProps = 'properties' in sch || 'required' in sch;
+        let hasItems = 'items' in sch;
 
-        if (!hasType && checks.length === 0) {
+        if (!hasType && !hasVHeader && !hasCbs && !hasProps && !hasItems) {
             // Empty schema {} → matches everything
             astKinds[nodeId] = N_PRIM;
             astFlags[nodeId] = (ANY | NULLABLE) >>> 0;
             continue;
         }
 
-        // Build the type node
-        let typeNodeId = nodeId; // by default, write directly to this node
+        // Resolve type string for structural dispatch
+        let typeStr = null;
+        if (hasType) {
+            let t = sch.type;
+            if (typeof t === 'string') typeStr = t;
+            else if (t.length === 1) typeStr = t[0];
+        }
 
-        // If we have validators, we need to wrap in N_REFINE
-        if (checks.length > 0) {
-            let fn = checks.length === 1 ? checks[0] :
+        // Build the type node
+        let typeNodeId = nodeId;
+
+        // If we have callbacks (enum/const/pattern), wrap in N_REFINE
+        if (hasCbs) {
+            let fn = cbs.length === 1 ? cbs[0] :
                 /** @param {*} d */ (d) => {
-                    for (let i = 0; i < checks.length; i++) {
-                        if (!checks[i](d)) return false;
+                    for (let i = 0; i < cbs.length; i++) {
+                        if (!cbs[i](d)) {
+                            return false;
+                        }
                     }
                     return true;
                 };
             let cbIdx = callbacks.length;
             callbacks.push(fn);
 
-            // nodeId becomes the REFINE wrapper
             astKinds[nodeId] = N_REFINE;
             astChild1[nodeId] = cbIdx;
 
-            if (hasType) {
-                // Create a new inner node for the type
+            if (hasType || hasVHeader || hasProps || hasItems) {
                 let innerId = allocNode();
                 astChild0[nodeId] = innerId;
                 typeNodeId = innerId;
             } else {
-                // No type → inner is "any"
+                // No type, no bit-flag validators → inner is "any"
                 let anyId = allocNode();
                 astKinds[anyId] = N_PRIM;
                 astFlags[anyId] = (ANY | NULLABLE) >>> 0;
@@ -437,9 +490,121 @@ export function parseJsonSchema(schema) {
             }
         }
 
+        // --- Object structural node (properties / required) ---
+        if (hasProps) {
+            let props = sch.properties || Object.create(null);
+            let propKeys = Object.keys(props);
+            let requiredSet = sch.required ? new Set(sch.required) : new Set();
+
+            // Add required-only keys (not in properties) with "any" schema
+            if (sch.required) {
+                for (let i = 0; i < sch.required.length; i++) {
+                    let r = sch.required[i];
+                    if (!Object.prototype.hasOwnProperty.call(props, r)) {
+                        propKeys.push(r);
+                    }
+                }
+            }
+
+            let isExplicitObject = typeStr === 'object';
+            let objNodeId;
+
+            if (isExplicitObject) {
+                // type: "object" — N_OBJECT directly on typeNodeId
+                objNodeId = typeNodeId;
+            } else {
+                // No explicit type — wrap in conditional guard
+                // N_CONDITIONAL: if (is object) then (validate props) else (pass)
+                objNodeId = allocNode();
+                let ifId = allocNode();
+                astKinds[ifId] = N_PRIM;
+                astFlags[ifId] = OBJECT;
+
+                let condOffset = condSlots.length;
+                condSlots.push(ifId, objNodeId, SENTINEL);
+                astKinds[typeNodeId] = N_CONDITIONAL;
+                astChild0[typeNodeId] = condOffset;
+            }
+
+            // Create N_OBJECT on objNodeId
+            let offset = propNames.length;
+            astKinds[objNodeId] = N_OBJECT;
+            astChild0[objNodeId] = offset;
+            astChild1[objNodeId] = propKeys.length;
+
+            for (let i = 0; i < propKeys.length; i++) {
+                let key = propKeys[i];
+                let childSchema = key in props ? props[key] : true;
+                let childId = allocNode();
+                propNames.push(key);
+                propChildren.push(0); // placeholder
+                propFlags.push(requiredSet.has(key) ? 0 : 1);
+                pushFrame(childSchema, childId, LINK_PROP, offset + i);
+            }
+
+            // Store validators on the object node
+            if (hasVHeader) {
+                astVHeaders[objNodeId] = vHeader;
+                astVOffset[objNodeId] = vPayloads.length;
+                for (let i = 0; i < vPayloadArr.length; i++) {
+                    vPayloads.push(vPayloadArr[i]);
+                }
+            }
+            continue;
+        }
+
+        // --- Array structural node (items) ---
+        if (hasItems) {
+            let isExplicitArray = typeStr === 'array';
+            let arrNodeId;
+
+            if (isExplicitArray) {
+                // type: "array" — N_ARRAY directly on typeNodeId
+                arrNodeId = typeNodeId;
+            } else {
+                // No explicit type — wrap in conditional guard
+                arrNodeId = allocNode();
+                let ifId = allocNode();
+                astKinds[ifId] = N_PRIM;
+                astFlags[ifId] = ARRAY;
+
+                let condOffset = condSlots.length;
+                condSlots.push(ifId, arrNodeId, SENTINEL);
+                astKinds[typeNodeId] = N_CONDITIONAL;
+                astChild0[typeNodeId] = condOffset;
+            }
+
+            // Create N_ARRAY on arrNodeId
+            let elemId = allocNode();
+            astKinds[arrNodeId] = N_ARRAY;
+            astChild0[arrNodeId] = elemId;
+            pushFrame(sch.items, elemId, LINK_ELEM, arrNodeId);
+
+            // Store validators on the array node
+            if (hasVHeader) {
+                astVHeaders[arrNodeId] = vHeader;
+                astVOffset[arrNodeId] = vPayloads.length;
+                for (let i = 0; i < vPayloadArr.length; i++) {
+                    vPayloads.push(vPayloadArr[i]);
+                }
+            }
+            continue;
+        }
+
+        // --- Pure type / validator node (no structural keywords) ---
+
+        // Store bit-flag validators on the type node
+        if (hasVHeader) {
+            astVHeaders[typeNodeId] = vHeader;
+            astVOffset[typeNodeId] = vPayloads.length;
+            for (let i = 0; i < vPayloadArr.length; i++) {
+                vPayloads.push(vPayloadArr[i]);
+            }
+        }
+
+        // Set the type on the type node
         if (hasType) {
             let type = sch.type;
-
             if (typeof type === 'string') {
                 astKinds[typeNodeId] = N_PRIM;
                 astFlags[typeNodeId] = mapSingleTypePrim(type) >>> 0;
@@ -447,7 +612,6 @@ export function parseJsonSchema(schema) {
                 astKinds[typeNodeId] = N_PRIM;
                 astFlags[typeNodeId] = mapSingleTypePrim(type[0]) >>> 0;
             } else {
-                // Multiple types → merge into a single N_PRIM bitmask
                 let merged = 0;
                 for (let i = 0; i < type.length; i++) {
                     merged |= mapSingleTypePrim(type[i]);
@@ -455,6 +619,10 @@ export function parseJsonSchema(schema) {
                 astKinds[typeNodeId] = N_PRIM;
                 astFlags[typeNodeId] = merged >>> 0;
             }
+        } else {
+            // Has validators but no type → matches everything
+            astKinds[typeNodeId] = N_PRIM;
+            astFlags[typeNodeId] = (ANY | NULLABLE) >>> 0;
         }
     }
 
@@ -481,8 +649,12 @@ export function parseJsonSchema(schema) {
         astFlags: astFlags.subarray(0, nc),
         astChild0: astChild0.subarray(0, nc),
         astChild1: astChild1.subarray(0, nc),
+        astVHeaders: astVHeaders.subarray(0, nc),
+        astVOffset: astVOffset.subarray(0, nc),
+        vPayloads,
         propNames,
         propChildren,
+        propFlags,
         listChildren,
         condSlots,
         callbacks,

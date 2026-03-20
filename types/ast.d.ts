@@ -14,8 +14,12 @@ export interface FlatAst {
     readonly astFlags: Uint32Array;
     readonly astChild0: Uint32Array;
     readonly astChild1: Uint32Array;
+    readonly astVHeaders: Uint32Array;
+    readonly astVOffset: Uint32Array;
+    readonly vPayloads: number[];
     readonly propNames: string[];
     readonly propChildren: number[];
+    readonly propFlags: number[];
     readonly listChildren: number[];
     readonly condSlots: number[];
     readonly callbacks: Array<(data: any) => boolean>;

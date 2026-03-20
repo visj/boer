@@ -41,19 +41,7 @@ async function buildFormat(format, ext, isModule) {
 
         const fileName = chunk.fileName;
 
-        const minified = await minify(chunk.code, {
-            sourceMap: {
-                content: chunk.map,
-                url: `${fileName}.map`
-            },
-            module: isModule,
-            compress: {
-                passes: 2,
-                unsafe: true,
-                dead_code: true,
-                inline: 3
-            }
-        });
+        const minified = { code: chunk.code, map: JSON.stringify(chunk.map) };
 
         const outputPath = path.resolve(outputDir, fileName);
         const outputDirName = path.dirname(outputPath);

@@ -19,8 +19,12 @@ function flatAstBuilder() {
     let astFlags = new Uint32Array(64);
     let astChild0 = new Uint32Array(64);
     let astChild1 = new Uint32Array(64);
+    let astVHeaders = new Uint32Array(64);
+    let astVOffset = new Uint32Array(64);
+    let vPayloads = [];
     let propNames = [];
     let propChildren = [];
+    let propFlags = [];
     let listChildren = [];
     let condSlots = [];
     let callbacks = [];
@@ -35,13 +39,15 @@ function flatAstBuilder() {
         return id;
     }
 
-    function object(props) {
+    function object(props, opts) {
         let id = alloc();
         let keys = Object.keys(props);
         let offset = propNames.length;
+        let requiredSet = opts && opts.required ? new Set(opts.required) : null;
         for (let i = 0; i < keys.length; i++) {
             propNames.push(keys[i]);
             propChildren.push(props[keys[i]]);
+            propFlags.push(requiredSet ? (requiredSet.has(keys[i]) ? 0 : 1) : 0);
         }
         astKinds[id] = N_OBJECT;
         astChild0[id] = offset;
@@ -150,8 +156,12 @@ function flatAstBuilder() {
             astFlags: astFlags.subarray(0, nc),
             astChild0: astChild0.subarray(0, nc),
             astChild1: astChild1.subarray(0, nc),
+            astVHeaders: astVHeaders.subarray(0, nc),
+            astVOffset: astVOffset.subarray(0, nc),
+            vPayloads,
             propNames,
             propChildren,
+            propFlags,
             listChildren,
             condSlots,
             callbacks,

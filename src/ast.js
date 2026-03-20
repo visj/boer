@@ -6,6 +6,8 @@ import {
     HAS_VALIDATOR, sortByKeyId,
 } from "./catalog.js";
 
+import { popcnt16 } from "./const.js";
+
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
     N_EXCLUSIVE, N_INTERSECT, N_NOT, N_CONDITIONAL, N_REF,
@@ -22,7 +24,7 @@ const COMPILED = 2;
 /**
  * Compiles a FlatAst into the catalog's heap storage.
  * Uses an iterative state machine with an explicit stack.
- * @template R
+ * @template {symbol} R
  * @param {uvd.cat.Catalog<R>} cat - a catalog instance returned by catalog()
  * @param {uvd.ast.FlatAst} ast
  * @returns {uvd.ast.CompiledSchema}
@@ -42,7 +44,8 @@ export function compile(cat, ast) {
 
     let {
         astKinds, astFlags, astChild0, astChild1,
-        propNames, propChildren, listChildren, condSlots, callbacks,
+        astVHeaders, astVOffset, vPayloads,
+        propNames, propChildren, propFlags, listChildren, condSlots, callbacks,
         rootId, defIds, defNames, nodeCount,
     } = ast;
 
@@ -74,7 +77,22 @@ export function compile(cat, ast) {
 
         // --- Primitives: compile immediately ---
         if (kind === N_PRIM) {
-            astCompiled[nodeId] = astFlags[nodeId];
+            let vHeader = astVHeaders[nodeId];
+            if (vHeader !== 0) {
+                let off = astVOffset[nodeId];
+                let count = popcnt16(vHeader & 0xFFFF);
+                let nodePayloads = new Array(count);
+                for (let i = 0; i < count; i++) {
+                    nodePayloads[i] = vPayloads[off + i];
+                }
+                let valIdx = allocValidator(vHeader, nodePayloads, volatile);
+                let primBits = astFlags[nodeId];
+                let kindHeader = K_PRIMITIVE | HAS_VALIDATOR | primBits;
+                let kindPtr = allocKind(kindHeader, valIdx, volatile, 2);
+                astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
+            } else {
+                astCompiled[nodeId] = astFlags[nodeId];
+            }
             astState[nodeId] = COMPILED;
             continue;
         }
@@ -178,12 +196,33 @@ export function compile(cat, ast) {
                 let resolved = new Array(count * 2);
                 for (let i = 0; i < count; i++) {
                     resolved[i * 2] = lookup(propNames[offset + i]);
-                    resolved[i * 2 + 1] = astCompiled[propChildren[offset + i]] >>> 0;
+                    let compiled = astCompiled[propChildren[offset + i]] >>> 0;
+                    if (propFlags && propFlags[offset + i]) {
+                        compiled = (compiled | OPTIONAL) >>> 0;
+                    }
+                    resolved[i * 2 + 1] = compiled;
                 }
                 sortByKeyId(resolved);
 
                 let objId = registerObject(resolved, count, volatile);
-                let kindPtr = allocKind(K_OBJECT, objId, volatile, 2);
+                let vHeader = astVHeaders[nodeId];
+                let hasVal = vHeader !== 0;
+                let valIdx = 0;
+                if (hasVal) {
+                    let off = astVOffset[nodeId];
+                    let pCount = popcnt16(vHeader & 0xFFFF);
+                    let nodePayloads = new Array(pCount);
+                    for (let j = 0; j < pCount; j++) {
+                        nodePayloads[j] = vPayloads[off + j];
+                    }
+                    valIdx = allocValidator(vHeader, nodePayloads, volatile);
+                }
+                let kindHeader = hasVal ? (K_OBJECT | HAS_VALIDATOR) : K_OBJECT;
+                let slots = hasVal ? 3 : 2;
+                let kindPtr = allocKind(kindHeader, objId, volatile, slots);
+                if (hasVal) {
+                    HEAP.KINDS[kindPtr + 2] = valIdx;
+                }
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
                 break;
             }
@@ -191,7 +230,24 @@ export function compile(cat, ast) {
             case N_ARRAY: {
                 let elemType = astCompiled[astChild0[nodeId]];
                 let arrId = registerArray(elemType, volatile);
-                let kindPtr = allocKind(K_ARRAY, arrId, volatile, 2);
+                let vHeader = astVHeaders[nodeId];
+                let hasVal = vHeader !== 0;
+                let valIdx = 0;
+                if (hasVal) {
+                    let off = astVOffset[nodeId];
+                    let pCount = popcnt16(vHeader & 0xFFFF);
+                    let nodePayloads = new Array(pCount);
+                    for (let j = 0; j < pCount; j++) {
+                        nodePayloads[j] = vPayloads[off + j];
+                    }
+                    valIdx = allocValidator(vHeader, nodePayloads, volatile);
+                }
+                let kindHeader = hasVal ? (K_ARRAY | HAS_VALIDATOR) : K_ARRAY;
+                let slots = hasVal ? 3 : 2;
+                let kindPtr = allocKind(kindHeader, arrId, volatile, slots);
+                if (hasVal) {
+                    HEAP.KINDS[kindPtr + 2] = valIdx;
+                }
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
                 break;
             }
