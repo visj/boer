@@ -16,57 +16,119 @@ import {
 const KIND_MASK = 0x0FFFFFFF;
 const MAX_DEPTH = 512;
 
-// Compiler states
+// Compiler states — tracks each node's progress through the two-visit pattern.
 const UNVISITED = 0;
-const VISITING = 1;
-const COMPILED = 2;
+const VISITING  = 1;
+const COMPILED  = 2;
+
+const SENTINEL = 0xFFFFFFFF;
+
+// ────────────────────────────────────────────────────────────────────────────
+// compile(cat, ast) → CompiledSchema
+// ────────────────────────────────────────────────────────────────────────────
+//
+// Compiles a FlatAst (from parseJsonSchema) into the catalog's runtime heap.
+//
+// ## Algorithm
+//
+// Uses an iterative two-visit pattern with an explicit stack:
+//
+//   Visit 1 (UNVISITED → VISITING): push self back, then push all children.
+//   Visit 2 (VISITING  → COMPILED): all children are compiled; emit this node.
+//
+// Leaf nodes (N_PRIM) compile in a single visit. $ref nodes may need to
+// wait for their target and are re-pushed if the target isn't ready yet.
+//
+// ## Edge slab access
+//
+// The FlatAst stores variable-length children in a unified `astEdges` slab:
+//
+//   Object properties:  astEdges[offset + i*3 + 0] = nameIdx (into propNames)
+//                        astEdges[offset + i*3 + 1] = child node id
+//                        astEdges[offset + i*3 + 2] = property flags (0=required, 1=optional)
+//
+//   List members:       astEdges[offset + i] = child node id
+//
+//   Conditional slots:  astEdges[offset + 0] = ifId
+//                        astEdges[offset + 1] = thenId  (SENTINEL if absent)
+//                        astEdges[offset + 2] = elseId  (SENTINEL if absent)
+//
+// ## Validator compilation
+//
+// Nodes with astVHeaders[nodeId] != 0 carry validator constraints. The
+// compiler reads the vHeader and payload values, then calls allocValidator()
+// to register them in the catalog's validator slab. The kind header is
+// OR'd with HAS_VALIDATOR and the validator index is stored in an extra
+// kind slot.
+//
+// ────────────────────────────────────────────────────────────────────────────
 
 /**
  * Compiles a FlatAst into the catalog's heap storage.
- * Uses an iterative state machine with an explicit stack.
  * @template {symbol} R
- * @param {uvd.cat.Catalog<R>} cat - a catalog instance returned by catalog()
+ * @param {uvd.cat.Catalog<R>} cat — a catalog instance returned by catalog()
  * @param {uvd.ast.FlatAst} ast
  * @returns {uvd.ast.CompiledSchema}
  */
 export function compile(cat, ast) {
     let heap = cat.__heap;
     let HEAP = heap.HEAP;
-    let allocKind = heap.allocKind;
+    let allocKind      = heap.allocKind;
     let allocValidator = heap.allocValidator;
-    let allocOnSlab = heap.allocOnSlab;
-    let lookup = heap.lookup;
+    let allocOnSlab    = heap.allocOnSlab;
+    let lookup         = heap.lookup;
     let registerObject = heap.registerObject;
-    let registerArray = heap.registerArray;
-    let registerUnion = heap.registerUnion;
+    let registerArray  = heap.registerArray;
+    let registerUnion  = heap.registerUnion;
 
     let volatile = false;
 
     let {
         astKinds, astFlags, astChild0, astChild1,
         astVHeaders, astVOffset, vPayloads,
-        propNames, propChildren, propFlags, listChildren, condSlots, callbacks,
+        astEdges, propNames, callbacks,
         rootId, defIds, defNames, nodeCount,
     } = ast;
 
-    // Compiler-owned arrays
-    let astState = new Uint8Array(nodeCount);
+    // Per-node compiler state
+    let astState    = new Uint8Array(nodeCount);
     let astCompiled = new Uint32Array(nodeCount);
 
-    // Track circular refs for patching: [refNodeId, targetNodeId, reservedKindPtr]
+    // Circular $ref patches: [refNodeId, targetNodeId, reservedKindPtr]
     /** @type {Array<[number, number, number]>} */
     let circularPatches = [];
 
-    // Explicit stack
+    // Explicit compilation stack
     let stack = new Uint32Array(MAX_DEPTH);
     let sp = 0;
 
-    // Push all defs first so they're compiled
+    // Push all defs first so they're available for $ref resolution
     for (let i = 0; i < defIds.length; i++) {
         stack[sp++] = defIds[i];
     }
-    // Push root
     stack[sp++] = rootId;
+
+    // ── Helper: build validator payloads from the FlatAst slab ──
+
+    /**
+     * Reads a node's validator header + payloads and allocates them on the
+     * catalog's validator heap. Returns [hasValidator, validatorIndex].
+     * @param {number} nodeId
+     * @returns {[boolean, number]}
+     */
+    function compileValidator(nodeId) {
+        let vHeader = astVHeaders[nodeId];
+        if (vHeader === 0) return [false, 0];
+        let off   = astVOffset[nodeId];
+        let count = popcnt16(vHeader & 0xFFFF);
+        let nodePayloads = new Array(count);
+        for (let i = 0; i < count; i++) {
+            nodePayloads[i] = vPayloads[off + i];
+        }
+        return [true, allocValidator(vHeader, nodePayloads, volatile)];
+    }
+
+    // ── Main compilation loop ──
 
     while (sp > 0) {
         let nodeId = stack[--sp];
@@ -75,17 +137,10 @@ export function compile(cat, ast) {
 
         let kind = astKinds[nodeId];
 
-        // --- Primitives: compile immediately ---
+        // ── Primitives: compile immediately (leaf node) ──
         if (kind === N_PRIM) {
-            let vHeader = astVHeaders[nodeId];
-            if (vHeader !== 0) {
-                let off = astVOffset[nodeId];
-                let count = popcnt16(vHeader & 0xFFFF);
-                let nodePayloads = new Array(count);
-                for (let i = 0; i < count; i++) {
-                    nodePayloads[i] = vPayloads[off + i];
-                }
-                let valIdx = allocValidator(vHeader, nodePayloads, volatile);
+            let [hasVal, valIdx] = compileValidator(nodeId);
+            if (hasVal) {
                 let primBits = astFlags[nodeId];
                 let kindHeader = K_PRIMITIVE | HAS_VALIDATOR | primBits;
                 let kindPtr = allocKind(kindHeader, valIdx, volatile, 2);
@@ -97,12 +152,12 @@ export function compile(cat, ast) {
             continue;
         }
 
-        // --- Refs ---
+        // ── $ref resolution ──
         if (kind === N_REF) {
             let targetId = astChild0[nodeId];
 
             if (astState[nodeId] === VISITING) {
-                // Scenario D: we were waiting, target should be done now
+                // Re-visit: target should be compiled by now
                 if (astState[targetId] === COMPILED) {
                     astCompiled[nodeId] = astCompiled[targetId];
                     astState[nodeId] = COMPILED;
@@ -114,16 +169,15 @@ export function compile(cat, ast) {
                 continue;
             }
 
-            // First time seeing this ref
+            // First visit
             if (astState[targetId] === COMPILED) {
-                // Scenario A: target already compiled
                 astCompiled[nodeId] = astCompiled[targetId];
                 astState[nodeId] = COMPILED;
                 continue;
             }
 
             if (astState[targetId] === VISITING) {
-                // Scenario B: circular dependency
+                // Circular dependency — reserve kind slots for later patching
                 let kindPtr = HEAP.KIND_PTR;
                 HEAP.KIND_PTR += 2;
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
@@ -132,25 +186,26 @@ export function compile(cat, ast) {
                 continue;
             }
 
-            // Scenario C: target unvisited — push self back, then target
+            // Target unvisited — schedule it
             astState[nodeId] = VISITING;
             stack[sp++] = nodeId;
             stack[sp++] = targetId;
             continue;
         }
 
-        // --- Complex nodes: two-visit pattern ---
+        // ── Complex nodes: two-visit pattern ──
+
         if (astState[nodeId] === UNVISITED) {
-            // First visit: mark as visiting, push self back, push children
+            // Visit 1: mark as visiting, push self back, push children
             astState[nodeId] = VISITING;
             stack[sp++] = nodeId;
 
             switch (kind) {
                 case N_OBJECT: {
                     let offset = astChild0[nodeId];
-                    let count = astChild1[nodeId];
+                    let count  = astChild1[nodeId];
                     for (let i = 0; i < count; i++) {
-                        stack[sp++] = propChildren[offset + i];
+                        stack[sp++] = astEdges[offset + i * 3 + 1]; // childId
                     }
                     break;
                 }
@@ -162,9 +217,9 @@ export function compile(cat, ast) {
                 case N_EXCLUSIVE:
                 case N_INTERSECT: {
                     let offset = astChild0[nodeId];
-                    let count = astChild1[nodeId];
+                    let count  = astChild1[nodeId];
                     for (let i = 0; i < count; i++) {
-                        stack[sp++] = listChildren[offset + i];
+                        stack[sp++] = astEdges[offset + i];
                     }
                     break;
                 }
@@ -173,11 +228,10 @@ export function compile(cat, ast) {
                     break;
                 }
                 case N_CONDITIONAL: {
-                    let condOffset = astChild0[nodeId];
-                    // Push in reverse so if is compiled first
-                    if (condSlots[condOffset + 2] !== 0xFFFFFFFF) stack[sp++] = condSlots[condOffset + 2]; // else
-                    if (condSlots[condOffset + 1] !== 0xFFFFFFFF) stack[sp++] = condSlots[condOffset + 1]; // then
-                    stack[sp++] = condSlots[condOffset]; // if
+                    let base = astChild0[nodeId];
+                    if (astEdges[base + 2] !== SENTINEL) stack[sp++] = astEdges[base + 2]; // else
+                    if (astEdges[base + 1] !== SENTINEL) stack[sp++] = astEdges[base + 1]; // then
+                    stack[sp++] = astEdges[base]; // if
                     break;
                 }
                 case N_REFINE: {
@@ -188,41 +242,32 @@ export function compile(cat, ast) {
             continue;
         }
 
-        // --- Second visit (VISITING): all children compiled, now compile this node ---
+        // ── Visit 2: all children compiled — emit this node ──
+
         switch (kind) {
             case N_OBJECT: {
                 let offset = astChild0[nodeId];
-                let count = astChild1[nodeId];
+                let count  = astChild1[nodeId];
                 let resolved = new Array(count * 2);
+
                 for (let i = 0; i < count; i++) {
-                    resolved[i * 2] = lookup(propNames[offset + i]);
-                    let compiled = astCompiled[propChildren[offset + i]] >>> 0;
-                    if (propFlags && propFlags[offset + i]) {
-                        compiled = (compiled | OPTIONAL) >>> 0;
-                    }
+                    let nameIdx = astEdges[offset + i * 3];
+                    let childId = astEdges[offset + i * 3 + 1];
+                    let flags   = astEdges[offset + i * 3 + 2];
+
+                    resolved[i * 2] = lookup(propNames[nameIdx]);
+                    let compiled = astCompiled[childId] >>> 0;
+                    if (flags) compiled = (compiled | OPTIONAL) >>> 0;
                     resolved[i * 2 + 1] = compiled;
                 }
                 sortByKeyId(resolved);
 
                 let objId = registerObject(resolved, count, volatile);
-                let vHeader = astVHeaders[nodeId];
-                let hasVal = vHeader !== 0;
-                let valIdx = 0;
-                if (hasVal) {
-                    let off = astVOffset[nodeId];
-                    let pCount = popcnt16(vHeader & 0xFFFF);
-                    let nodePayloads = new Array(pCount);
-                    for (let j = 0; j < pCount; j++) {
-                        nodePayloads[j] = vPayloads[off + j];
-                    }
-                    valIdx = allocValidator(vHeader, nodePayloads, volatile);
-                }
+                let [hasVal, valIdx] = compileValidator(nodeId);
                 let kindHeader = hasVal ? (K_OBJECT | HAS_VALIDATOR) : K_OBJECT;
                 let slots = hasVal ? 3 : 2;
                 let kindPtr = allocKind(kindHeader, objId, volatile, slots);
-                if (hasVal) {
-                    HEAP.KINDS[kindPtr + 2] = valIdx;
-                }
+                if (hasVal) HEAP.KINDS[kindPtr + 2] = valIdx;
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
                 break;
             }
@@ -230,36 +275,23 @@ export function compile(cat, ast) {
             case N_ARRAY: {
                 let elemType = astCompiled[astChild0[nodeId]];
                 let arrId = registerArray(elemType, volatile);
-                let vHeader = astVHeaders[nodeId];
-                let hasVal = vHeader !== 0;
-                let valIdx = 0;
-                if (hasVal) {
-                    let off = astVOffset[nodeId];
-                    let pCount = popcnt16(vHeader & 0xFFFF);
-                    let nodePayloads = new Array(pCount);
-                    for (let j = 0; j < pCount; j++) {
-                        nodePayloads[j] = vPayloads[off + j];
-                    }
-                    valIdx = allocValidator(vHeader, nodePayloads, volatile);
-                }
+                let [hasVal, valIdx] = compileValidator(nodeId);
                 let kindHeader = hasVal ? (K_ARRAY | HAS_VALIDATOR) : K_ARRAY;
                 let slots = hasVal ? 3 : 2;
                 let kindPtr = allocKind(kindHeader, arrId, volatile, slots);
-                if (hasVal) {
-                    HEAP.KINDS[kindPtr + 2] = valIdx;
-                }
+                if (hasVal) HEAP.KINDS[kindPtr + 2] = valIdx;
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
                 break;
             }
 
             case N_OR: {
                 let offset = astChild0[nodeId];
-                let count = astChild1[nodeId];
+                let count  = astChild1[nodeId];
                 let types = new Array(count);
                 let allPrimitive = true;
                 let merged = 0;
                 for (let i = 0; i < count; i++) {
-                    types[i] = astCompiled[listChildren[offset + i]];
+                    types[i] = astCompiled[astEdges[offset + i]];
                     if (types[i] & COMPLEX) {
                         allPrimitive = false;
                     } else {
@@ -283,10 +315,10 @@ export function compile(cat, ast) {
 
             case N_EXCLUSIVE: {
                 let offset = astChild0[nodeId];
-                let count = astChild1[nodeId];
+                let count  = astChild1[nodeId];
                 let types = new Array(count);
                 for (let i = 0; i < count; i++) {
-                    types[i] = astCompiled[listChildren[offset + i]];
+                    types[i] = astCompiled[astEdges[offset + i]];
                 }
                 let matchId = allocOnSlab(types, volatile, 'match');
                 let kindPtr = allocKind(K_EXCLUSIVE, matchId, volatile, 2);
@@ -296,10 +328,10 @@ export function compile(cat, ast) {
 
             case N_INTERSECT: {
                 let offset = astChild0[nodeId];
-                let count = astChild1[nodeId];
+                let count  = astChild1[nodeId];
                 let types = new Array(count);
                 for (let i = 0; i < count; i++) {
-                    types[i] = astCompiled[listChildren[offset + i]];
+                    types[i] = astCompiled[astEdges[offset + i]];
                 }
                 let matchId = allocOnSlab(types, volatile, 'match');
                 let kindPtr = allocKind(K_INTERSECT, matchId, volatile, 2);
@@ -315,12 +347,10 @@ export function compile(cat, ast) {
             }
 
             case N_CONDITIONAL: {
-                let condOffset = astChild0[nodeId];
-                let ifType = astCompiled[condSlots[condOffset]];
-                let thenType = condSlots[condOffset + 1] !== 0xFFFFFFFF
-                    ? astCompiled[condSlots[condOffset + 1]] : 0;
-                let elseType = condSlots[condOffset + 2] !== 0xFFFFFFFF
-                    ? astCompiled[condSlots[condOffset + 2]] : 0;
+                let base = astChild0[nodeId];
+                let ifType   = astCompiled[astEdges[base]];
+                let thenType = astEdges[base + 1] !== SENTINEL ? astCompiled[astEdges[base + 1]] : 0;
+                let elseType = astEdges[base + 2] !== SENTINEL ? astCompiled[astEdges[base + 2]] : 0;
                 let types = [ifType, thenType, elseType];
                 let matchId = allocOnSlab(types, volatile, 'match');
                 let kindPtr = allocKind(K_CONDITIONAL, matchId, volatile, 2);
@@ -336,12 +366,8 @@ export function compile(cat, ast) {
                 let kindPtr = allocKind(K_REFINE, innerType >>> 0, volatile, 3);
                 HEAP.KINDS[kindPtr + 2] = callbackIdx;
                 let flags = COMPLEX | kindPtr;
-                if (innerType & NULLABLE) {
-                    flags |= NULLABLE;
-                }
-                if (innerType & OPTIONAL) {
-                    flags |= OPTIONAL;
-                }
+                if (innerType & NULLABLE) flags |= NULLABLE;
+                if (innerType & OPTIONAL) flags |= OPTIONAL;
                 astCompiled[nodeId] = flags >>> 0;
                 break;
             }
@@ -349,7 +375,7 @@ export function compile(cat, ast) {
         astState[nodeId] = COMPILED;
     }
 
-    // --- Patch circular references ---
+    // ── Patch circular $ref dependencies ──
     for (let i = 0; i < circularPatches.length; i++) {
         let [refNodeId, targetId, kindPtr] = circularPatches[i];
         let compiled = astCompiled[targetId];
@@ -358,14 +384,14 @@ export function compile(cat, ast) {
             HEAP.KINDS[kindPtr] = K_PRIMITIVE | compiled;
             HEAP.KINDS[kindPtr + 1] = 0;
         } else {
-            // Complex type → copy the real kind entry
+            // Complex type → copy the kind entry
             let realPtr = compiled & KIND_MASK;
             HEAP.KINDS[kindPtr] = HEAP.KINDS[realPtr];
             HEAP.KINDS[kindPtr + 1] = HEAP.KINDS[realPtr + 1];
         }
     }
 
-    // Build result
+    // ── Build result ──
     /** @type {Record<string, number>} */
     let resultDefs = {};
     for (let i = 0; i < defNames.length; i++) {

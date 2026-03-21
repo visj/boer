@@ -6,3 +6,5 @@ export * as inspect from './types/inspect.js';
 
 export as namespace uvd;
 export type JSONSchema = _JSONSchema;
+
+export { UVD } from './types/index.d.ts';

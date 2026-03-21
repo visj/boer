@@ -1,5 +1,4 @@
 /// <reference path="../global.d.ts" />
-import { resolve } from "uri-js";
 import {
     ANY, NEVER, STRING, NUMBER, INTEGER, BOOLEAN, NULLABLE, ARRAY, OBJECT,
     V_STR_MIN_LEN, V_STR_MAX_LEN,
@@ -8,10 +7,32 @@ import {
     V_OBJ_MIN, V_OBJ_MAX,
 } from "./const.js";
 
-/** @typedef {import('json-schema-typed').JSONSchema} */
-let JsonSchema;
+/**
+ * @typedef {import("json-schema-typed").JSONSchema} JSONSchema
+ */
 
-// AST node kind constants
+/**
+ * @typedef {Extract<JSONSchema, object>} Schema
+ */
+
+// ────────────────────────────────────────────────────────────────────────────
+// AST Node Kinds
+// ────────────────────────────────────────────────────────────────────────────
+// Each node in the flat AST has a "kind" stored in astKinds[nodeId].
+// These constants identify what the node represents.
+//
+//   N_PRIM        Leaf node. astFlags holds a primitive bitmask (STRING, NUMBER, etc.)
+//   N_OBJECT      Object with named properties. astChild0 → edge offset, astChild1 → prop count.
+//   N_ARRAY       Homogeneous array. astChild0 → element node id.
+//   N_REFINE      Wraps an inner type + callback. astChild0 → inner node, astChild1 → callback index.
+//   N_OR          anyOf. astChild0 → edge offset, astChild1 → branch count.
+//   N_EXCLUSIVE   oneOf. Same layout as N_OR.
+//   N_INTERSECT   allOf. Same layout as N_OR.
+//   N_NOT         Negation. astChild0 → inner node.
+//   N_CONDITIONAL if/then/else. astChild0 → edge offset (3 slots: [if, then, else]).
+//   N_REF         Reference to a definition. astChild0 → target node id.
+// ────────────────────────────────────────────────────────────────────────────
+
 export const N_PRIM = 0;
 export const N_OBJECT = 1;
 export const N_ARRAY = 2;
@@ -23,151 +44,188 @@ export const N_NOT = 10;
 export const N_CONDITIONAL = 11;
 export const N_REF = 255;
 
-// Stack link types (how child connects to parent)
+// ────────────────────────────────────────────────────────────────────────────
+// Stack Link Types
+// ────────────────────────────────────────────────────────────────────────────
+// When a child frame is pushed onto the parse stack, the link type tells
+// writeLink() how to wire the completed child back to its parent.
+//
+//   LINK_ROOT    Root node — no parent to wire to.
+//   LINK_EDGE    Writes edges[linkOffset] = childNodeId.
+//                Used for object properties, list members, and conditional slots.
+//   LINK_CHILD0  Writes astChild0[linkOffset] = childNodeId.
+//                Used for array element types, inner types (not, refine).
+//   LINK_DEF     Definition — no wiring needed (compiled separately).
+// ────────────────────────────────────────────────────────────────────────────
+
 const LINK_ROOT = 0;
-const LINK_PROP = 1;
-const LINK_LIST = 2;
-const LINK_ELEM = 3;
-const LINK_COND_IF = 4;
-const LINK_COND_THEN = 5;
-const LINK_COND_ELSE = 6;
-const LINK_DEF = 7;
-const LINK_INNER = 8;
+const LINK_EDGE = 1;
+const LINK_CHILD0 = 2;
+const LINK_DEF = 3;
 
 const SENTINEL = 0xFFFFFFFF;
 const INITIAL_CAPACITY = 256;
 const MAX_DEPTH = 512;
 
+const hop = Object.prototype.hasOwnProperty;
+
+// ────────────────────────────────────────────────────────────────────────────
+// collectValidators(schema)
+// ────────────────────────────────────────────────────────────────────────────
+// Scans a JSON Schema object for numeric/string/array/object constraint
+// keywords and encodes them as:
+//
+//   vHeader   — a bitmask of V_* flags (from const.js). Payload flags occupy
+//               bits 0–15; boolean modifier flags occupy bits 16–31.
+//   payloads  — one Float64 per set payload flag, pushed in ascending bit
+//               order so that popcnt16(vHeader & (FLAG - 1)) gives the
+//               offset of any flag's value.
+//   callbacks — closures for validators that can't be expressed as a single
+//               numeric payload (enum, const, pattern).
+//
+// Type coercion: payload values are cast to +value so that a schema like
+// { "minLength": "3" } is silently coerced to 3 rather than crashing at
+// validation time.
+// ────────────────────────────────────────────────────────────────────────────
 
 /**
- * Collects validators from a JSON Schema object.
- * Built-in validators produce bit flags + payloads. Callbacks remain for enum/const/pattern.
- * Payloads are pushed in ascending bit order so popcount-based offset works.
- * @param {JsonSchema} schema
- * @returns {{vHeader: number, payloads: !Array<number>, callbacks: !Array<function(*): boolean>}}
+ * @param {Schema} schema — a raw JSON Schema object
+ * @returns {{ vHeader: number, payloads: number[], callbacks: Array<(d: any) => boolean> }}
  */
 function collectValidators(schema) {
     let vHeader = 0;
-    /** @type {!Array<number>} */
+    /** @type {number[]} */
     let payloads = [];
-    /** @type {!Array<function(*): boolean>} */
+    /** @type {Array<(d: any) => boolean>} */
     let callbacks = [];
 
-    // --- Payload flags (in bit order) ---
+    // --- Payload flags (must be pushed in ascending bit order) ---
 
     // V_STR_MIN_LEN (bit 0)
-    if ('minLength' in schema) {
+    let minLength = schema.minLength;
+    if (minLength !== void 0) {
         vHeader |= V_STR_MIN_LEN;
-        payloads.push(schema.minLength);
+        payloads.push(+minLength);
     }
+
     // V_STR_MAX_LEN (bit 1)
-    if ('maxLength' in schema) {
+    let maxLength = schema.maxLength;
+    if (maxLength !== void 0) {
         vHeader |= V_STR_MAX_LEN;
-        payloads.push(schema.maxLength);
+        payloads.push(+maxLength);
     }
-    // V_STR_PATTERN (bit 2) — leave as callback for now
-    // V_STR_FORMAT (bit 3) — leave as callback for now
+
+    // V_STR_PATTERN (bit 2) — callback (regex needs object storage)
+    // V_STR_FORMAT  (bit 3) — callback (reserved for later)
 
     // V_NUM_MIN (bit 4) + V_NUM_EX_MIN (bit 16) modifier
-    let hasMin = 'minimum' in schema;
-    let hasExMin = 'exclusiveMinimum' in schema;
-    if (hasMin && hasExMin) {
-        if (schema.exclusiveMinimum >= schema.minimum) {
+    let min = schema.minimum;
+    let exMin = schema.exclusiveMinimum;
+    if (min !== void 0 && exMin !== void 0) {
+        if (+exMin >= +min) {
             vHeader |= V_NUM_MIN | V_NUM_EX_MIN;
-            payloads.push(schema.exclusiveMinimum);
+            payloads.push(+exMin);
         } else {
             vHeader |= V_NUM_MIN;
-            payloads.push(schema.minimum);
+            payloads.push(+min);
         }
-    } else if (hasMin) {
+    } else if (min !== void 0) {
         vHeader |= V_NUM_MIN;
-        payloads.push(schema.minimum);
-    } else if (hasExMin) {
+        payloads.push(+min);
+    } else if (exMin !== void 0) {
         vHeader |= V_NUM_MIN | V_NUM_EX_MIN;
-        payloads.push(schema.exclusiveMinimum);
+        payloads.push(+exMin);
     }
+
     // V_NUM_MAX (bit 5) + V_NUM_EX_MAX (bit 17) modifier
-    let hasMax = 'maximum' in schema;
-    let hasExMax = 'exclusiveMaximum' in schema;
-    if (hasMax && hasExMax) {
-        if (schema.exclusiveMaximum <= schema.maximum) {
+    let max = schema.maximum;
+    let exMax = schema.exclusiveMaximum;
+    if (max !== void 0 && exMax !== void 0) {
+        if (+exMax <= +max) {
             vHeader |= V_NUM_MAX | V_NUM_EX_MAX;
-            payloads.push(schema.exclusiveMaximum);
+            payloads.push(+exMax);
         } else {
             vHeader |= V_NUM_MAX;
-            payloads.push(schema.maximum);
+            payloads.push(+max);
         }
-    } else if (hasMax) {
+    } else if (max !== void 0) {
         vHeader |= V_NUM_MAX;
-        payloads.push(schema.maximum);
-    } else if (hasExMax) {
+        payloads.push(+max);
+    } else if (exMax !== void 0) {
         vHeader |= V_NUM_MAX | V_NUM_EX_MAX;
-        payloads.push(schema.exclusiveMaximum);
+        payloads.push(+exMax);
     }
+
     // V_NUM_MULTIPLE (bit 6)
-    if ('multipleOf' in schema) {
+    let multipleOf = schema.multipleOf;
+    if (multipleOf !== void 0) {
         vHeader |= V_NUM_MULTIPLE;
-        payloads.push(schema.multipleOf);
+        payloads.push(+multipleOf);
     }
 
     // V_ARR_MIN (bit 7)
-    if ('minItems' in schema) {
+    let minItems = schema.minItems;
+    if (minItems !== void 0) {
         vHeader |= V_ARR_MIN;
-        payloads.push(schema.minItems);
+        payloads.push(+minItems);
     }
+
     // V_ARR_MAX (bit 8)
-    if ('maxItems' in schema) {
+    let maxItems = schema.maxItems;
+    if (maxItems !== void 0) {
         vHeader |= V_ARR_MAX;
-        payloads.push(schema.maxItems);
+        payloads.push(+maxItems);
     }
-    // V_ARR_CONTAINS (bit 9), V_ARR_MIN_CT (bit 10), V_ARR_MAX_CT (bit 11) — later
+
+    // V_ARR_CONTAINS (bit 9), V_ARR_MIN_CT (bit 10), V_ARR_MAX_CT (bit 11) — reserved
 
     // V_OBJ_MIN (bit 12)
-    if ('minProperties' in schema) {
+    let minProperties = schema.minProperties;
+    if (minProperties !== void 0) {
         vHeader |= V_OBJ_MIN;
-        payloads.push(schema.minProperties);
+        payloads.push(+minProperties);
     }
+
     // V_OBJ_MAX (bit 13)
-    if ('maxProperties' in schema) {
+    let maxProperties = schema.maxProperties;
+    if (maxProperties !== void 0) {
         vHeader |= V_OBJ_MAX;
-        payloads.push(schema.maxProperties);
+        payloads.push(+maxProperties);
     }
 
     // --- Boolean flags (no payload) ---
 
     // V_ARR_UNIQUE (bit 18)
-    if ('uniqueItems' in schema && schema.uniqueItems) {
+    if (schema.uniqueItems === true) {
         vHeader |= V_ARR_UNIQUE;
     }
 
     // --- Callbacks (no bit-flag equivalent) ---
 
-    if ('pattern' in schema) {
-        let re = new RegExp(schema.pattern);
+    let pattern = schema.pattern;
+    if (pattern !== void 0) {
+        let re = new RegExp(pattern);
         callbacks.push(/** @param {*} d */(d) => typeof d !== 'string' || re.test(d));
     }
-    if ('enum' in schema) {
-        let values = schema.enum;
+
+    let enumValues = schema.enum;
+    if (enumValues !== void 0) {
         callbacks.push(/** @param {*} d */(d) => {
-            for (let i = 0; i < values.length; i++) {
-                if (d === values[i]) {
-                    return true;
-                }
-                if (typeof d === 'object' && d !== null && JSON.stringify(d) === JSON.stringify(values[i])) {
-                    return true;
-                }
+            for (let i = 0; i < enumValues.length; i++) {
+                if (d === enumValues[i]) return true;
+                if (typeof d === 'object' && d !== null &&
+                    JSON.stringify(d) === JSON.stringify(enumValues[i])) return true;
             }
             return false;
         });
     }
-    if ('const' in schema) {
-        let val = schema.const;
+
+    let constVal = schema.const;
+    if (constVal !== void 0) {
         callbacks.push(/** @param {*} d */(d) => {
-            if (d === val) {
-                return true;
-            }
+            if (d === constVal) return true;
             if (typeof d === 'object' && d !== null) {
-                return JSON.stringify(d) === JSON.stringify(val);
+                return JSON.stringify(d) === JSON.stringify(constVal);
             }
             return false;
         });
@@ -176,10 +234,10 @@ function collectValidators(schema) {
     return { vHeader, payloads, callbacks };
 }
 
+// Maps a JSON Schema type string ("string", "number", etc.) to the
+// corresponding primitive bitmask from const.js.
 /**
- * Maps a single JSON Schema type string to a primitive bitmask or a kind constant.
- * Returns [isPrimitive, value] where value is either a bitmask or a kind.
- * @param {string} type
+ * @param {string} type — JSON Schema type keyword
  * @returns {number} primitive bitmask
  */
 function mapSingleTypePrim(type) {
@@ -195,40 +253,95 @@ function mapSingleTypePrim(type) {
     throw new Error('Unknown JSON Schema type: ' + type);
 }
 
+// parseJsonSchema(schema) → FlatAst
+//
+// Parses a JSON Schema (draft 2020-12) into a FlatAst — a compact,
+// structure-of-arrays representation designed for fast compilation into
+// the uvd validation engine's heap.
+//
+// ## Algorithm
+//
+// The parser uses an iterative depth-first walk with an explicit stack.
+// Each stack frame contains: the schema fragment, the pre-allocated node
+// id, and wiring info (link type + offset) so completed children are
+// connected to their parents.
+//
+// Phase 1 — Parse: pops frames, classifies each schema, writes the SoA
+//   arrays, and pushes child frames for nested schemas.
+// Phase 2 — Link: resolves $ref nodes by looking up the symbol table
+//   built during the pre-scan of $defs.
+//
+// ## FlatAst Memory Layout
+//
+// The AST is stored as parallel typed arrays (SoA):
+//
+//   astKinds[nodeId]   — Uint8Array  — node kind (N_PRIM, N_OBJECT, etc.)
+//   astFlags[nodeId]   — Uint32Array — for N_PRIM: primitive bitmask
+//   astChild0[nodeId]  — Uint32Array — primary child pointer:
+//       N_PRIM: unused (flags carry the data)
+//       N_OBJECT: edge offset into astEdges (start of property triplets)
+//       N_ARRAY: element node id
+//       N_OR / N_EXCLUSIVE / N_INTERSECT: edge offset (start of child ids)
+//       N_NOT: inner node id
+//       N_CONDITIONAL: edge offset (3 slots: [if, then, else])
+//       N_REFINE: inner node id
+//       N_REF: target node id (after link pass)
+//   astChild1[nodeId]  — Uint32Array — secondary data:
+//       N_OBJECT: property count
+//       N_OR / N_EXCLUSIVE / N_INTERSECT: branch count
+//       N_REFINE: callback index into callbacks[]
+//
+// Variable-length edges are stored in a unified slab (astEdges):
+//
+//   Object properties:  [nameIdx, childId, flags] × count
+//     nameIdx — index into propNames[]
+//     childId — the AST node id for this property's schema
+//     flags   — 0 = required, 1 = optional
+//
+//   List members (allOf/anyOf/oneOf):  [childId] × count
+//
+//   Conditional slots:  [ifId, thenId, elseId]  (SENTINEL = absent)
+//
+// Validator payloads are in a separate slab (vPayloads):
+//   astVHeaders[nodeId] — per-node bitmask of V_* flags
+//   astVOffset[nodeId]  — start index into vPayloads for this node
+//
+// ────────────────────────────────────────────────────────────────────────────
+
 /**
- * Parses a JSON Schema object into a FlatAst suitable for compile().
- * Two-pass: Parse (iterative walk) then Link ($ref resolution).
- * @param {JsonSchema | boolean} schema
+ * @param {JSONSchema|boolean} schema — a JSON Schema document (object or boolean)
  * @returns {uvd.ast.FlatAst}
  */
 export function parseJsonSchema(schema) {
-    // Flat AST storage
+    // ── Core SoA node arrays ──
     let capacity = INITIAL_CAPACITY;
     let astKinds = new Uint8Array(capacity);
     let astFlags = new Uint32Array(capacity);
     let astChild0 = new Uint32Array(capacity);
     let astChild1 = new Uint32Array(capacity);
 
-    // Side channels
-    /** @type {string[]} */
-    let propNames = [];
-    /** @type {number[]} */
-    let propChildren = [];
-    /** @type {number[]} */
-    let propFlags = [];
-    /** @type {number[]} */
-    let listChildren = [];
-    /** @type {number[]} */
-    let condSlots = [];
-    /** @type {Array<(data: any) => boolean>} */
-    let callbacks = [];
-
-    // Validator bit-flag storage (per-node)
+    // ── Validator bit-flag storage (per-node) ──
     let astVHeaders = new Uint32Array(capacity);
     let astVOffset = new Uint32Array(capacity);
+
     /** @type {number[]} */
     let vPayloads = [];
 
+    // ── Unified edge slab ──
+    // Replaces the old propChildren, propFlags, listChildren, condSlots arrays.
+    // All variable-length child pointers are interleaved here.
+    /** @type {number[]} */
+    let astEdges = [];
+
+    // ── Property names (strings can't live in a typed array) ──
+    /** @type {string[]} */
+    let propNames = [];
+
+    // ── Callbacks for enum/const/pattern validators ──
+    /** @type {Array<(data: any) => boolean>} */
+    let callbacks = [];
+
+    // ── $ref resolution ──
     /** @type {Map<number, string>} */
     let unresolvedRefs = new Map();
     /** @type {Map<string, number>} */
@@ -236,7 +349,10 @@ export function parseJsonSchema(schema) {
 
     let nextNodeId = 0;
 
-    // Stack (parallel arrays)
+    // ── Explicit parse stack (parallel arrays) ──
+    /**
+     * @type {Array<JSONSchema | null>}
+     */
     let frameSchema = new Array(MAX_DEPTH);
     let frameNodeId = new Uint32Array(MAX_DEPTH);
     let frameLinkType = new Uint8Array(MAX_DEPTH);
@@ -247,6 +363,8 @@ export function parseJsonSchema(schema) {
     let defIds = [];
     /** @type {string[]} */
     let defNames = [];
+
+    // ── Helpers ──
 
     function growArrays() {
         let newCap = capacity * 2;
@@ -277,6 +395,13 @@ export function parseJsonSchema(schema) {
         return id;
     }
 
+    /**
+     * 
+     * @param {JSONSchema} schemaObj 
+     * @param {number} nodeId 
+     * @param {number} linkType 
+     * @param {number} linkOffset 
+     */
     function pushFrame(schemaObj, nodeId, linkType, linkOffset) {
         frameSchema[tail] = schemaObj;
         frameNodeId[tail] = nodeId;
@@ -285,47 +410,56 @@ export function parseJsonSchema(schema) {
         tail++;
     }
 
+    /**
+     * Wires a completed child node back to its parent structure.
+     * LINK_EDGE  → writes into the unified edge slab.
+     * LINK_CHILD0 → writes into astChild0 (array elem, not inner, etc.).
+     * @param {number} linkType
+     * @param {number} linkOffset
+     * @param {number} nodeId
+     */
     function writeLink(linkType, linkOffset, nodeId) {
         switch (linkType) {
             case LINK_ROOT:
-                break;
-            case LINK_PROP:
-                propChildren[linkOffset] = nodeId;
-                break;
-            case LINK_LIST:
-                listChildren[linkOffset] = nodeId;
-                break;
-            case LINK_ELEM:
-                astChild0[linkOffset] = nodeId;
-                break;
-            case LINK_COND_IF:
-                condSlots[linkOffset] = nodeId;
-                break;
-            case LINK_COND_THEN:
-                condSlots[linkOffset + 1] = nodeId;
-                break;
-            case LINK_COND_ELSE:
-                condSlots[linkOffset + 2] = nodeId;
-                break;
             case LINK_DEF:
                 break;
-            case LINK_INNER:
+            case LINK_EDGE:
+                astEdges[linkOffset] = nodeId;
+                break;
+            case LINK_CHILD0:
                 astChild0[linkOffset] = nodeId;
                 break;
         }
     }
 
-    // --- Pre-scan $defs ---
-    if (typeof schema === 'object' && schema !== null && schema.$defs) {
-        let defKeys = Object.keys(schema.$defs);
-        for (let i = 0; i < defKeys.length; i++) {
-            let name = defKeys[i];
-            let id = allocNode();
-            symbolTable.set('#/$defs/' + name, id);
-            defIds.push(id);
-            defNames.push(name);
-            // Push def schemas — they'll be processed by the main loop
-            pushFrame(schema.$defs[name], id, LINK_DEF, 0);
+    /**
+     * Writes vHeader + payloads onto a node's validator slots.
+     * @param {number} targetNode — the AST node id to attach validators to
+     * @param {number} vHeader — bitmask of V_* flags
+     * @param {number[]} vPayloadArr — payload values in ascending bit order
+     */
+    function writeValidators(targetNode, vHeader, vPayloadArr) {
+        astVHeaders[targetNode] = vHeader;
+        astVOffset[targetNode] = vPayloads.length;
+        for (let i = 0; i < vPayloadArr.length; i++) {
+            vPayloads.push(vPayloadArr[i]);
+        }
+    }
+
+    // Pre-scan $defs — allocate node ids so $ref can resolve them.
+
+    if (typeof schema === 'object' && schema !== null) {
+        let defs = schema.$defs;
+        if (defs !== void 0) {
+            let defKeys = Object.keys(defs);
+            for (let i = 0; i < defKeys.length; i++) {
+                let name = defKeys[i];
+                let id = allocNode();
+                symbolTable.set('#/$defs/' + name, id);
+                defIds.push(id);
+                defNames.push(name);
+                pushFrame(defs[name], id, LINK_DEF, 0);
+            }
         }
     }
 
@@ -333,7 +467,8 @@ export function parseJsonSchema(schema) {
     let rootId = allocNode();
     pushFrame(schema, rootId, LINK_ROOT, 0);
 
-    // --- Main parse loop ---
+    // Phase 1: Iterative depth-first parse
+
     while (tail > 0) {
         tail--;
         let sch = frameSchema[tail];
@@ -341,13 +476,13 @@ export function parseJsonSchema(schema) {
         let linkType = frameLinkType[tail];
         let linkOffset = frameLinkOffset[tail];
 
-        // Clear frame reference to avoid holding schema objects
+        // Release reference so the schema object can be GC'd
         frameSchema[tail] = null;
 
-        // Write the linkage from parent
+        // Wire this node into its parent
         writeLink(linkType, linkOffset, nodeId);
 
-        // --- Boolean schemas ---
+        // ── Boolean schemas ──
         if (sch === true) {
             astKinds[nodeId] = N_PRIM;
             astFlags[nodeId] = (ANY | NULLABLE) >>> 0;
@@ -359,114 +494,138 @@ export function parseJsonSchema(schema) {
             continue;
         }
 
-        // --- $ref ---
-        if (sch.$ref) {
+        if (sch === null) {
+            throw new Error('Compiler error')
+        }
+
+        // ── $ref ──
+        let ref = sch.$ref;
+        if (ref !== void 0) {
             astKinds[nodeId] = N_REF;
-            unresolvedRefs.set(nodeId, sch.$ref);
+            unresolvedRefs.set(nodeId, ref);
             continue;
         }
 
-        // --- Composition keywords ---
-        if ('allOf' in sch) {
-            let items = sch.allOf;
-            let listOffset = listChildren.length;
+        // ── Composition keywords ──
+
+        let allOf = sch.allOf;
+        if (allOf !== void 0) {
+            let edgeBase = astEdges.length;
             astKinds[nodeId] = N_INTERSECT;
-            astChild0[nodeId] = listOffset;
-            astChild1[nodeId] = items.length;
-            for (let i = 0; i < items.length; i++) {
+            astChild0[nodeId] = edgeBase;
+            astChild1[nodeId] = allOf.length;
+            for (let i = 0; i < allOf.length; i++) {
+                let slot = astEdges.length;
+                astEdges.push(0); // placeholder
                 let childId = allocNode();
-                listChildren.push(0); // placeholder
-                pushFrame(items[i], childId, LINK_LIST, listOffset + i);
+                pushFrame(allOf[i], childId, LINK_EDGE, slot);
             }
             continue;
         }
-        if ('anyOf' in sch) {
-            let items = sch.anyOf;
-            let listOffset = listChildren.length;
+
+        let anyOf = sch.anyOf;
+        if (anyOf !== void 0) {
+            let edgeBase = astEdges.length;
             astKinds[nodeId] = N_OR;
-            astChild0[nodeId] = listOffset;
-            astChild1[nodeId] = items.length;
-            for (let i = 0; i < items.length; i++) {
+            astChild0[nodeId] = edgeBase;
+            astChild1[nodeId] = anyOf.length;
+            for (let i = 0; i < anyOf.length; i++) {
+                let slot = astEdges.length;
+                astEdges.push(0);
                 let childId = allocNode();
-                listChildren.push(0); // placeholder
-                pushFrame(items[i], childId, LINK_LIST, listOffset + i);
+                pushFrame(anyOf[i], childId, LINK_EDGE, slot);
             }
             continue;
         }
-        if ('oneOf' in sch) {
-            let items = sch.oneOf;
-            let listOffset = listChildren.length;
+
+        let oneOf = sch.oneOf;
+        if (oneOf !== void 0) {
+            let edgeBase = astEdges.length;
             astKinds[nodeId] = N_EXCLUSIVE;
-            astChild0[nodeId] = listOffset;
-            astChild1[nodeId] = items.length;
-            for (let i = 0; i < items.length; i++) {
+            astChild0[nodeId] = edgeBase;
+            astChild1[nodeId] = oneOf.length;
+            for (let i = 0; i < oneOf.length; i++) {
+                let slot = astEdges.length;
+                astEdges.push(0);
                 let childId = allocNode();
-                listChildren.push(0); // placeholder
-                pushFrame(items[i], childId, LINK_LIST, listOffset + i);
+                pushFrame(oneOf[i], childId, LINK_EDGE, slot);
             }
             continue;
         }
-        if ('not' in sch) {
+
+        let notSchema = sch.not;
+        if (notSchema !== void 0) {
             let childId = allocNode();
             astKinds[nodeId] = N_NOT;
             astChild0[nodeId] = childId;
-            pushFrame(sch.not, childId, LINK_INNER, nodeId);
+            pushFrame(notSchema, childId, LINK_CHILD0, nodeId);
             continue;
         }
-        if ('if' in sch) {
-            let condOffset = condSlots.length;
-            condSlots.push(SENTINEL, SENTINEL, SENTINEL); // if, then, else placeholders
+
+        let ifSchema = sch.if;
+        if (ifSchema !== void 0) {
+            let edgeBase = astEdges.length;
+            astEdges.push(SENTINEL, SENTINEL, SENTINEL); // [if, then, else]
             astKinds[nodeId] = N_CONDITIONAL;
-            astChild0[nodeId] = condOffset;
+            astChild0[nodeId] = edgeBase;
 
             let ifId = allocNode();
-            pushFrame(sch.if, ifId, LINK_COND_IF, condOffset);
+            pushFrame(ifSchema, ifId, LINK_EDGE, edgeBase);
 
-            if (sch.then !== undefined) {
+            let thenSchema = sch.then;
+            if (thenSchema !== void 0) {
                 let thenId = allocNode();
-                pushFrame(sch.then, thenId, LINK_COND_THEN, condOffset);
+                pushFrame(thenSchema, thenId, LINK_EDGE, edgeBase + 1);
             }
-            if (sch.else !== undefined) {
+            let elseSchema = sch.else;
+            if (elseSchema !== void 0) {
                 let elseId = allocNode();
-                pushFrame(sch.else, elseId, LINK_COND_ELSE, condOffset);
+                pushFrame(elseSchema, elseId, LINK_EDGE, edgeBase + 2);
             }
             continue;
         }
 
-        // --- type keyword + validators + structural keywords ---
-        let { vHeader, payloads: vPayloadArr, callbacks: cbs } = collectValidators(sch);
-        let hasType = 'type' in sch;
-        let hasVHeader = vHeader !== 0;
-        let hasCbs = cbs.length > 0;
-        let hasProps = 'properties' in sch || 'required' in sch;
-        let hasItems = 'items' in sch;
+        // ── Type + validators + structural keywords ──
 
+        let { vHeader, payloads: vPayloadArr, callbacks: cbs } = collectValidators(sch);
+        let typeVal = sch.type;
+        const hasType = typeVal !== void 0;
+        const hasVHeader = vHeader !== 0;
+        const hasCbs = cbs.length > 0;
+
+        let props = sch.properties;
+        let required = sch.required;
+        let items = sch.items;
+        const hasProps = props !== void 0 || required !== void 0;
+        const hasItems = items !== void 0;
+
+        // Empty schema {} → matches everything
         if (!hasType && !hasVHeader && !hasCbs && !hasProps && !hasItems) {
-            // Empty schema {} → matches everything
             astKinds[nodeId] = N_PRIM;
             astFlags[nodeId] = (ANY | NULLABLE) >>> 0;
             continue;
         }
 
-        // Resolve type string for structural dispatch
+        // Resolve single type string for structural dispatch
         let typeStr = null;
         if (hasType) {
-            let t = sch.type;
-            if (typeof t === 'string') typeStr = t;
-            else if (t.length === 1) typeStr = t[0];
+            if (typeof typeVal === 'string') {
+                typeStr = typeVal;
+            } else if (Array.isArray(typeVal) && typeVal.length === 1) {
+                typeStr = typeVal[0];
+            }
         }
 
-        // Build the type node
+        // The node id where the "inner type" is written.
+        // If callbacks exist, we create an N_REFINE wrapper first.
         let typeNodeId = nodeId;
 
-        // If we have callbacks (enum/const/pattern), wrap in N_REFINE
+        // ── Callbacks → wrap in N_REFINE ──
         if (hasCbs) {
             let fn = cbs.length === 1 ? cbs[0] :
                 /** @param {*} d */ (d) => {
                     for (let i = 0; i < cbs.length; i++) {
-                        if (!cbs[i](d)) {
-                            return false;
-                        }
+                        if (!cbs[i](d)) return false;
                     }
                     return true;
                 };
@@ -481,7 +640,7 @@ export function parseJsonSchema(schema) {
                 astChild0[nodeId] = innerId;
                 typeNodeId = innerId;
             } else {
-                // No type, no bit-flag validators → inner is "any"
+                // Standalone callback (enum/const without type) → inner = "any"
                 let anyId = allocNode();
                 astKinds[anyId] = N_PRIM;
                 astFlags[anyId] = (ANY | NULLABLE) >>> 0;
@@ -490,17 +649,17 @@ export function parseJsonSchema(schema) {
             }
         }
 
-        // --- Object structural node (properties / required) ---
+        // ── Object structural node (properties / required) ──
         if (hasProps) {
-            let props = sch.properties || Object.create(null);
-            let propKeys = Object.keys(props);
-            let requiredSet = sch.required ? new Set(sch.required) : new Set();
+            let propObj = props || Object.create(null);
+            let propKeys = Object.keys(propObj);
+            let requiredSet = required ? new Set(required) : new Set();
 
-            // Add required-only keys (not in properties) with "any" schema
-            if (sch.required) {
-                for (let i = 0; i < sch.required.length; i++) {
-                    let r = sch.required[i];
-                    if (!Object.prototype.hasOwnProperty.call(props, r)) {
+            // Add required-only keys not already in properties
+            if (required) {
+                for (let i = 0; i < required.length; i++) {
+                    let r = required[i];
+                    if (!hop.call(propObj, r)) {
                         propKeys.push(r);
                     }
                 }
@@ -510,138 +669,116 @@ export function parseJsonSchema(schema) {
             let objNodeId;
 
             if (isExplicitObject) {
-                // type: "object" — N_OBJECT directly on typeNodeId
                 objNodeId = typeNodeId;
             } else {
-                // No explicit type — wrap in conditional guard
-                // N_CONDITIONAL: if (is object) then (validate props) else (pass)
+                // No explicit type → conditional guard:
+                // if (is object) then (validate) else (pass)
                 objNodeId = allocNode();
                 let ifId = allocNode();
                 astKinds[ifId] = N_PRIM;
                 astFlags[ifId] = OBJECT;
 
-                let condOffset = condSlots.length;
-                condSlots.push(ifId, objNodeId, SENTINEL);
+                let condBase = astEdges.length;
+                astEdges.push(ifId, objNodeId, SENTINEL);
                 astKinds[typeNodeId] = N_CONDITIONAL;
-                astChild0[typeNodeId] = condOffset;
+                astChild0[typeNodeId] = condBase;
             }
 
-            // Create N_OBJECT on objNodeId
-            let offset = propNames.length;
+            // Write N_OBJECT on objNodeId
+            let edgeBase = astEdges.length;
             astKinds[objNodeId] = N_OBJECT;
-            astChild0[objNodeId] = offset;
+            astChild0[objNodeId] = edgeBase;
             astChild1[objNodeId] = propKeys.length;
 
             for (let i = 0; i < propKeys.length; i++) {
                 let key = propKeys[i];
-                let childSchema = key in props ? props[key] : true;
+                let childSchema = hop.call(propObj, key) ? propObj[key] : true;
                 let childId = allocNode();
+
+                let nameIdx = propNames.length;
                 propNames.push(key);
-                propChildren.push(0); // placeholder
-                propFlags.push(requiredSet.has(key) ? 0 : 1);
-                pushFrame(childSchema, childId, LINK_PROP, offset + i);
+
+                astEdges.push(nameIdx);       // slot 0: name index
+                let childSlot = astEdges.length;
+                astEdges.push(0);             // slot 1: child node id (placeholder)
+                astEdges.push(requiredSet.has(key) ? 0 : 1); // slot 2: flags
+
+                pushFrame(childSchema, childId, LINK_EDGE, childSlot);
             }
 
-            // Store validators on the object node
-            if (hasVHeader) {
-                astVHeaders[objNodeId] = vHeader;
-                astVOffset[objNodeId] = vPayloads.length;
-                for (let i = 0; i < vPayloadArr.length; i++) {
-                    vPayloads.push(vPayloadArr[i]);
-                }
-            }
+            // Attach validators (minProperties, maxProperties, etc.)
+            if (hasVHeader) writeValidators(objNodeId, vHeader, vPayloadArr);
             continue;
         }
 
-        // --- Array structural node (items) ---
+        // ── Array structural node (items) ──
         if (hasItems) {
             let isExplicitArray = typeStr === 'array';
             let arrNodeId;
 
             if (isExplicitArray) {
-                // type: "array" — N_ARRAY directly on typeNodeId
                 arrNodeId = typeNodeId;
             } else {
-                // No explicit type — wrap in conditional guard
+                // No explicit type → conditional guard
                 arrNodeId = allocNode();
                 let ifId = allocNode();
                 astKinds[ifId] = N_PRIM;
                 astFlags[ifId] = ARRAY;
 
-                let condOffset = condSlots.length;
-                condSlots.push(ifId, arrNodeId, SENTINEL);
+                let condBase = astEdges.length;
+                astEdges.push(ifId, arrNodeId, SENTINEL);
                 astKinds[typeNodeId] = N_CONDITIONAL;
-                astChild0[typeNodeId] = condOffset;
+                astChild0[typeNodeId] = condBase;
             }
 
-            // Create N_ARRAY on arrNodeId
+            // Write N_ARRAY on arrNodeId
             let elemId = allocNode();
             astKinds[arrNodeId] = N_ARRAY;
             astChild0[arrNodeId] = elemId;
-            pushFrame(sch.items, elemId, LINK_ELEM, arrNodeId);
+            pushFrame(items, elemId, LINK_CHILD0, arrNodeId);
 
-            // Store validators on the array node
-            if (hasVHeader) {
-                astVHeaders[arrNodeId] = vHeader;
-                astVOffset[arrNodeId] = vPayloads.length;
-                for (let i = 0; i < vPayloadArr.length; i++) {
-                    vPayloads.push(vPayloadArr[i]);
-                }
-            }
+            // Attach validators (minItems, maxItems, uniqueItems, etc.)
+            if (hasVHeader) writeValidators(arrNodeId, vHeader, vPayloadArr);
             continue;
         }
 
-        // --- Pure type / validator node (no structural keywords) ---
+        // ── Pure type / validator node (no structural keywords) ──
 
-        // Store bit-flag validators on the type node
-        if (hasVHeader) {
-            astVHeaders[typeNodeId] = vHeader;
-            astVOffset[typeNodeId] = vPayloads.length;
-            for (let i = 0; i < vPayloadArr.length; i++) {
-                vPayloads.push(vPayloadArr[i]);
-            }
-        }
+        if (hasVHeader) writeValidators(typeNodeId, vHeader, vPayloadArr);
 
-        // Set the type on the type node
         if (hasType) {
-            let type = sch.type;
-            if (typeof type === 'string') {
+            if (typeof typeVal === 'string') {
                 astKinds[typeNodeId] = N_PRIM;
-                astFlags[typeNodeId] = mapSingleTypePrim(type) >>> 0;
-            } else if (type.length === 1) {
+                astFlags[typeNodeId] = mapSingleTypePrim(typeVal) >>> 0;
+            } else if (typeVal.length === 1) {
                 astKinds[typeNodeId] = N_PRIM;
-                astFlags[typeNodeId] = mapSingleTypePrim(type[0]) >>> 0;
+                astFlags[typeNodeId] = mapSingleTypePrim(typeVal[0]) >>> 0;
             } else {
                 let merged = 0;
-                for (let i = 0; i < type.length; i++) {
-                    merged |= mapSingleTypePrim(type[i]);
+                for (let i = 0; i < typeVal.length; i++) {
+                    merged |= mapSingleTypePrim(typeVal[i]);
                 }
                 astKinds[typeNodeId] = N_PRIM;
                 astFlags[typeNodeId] = merged >>> 0;
             }
         } else {
-            // Has validators but no type → matches everything
+            // Validators but no type → matches any type
             astKinds[typeNodeId] = N_PRIM;
             astFlags[typeNodeId] = (ANY | NULLABLE) >>> 0;
         }
     }
 
-    // --- Link pass: resolve $refs ---
+    // Phase 2: Resolve $ref nodes
+
     for (let [nodeId, uri] of unresolvedRefs) {
-        let targetId;
-        if (uri.startsWith('#/$defs/')) {
-            targetId = symbolTable.get(uri);
-        } else {
-            // Try direct lookup first, then URI resolution
-            targetId = symbolTable.get(uri);
-        }
+        let targetId = symbolTable.get(uri);
         if (targetId === undefined) {
             throw new Error('Unresolved $ref: ' + uri);
         }
         astChild0[nodeId] = targetId;
     }
 
-    // Trim arrays to actual size
+    // Trim typed arrays to actual node count
     let nc = nextNodeId;
 
     return {
@@ -651,12 +788,9 @@ export function parseJsonSchema(schema) {
         astChild1: astChild1.subarray(0, nc),
         astVHeaders: astVHeaders.subarray(0, nc),
         astVOffset: astVOffset.subarray(0, nc),
+        astEdges: new Uint32Array(astEdges),
         vPayloads,
         propNames,
-        propChildren,
-        propFlags,
-        listChildren,
-        condSlots,
         callbacks,
         rootId,
         defIds,

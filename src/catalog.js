@@ -861,7 +861,9 @@ function catalog(cfg) {
      * @returns {boolean}
      */
     function _is(data, typedef, strict) {
-        if (typedef & ANY) return true;
+        if (typedef & ANY) {
+            return true;
+        }
         if (data == null) {
             return (data === null ? (typedef & NULLABLE) : (typedef & OPTIONAL)) !== 0;
         }

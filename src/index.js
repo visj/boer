@@ -8,6 +8,7 @@ import {
     catalog
 } from "./catalog.js";
 
+/** @type {uvd.cat.Catalog<uvd.UVD>} */
 const uvd = catalog();
 
 export const t = uvd.t;

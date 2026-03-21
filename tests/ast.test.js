@@ -10,24 +10,27 @@ import {
     N_EXCLUSIVE, N_INTERSECT, N_NOT, N_CONDITIONAL, N_REF,
 } from '../src/schema.js';
 
+const SENTINEL = 0xFFFFFFFF;
+
 /**
  * Helper: builds a minimal FlatAst programmatically.
- * Provides an imperative API to allocate nodes and connect them.
+ *
+ * Uses the same unified edge slab layout as parseJsonSchema():
+ *   Object edges:  [nameIdx, childId, flags] per property
+ *   List edges:    [childId] per branch
+ *   Cond edges:    [ifId, thenId, elseId]
  */
 function flatAstBuilder() {
-    let astKinds = new Uint8Array(64);
-    let astFlags = new Uint32Array(64);
-    let astChild0 = new Uint32Array(64);
-    let astChild1 = new Uint32Array(64);
+    let astKinds    = new Uint8Array(64);
+    let astFlags    = new Uint32Array(64);
+    let astChild0   = new Uint32Array(64);
+    let astChild1   = new Uint32Array(64);
     let astVHeaders = new Uint32Array(64);
-    let astVOffset = new Uint32Array(64);
-    let vPayloads = [];
-    let propNames = [];
-    let propChildren = [];
-    let propFlags = [];
-    let listChildren = [];
-    let condSlots = [];
-    let callbacks = [];
+    let astVOffset  = new Uint32Array(64);
+    let vPayloads   = [];
+    let propNames   = [];
+    let edges       = [];
+    let callbacks   = [];
     let nextId = 0;
 
     function alloc() { return nextId++; }
@@ -42,109 +45,98 @@ function flatAstBuilder() {
     function object(props, opts) {
         let id = alloc();
         let keys = Object.keys(props);
-        let offset = propNames.length;
         let requiredSet = opts && opts.required ? new Set(opts.required) : null;
+
+        let edgeBase = edges.length;
         for (let i = 0; i < keys.length; i++) {
+            let nameIdx = propNames.length;
             propNames.push(keys[i]);
-            propChildren.push(props[keys[i]]);
-            propFlags.push(requiredSet ? (requiredSet.has(keys[i]) ? 0 : 1) : 0);
+
+            edges.push(nameIdx);          // slot 0: name index
+            edges.push(props[keys[i]]);   // slot 1: child node id
+            edges.push(requiredSet ? (requiredSet.has(keys[i]) ? 0 : 1) : 0); // slot 2: flags
         }
-        astKinds[id] = N_OBJECT;
-        astChild0[id] = offset;
+
+        astKinds[id]  = N_OBJECT;
+        astChild0[id] = edgeBase;
         astChild1[id] = keys.length;
         return id;
     }
 
     function array(elemId) {
         let id = alloc();
-        astKinds[id] = N_ARRAY;
+        astKinds[id]  = N_ARRAY;
         astChild0[id] = elemId;
         return id;
-    }
-
-    function union(discKey, variants) {
-        // Discriminated unions aren't in the flat AST parser (they're a programmatic API feature).
-        // We'll skip this for now — the compiler doesn't handle K_UNION from flat AST.
-        // Instead, test via the catalog's union() API directly.
-        throw new Error('union not supported in FlatAst — use catalog API');
     }
 
     function refine(innerId, fn) {
         let id = alloc();
         let cbIdx = callbacks.length;
         callbacks.push(fn);
-        astKinds[id] = N_REFINE;
+        astKinds[id]  = N_REFINE;
         astChild0[id] = innerId;
         astChild1[id] = cbIdx;
         return id;
     }
 
-    function tuple(childIds) {
-        // Tuple is a catalog-level concept (K_TUPLE), not a schema parser concept.
-        // The flat AST doesn't have N_TUPLE. Use catalog API for tuples.
-        throw new Error('tuple not supported in FlatAst — use catalog API');
-    }
-
-    function record(valueId) {
-        // Same as tuple — record is catalog-level.
-        throw new Error('record not supported in FlatAst — use catalog API');
-    }
-
     function or(childIds) {
         let id = alloc();
-        let offset = listChildren.length;
+        let edgeBase = edges.length;
         for (let i = 0; i < childIds.length; i++) {
-            listChildren.push(childIds[i]);
+            edges.push(childIds[i]);
         }
-        astKinds[id] = N_OR;
-        astChild0[id] = offset;
+        astKinds[id]  = N_OR;
+        astChild0[id] = edgeBase;
         astChild1[id] = childIds.length;
         return id;
     }
 
     function exclusive(childIds) {
         let id = alloc();
-        let offset = listChildren.length;
+        let edgeBase = edges.length;
         for (let i = 0; i < childIds.length; i++) {
-            listChildren.push(childIds[i]);
+            edges.push(childIds[i]);
         }
-        astKinds[id] = N_EXCLUSIVE;
-        astChild0[id] = offset;
+        astKinds[id]  = N_EXCLUSIVE;
+        astChild0[id] = edgeBase;
         astChild1[id] = childIds.length;
         return id;
     }
 
     function intersect(childIds) {
         let id = alloc();
-        let offset = listChildren.length;
+        let edgeBase = edges.length;
         for (let i = 0; i < childIds.length; i++) {
-            listChildren.push(childIds[i]);
+            edges.push(childIds[i]);
         }
-        astKinds[id] = N_INTERSECT;
-        astChild0[id] = offset;
+        astKinds[id]  = N_INTERSECT;
+        astChild0[id] = edgeBase;
         astChild1[id] = childIds.length;
         return id;
     }
 
     function not(innerId) {
         let id = alloc();
-        astKinds[id] = N_NOT;
+        astKinds[id]  = N_NOT;
         astChild0[id] = innerId;
         return id;
     }
 
     function conditional(ifId, thenId, elseId) {
         let id = alloc();
-        let offset = condSlots.length;
-        condSlots.push(ifId, thenId !== undefined ? thenId : 0xFFFFFFFF, elseId !== undefined ? elseId : 0xFFFFFFFF);
-        astKinds[id] = N_CONDITIONAL;
-        astChild0[id] = offset;
+        let edgeBase = edges.length;
+        edges.push(ifId);
+        edges.push(thenId !== undefined ? thenId : SENTINEL);
+        edges.push(elseId !== undefined ? elseId : SENTINEL);
+        astKinds[id]  = N_CONDITIONAL;
+        astChild0[id] = edgeBase;
         return id;
     }
 
     function ref(targetId) {
         let id = alloc();
-        astKinds[id] = N_REF;
+        astKinds[id]  = N_REF;
         astChild0[id] = targetId;
         return id;
     }
@@ -152,18 +144,15 @@ function flatAstBuilder() {
     function build(rootId, defIds = [], defNames = []) {
         let nc = nextId;
         return {
-            astKinds: astKinds.subarray(0, nc),
-            astFlags: astFlags.subarray(0, nc),
-            astChild0: astChild0.subarray(0, nc),
-            astChild1: astChild1.subarray(0, nc),
+            astKinds:    astKinds.subarray(0, nc),
+            astFlags:    astFlags.subarray(0, nc),
+            astChild0:   astChild0.subarray(0, nc),
+            astChild1:   astChild1.subarray(0, nc),
             astVHeaders: astVHeaders.subarray(0, nc),
-            astVOffset: astVOffset.subarray(0, nc),
+            astVOffset:  astVOffset.subarray(0, nc),
+            astEdges:    new Uint32Array(edges),
             vPayloads,
             propNames,
-            propChildren,
-            propFlags,
-            listChildren,
-            condSlots,
             callbacks,
             rootId,
             defIds,
@@ -357,11 +346,9 @@ describe('ast: compile refs (defs)', () => {
     test('simple def reference', () => {
         let cat = catalog();
         let b = flatAstBuilder();
-        // Def: address = { street: STRING, city: STRING }
         let streetNode = b.prim(STRING);
         let cityNode = b.prim(STRING);
         let addressNode = b.object({ street: streetNode, city: cityNode });
-        // Root: { name: STRING, address: ref(0) }
         let nameNode = b.prim(STRING);
         let addrRef = b.ref(addressNode);
         let root = b.object({ name: nameNode, address: addrRef });
@@ -388,14 +375,11 @@ describe('ast: compile refs (defs)', () => {
     test('multiple defs', () => {
         let cat = catalog();
         let b = flatAstBuilder();
-        // Def 0: User = { name: STRING }
         let userName = b.prim(STRING);
         let userNode = b.object({ name: userName });
-        // Def 1: Comment = { text: STRING, author: ref(User) }
         let commentText = b.prim(STRING);
         let authorRef = b.ref(userNode);
         let commentNode = b.object({ text: commentText, author: authorRef });
-        // Root: { user: ref(0), comment: ref(1) }
         let userRef = b.ref(userNode);
         let commentRef = b.ref(commentNode);
         let root = b.object({ user: userRef, comment: commentRef });
