@@ -4,8 +4,11 @@ import {
     STRING, BIGINT, DATE, URI, PRIMITIVE
 } from 'uvd/catalog';
 import { catalog } from 'uvd/catalog';
+import { allocators } from 'uvd/alloc';
 
-const { t, is, conform } = catalog();
+const cat = catalog();
+const { object } = allocators(cat);
+const { is, conform } = cat;
 
 describe('validate: primitives', () => {
     test('STRING accepts strings only', () => {
@@ -327,42 +330,42 @@ describe('validate: primitive type unions', () => {
 describe('parse: primitive type unions', () => {
     test('DATE | STRING: valid date string becomes Date', () => {
         let obj = { v: '2024-01-15' };
-        let schema = t.object({ v: DATE | STRING });
+        let schema = object({ v: DATE | STRING });
         expect(conform(obj, schema)).toBe(true);
         expect(obj.v).toBeInstanceOf(Date);
     });
 
     test('DATE | STRING: invalid date string stays string', () => {
         let obj = { v: 'not-a-date' };
-        let schema = t.object({ v: DATE | STRING });
+        let schema = object({ v: DATE | STRING });
         expect(conform(obj, schema)).toBe(true);
         expect(typeof obj.v).toBe('string');
     });
 
     test('URI | STRING: valid URL string becomes URL', () => {
         let obj = { v: 'https://vilhelm.se' };
-        let schema = t.object({ v: URI | STRING });
+        let schema = object({ v: URI | STRING });
         expect(conform(obj, schema)).toBe(true);
         expect(obj.v).toBeInstanceOf(URL);
     });
 
     test('URI | STRING: invalid URL stays string', () => {
         let obj = { v: 'not a url' };
-        let schema = t.object({ v: URI | STRING });
+        let schema = object({ v: URI | STRING });
         expect(conform(obj, schema)).toBe(true);
         expect(typeof obj.v).toBe('string');
     });
 
     test('NUMBER | STRING: number stays number', () => {
         let obj = { v: 42 };
-        let schema = t.object({ v: NUMBER | STRING });
+        let schema = object({ v: NUMBER | STRING });
         expect(conform(obj, schema)).toBe(true);
         expect(obj.v).toBe(42);
     });
 
     test('NUMBER | STRING: string stays string', () => {
         let obj = { v: 'hello' };
-        let schema = t.object({ v: NUMBER | STRING });
+        let schema = object({ v: NUMBER | STRING });
         expect(conform(obj, schema)).toBe(true);
         expect(obj.v).toBe('hello');
     });
@@ -370,20 +373,20 @@ describe('parse: primitive type unions', () => {
     test('BIGINT | NUMBER: integer becomes bigint (BIGINT checked first after NUMBER)', () => {
         // When NUMBER is in the mask, a number stays a number.
         let obj = { v: 42 };
-        let schema = t.object({ v: BIGINT | NUMBER });
+        let schema = object({ v: BIGINT | NUMBER });
         expect(conform(obj, schema)).toBe(true);
         expect(typeof obj.v).toBe('number');
     });
 
     test('DATE | STRING | NULL: null allowed', () => {
         let obj = { v: null };
-        let schema = t.object({ v: DATE | STRING | NULL });
+        let schema = object({ v: DATE | STRING | NULL });
         expect(conform(obj, schema)).toBe(true);
     });
 
     test('DATE | NUMBER: number timestamp becomes Date', () => {
         let obj = { v: 1705276800000 };
-        let schema = t.object({ v: DATE | NUMBER });
+        let schema = object({ v: DATE | NUMBER });
         expect(conform(obj, schema)).toBe(true);
         // NUMBER takes priority over DATE for numbers in parse mode
         expect(typeof obj.v).toBe('number');

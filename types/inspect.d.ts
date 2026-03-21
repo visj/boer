@@ -9,14 +9,18 @@ declare module "./catalog.js" {
     export interface Catalog<R> {
         readonly __heap: {
             readonly HEAP: Heap;
-            readonly VOL_HEAP: Heap;
+            readonly SCR_HEAP: Heap;
             readonly DICT: Dictionary;
+            readonly CALLBACKS: Array<(...args: any[]) => any>;
+            readonly REGEX_CACHE: RegExp[];
+            readonly S_CALLBACKS: Array<(...args: any[]) => any>;
+            readonly S_REGEX_CACHE: RegExp[];
 
             /** Allocates a specific kind on the heap. */
             readonly allocKind: (
                 header: number,
                 registryIndex: number,
-                volatile: boolean,
+                scratch: boolean,
                 slots: number
             ) => number;
 
@@ -24,13 +28,13 @@ declare module "./catalog.js" {
             readonly allocValidator: (
                 vHeader: number,
                 payloads: number[],
-                volatile: boolean
+                scratch: boolean
             ) => number;
 
             /** Allocate entries on the SLAB and register in a typed registry (TUPLES or MATCHES). */
             readonly allocOnSlab: (
                 types: number[],
-                volatile: boolean,
+                scratch: boolean,
                 kind: 'tuple' | 'match'
             ) => number;
 
@@ -41,13 +45,13 @@ declare module "./catalog.js" {
             readonly registerObject: (
                 resolved: number[],
                 count: number,
-                volatile: boolean
+                scratch: boolean
             ) => number;
 
             /** Registers an element type in ARRAYS. */
             readonly registerArray: (
                 elemType: number,
-                volatile: boolean
+                scratch: boolean
             ) => number;
 
             /** Writes variant pairs to SLAB, registers in UNIONS. */
@@ -55,7 +59,7 @@ declare module "./catalog.js" {
                 resolved: number[],
                 count: number,
                 discKeyId: number,
-                volatile: boolean
+                scratch: boolean
             ) => number;
         }
     }

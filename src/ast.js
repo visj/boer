@@ -1,6 +1,6 @@
 /// <reference path="../global.d.ts" />
 import {
-    COMPLEX, NULLABLE, OPTIONAL, VOLATILE,
+    COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION, K_REFINE, K_TUPLE,
     K_RECORD, K_OR, K_EXCLUSIVE, K_INTERSECT, K_NOT, K_CONDITIONAL,
     HAS_VALIDATOR, sortByKeyId,
@@ -81,7 +81,7 @@ export function compile(cat, ast) {
     let registerArray  = heap.registerArray;
     let registerUnion  = heap.registerUnion;
 
-    let volatile = false;
+    let scratch = false;
 
     let {
         astKinds, astFlags, astChild0, astChild1,
@@ -125,7 +125,7 @@ export function compile(cat, ast) {
         for (let i = 0; i < count; i++) {
             nodePayloads[i] = vPayloads[off + i];
         }
-        return [true, allocValidator(vHeader, nodePayloads, volatile)];
+        return [true, allocValidator(vHeader, nodePayloads, scratch)];
     }
 
     // ── Main compilation loop ──
@@ -143,7 +143,7 @@ export function compile(cat, ast) {
             if (hasVal) {
                 let primBits = astFlags[nodeId];
                 let kindHeader = K_PRIMITIVE | HAS_VALIDATOR | primBits;
-                let kindPtr = allocKind(kindHeader, valIdx, volatile, 2);
+                let kindPtr = allocKind(kindHeader, valIdx, scratch, 2);
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
             } else {
                 astCompiled[nodeId] = astFlags[nodeId];
@@ -262,11 +262,11 @@ export function compile(cat, ast) {
                 }
                 sortByKeyId(resolved);
 
-                let objId = registerObject(resolved, count, volatile);
+                let objId = registerObject(resolved, count, scratch);
                 let [hasVal, valIdx] = compileValidator(nodeId);
                 let kindHeader = hasVal ? (K_OBJECT | HAS_VALIDATOR) : K_OBJECT;
                 let slots = hasVal ? 3 : 2;
-                let kindPtr = allocKind(kindHeader, objId, volatile, slots);
+                let kindPtr = allocKind(kindHeader, objId, scratch, slots);
                 if (hasVal) HEAP.KINDS[kindPtr + 2] = valIdx;
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
                 break;
@@ -274,11 +274,11 @@ export function compile(cat, ast) {
 
             case N_ARRAY: {
                 let elemType = astCompiled[astChild0[nodeId]];
-                let arrId = registerArray(elemType, volatile);
+                let arrId = registerArray(elemType, scratch);
                 let [hasVal, valIdx] = compileValidator(nodeId);
                 let kindHeader = hasVal ? (K_ARRAY | HAS_VALIDATOR) : K_ARRAY;
                 let slots = hasVal ? 3 : 2;
-                let kindPtr = allocKind(kindHeader, arrId, volatile, slots);
+                let kindPtr = allocKind(kindHeader, arrId, scratch, slots);
                 if (hasVal) HEAP.KINDS[kindPtr + 2] = valIdx;
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
                 break;
@@ -301,8 +301,8 @@ export function compile(cat, ast) {
                 if (allPrimitive) {
                     astCompiled[nodeId] = merged >>> 0;
                 } else {
-                    let matchId = allocOnSlab(types, volatile, 'match');
-                    let kindPtr = allocKind(K_OR, matchId, volatile, 2);
+                    let matchId = allocOnSlab(types, scratch, 'match');
+                    let kindPtr = allocKind(K_OR, matchId, scratch, 2);
                     let flags = COMPLEX | kindPtr;
                     for (let i = 0; i < types.length; i++) {
                         if (types[i] & NULLABLE) flags |= NULLABLE;
@@ -320,8 +320,8 @@ export function compile(cat, ast) {
                 for (let i = 0; i < count; i++) {
                     types[i] = astCompiled[astEdges[offset + i]];
                 }
-                let matchId = allocOnSlab(types, volatile, 'match');
-                let kindPtr = allocKind(K_EXCLUSIVE, matchId, volatile, 2);
+                let matchId = allocOnSlab(types, scratch, 'match');
+                let kindPtr = allocKind(K_EXCLUSIVE, matchId, scratch, 2);
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
                 break;
             }
@@ -333,15 +333,15 @@ export function compile(cat, ast) {
                 for (let i = 0; i < count; i++) {
                     types[i] = astCompiled[astEdges[offset + i]];
                 }
-                let matchId = allocOnSlab(types, volatile, 'match');
-                let kindPtr = allocKind(K_INTERSECT, matchId, volatile, 2);
+                let matchId = allocOnSlab(types, scratch, 'match');
+                let kindPtr = allocKind(K_INTERSECT, matchId, scratch, 2);
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
                 break;
             }
 
             case N_NOT: {
                 let innerType = astCompiled[astChild0[nodeId]];
-                let kindPtr = allocKind(K_NOT, innerType >>> 0, volatile, 2);
+                let kindPtr = allocKind(K_NOT, innerType >>> 0, scratch, 2);
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
                 break;
             }
@@ -352,8 +352,8 @@ export function compile(cat, ast) {
                 let thenType = astEdges[base + 1] !== SENTINEL ? astCompiled[astEdges[base + 1]] : 0;
                 let elseType = astEdges[base + 2] !== SENTINEL ? astCompiled[astEdges[base + 2]] : 0;
                 let types = [ifType, thenType, elseType];
-                let matchId = allocOnSlab(types, volatile, 'match');
-                let kindPtr = allocKind(K_CONDITIONAL, matchId, volatile, 2);
+                let matchId = allocOnSlab(types, scratch, 'match');
+                let kindPtr = allocKind(K_CONDITIONAL, matchId, scratch, 2);
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
                 break;
             }
@@ -363,7 +363,7 @@ export function compile(cat, ast) {
                 let cbIdx = astChild1[nodeId];
                 let callbacksArr = HEAP.CALLBACKS;
                 let callbackIdx = callbacksArr.push(callbacks[cbIdx]) - 1;
-                let kindPtr = allocKind(K_REFINE, innerType >>> 0, volatile, 3);
+                let kindPtr = allocKind(K_REFINE, innerType >>> 0, scratch, 3);
                 HEAP.KINDS[kindPtr + 2] = callbackIdx;
                 let flags = COMPLEX | kindPtr;
                 if (innerType & NULLABLE) flags |= NULLABLE;

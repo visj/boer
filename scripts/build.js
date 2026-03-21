@@ -18,6 +18,7 @@ async function buildFormat(format, ext, isModule) {
         input: {
             index: 'src/index.js',
             catalog: 'src/catalog.js',
+            alloc: 'src/alloc.js',
             ast: 'src/ast.js',
             inspect: 'src/inspect.js',
             schema: 'src/schema.js'

@@ -4,8 +4,11 @@ import {
     STRICT_DELETE
 } from 'uvd';
 import { catalog } from 'uvd/catalog';
+import { allocators } from 'uvd/alloc';
 
-const { t, is, conform } = catalog();
+const cat = catalog();
+const { object, array, union } = allocators(cat);
+const { is, conform } = cat;
 
 describe('stress: SLAB growth beyond initial 4096', () => {
     test('register 300 objects with 8 fields each (4800 slab entries)', () => {
@@ -15,7 +18,7 @@ describe('stress: SLAB growth beyond initial 4096', () => {
             for (let j = 0; j < 8; j++) {
                 def['slab_field_' + i + '_' + j] = NUMBER;
             }
-            schemas.push(t.object(def));
+            schemas.push(object(def));
         }
 
         // Validate the first, middle, and last schema
@@ -48,7 +51,7 @@ describe('stress: SLAB growth beyond initial 4096', () => {
             def['big_field_' + i] = (i % 2 === 0) ? NUMBER : STRING;
             obj['big_field_' + i] = (i % 2 === 0) ? i : 'val_' + i;
         }
-        let schema = t.object(def);
+        let schema = object(def);
         expect(is(obj, schema)).toBe(true);
 
         // Flip one type
@@ -61,7 +64,7 @@ describe('stress: OBJECTS registry growth beyond 256', () => {
     test('register 500 objects and validate all of them', () => {
         let schemas = [];
         for (let i = 0; i < 500; i++) {
-            schemas.push(t.object({ ['obj_reg_' + i]: NUMBER }));
+            schemas.push(object({ ['obj_reg_' + i]: NUMBER }));
         }
 
         // Validate first, middle, last
@@ -79,7 +82,7 @@ describe('stress: ARRAYS registry growth beyond 128', () => {
         let arrTypes = [];
         for (let i = 0; i < 200; i++) {
             let elemType = (i % 3 === 0) ? NUMBER : (i % 3 === 1) ? STRING : BOOLEAN;
-            arrTypes.push(t.array(elemType));
+            arrTypes.push(array(elemType));
         }
 
         expect(is([1, 2, 3], arrTypes[0])).toBe(true);
@@ -101,11 +104,11 @@ describe('stress: key dictionary growth past 255 (U8 → U16 discriminator upgra
         for (let i = 0; i < 270; i++) {
             bigDef['dictkey_' + i] = NUMBER;
         }
-        let bigSchema = t.object(bigDef);
+        let bigSchema = object(bigDef);
 
-        let D = t.union('disc_type', {
-            alpha: t.object({ disc_type: STRING, alpha_val: NUMBER }),
-            beta: t.object({ disc_type: STRING, beta_val: STRING })
+        let D = union('disc_type', {
+            alpha: object({ disc_type: STRING, alpha_val: NUMBER }),
+            beta: object({ disc_type: STRING, beta_val: STRING })
         });
 
         expect(is({ disc_type: 'alpha', alpha_val: 42 }, D)).toBe(true);
@@ -124,9 +127,9 @@ describe('stress: discriminated union registry growth beyond 64', () => {
     test('register 100 discriminated unions and validate', () => {
         let discs = [];
         for (let i = 0; i < 100; i++) {
-            let typeA = t.object({ du_kind: STRING, du_val_a_: NUMBER });
-            let typeB = t.object({ du_kind: STRING, du_val_b_: STRING });
-            discs.push(t.union(
+            let typeA = object({ du_kind: STRING, du_val_a_: NUMBER });
+            let typeB = object({ du_kind: STRING, du_val_b_: STRING });
+            discs.push(union(
                 'du_kind',
                 { ['opt_a_' + i]: typeA, ['opt_b_' + i]: typeB }
             ));
@@ -150,7 +153,7 @@ describe('stress: deeply nested inline objects', () => {
         for (let i = 1; i <= 9; i++) {
             def = { ['l' + i]: def };
         }
-        let schema = t.object(def);
+        let schema = object(def);
 
         let obj = { l9: { l8: { l7: { l6: { l5: { l4: { l3: { l2: { l1: { l0: 42 } } } } } } } } } };
         expect(is(obj, schema)).toBe(true);
@@ -179,7 +182,7 @@ describe('stress: deeply nested inline objects', () => {
         for (let i = 0; i < 5; i++) root['wd_root_' + i] = level1;
 
         // This registers 5^4 = 625 leaf objects + intermediates
-        let schema = t.object(root);
+        let schema = object(root);
 
         // Build a matching data object
         function buildData() {
@@ -215,7 +218,7 @@ describe('stress: combined registries at scale', () => {
     test('mixed schema soup: 200 objects, 100 arrays, 50 discriminated unions', () => {
         let objectSchemas = [];
         for (let i = 0; i < 200; i++) {
-            objectSchemas.push(t.object({
+            objectSchemas.push(object({
                 ['mixed_obj_a_' + i]: NUMBER,
                 ['mixed_obj_b_' + i]: STRING
             }));
@@ -223,12 +226,12 @@ describe('stress: combined registries at scale', () => {
 
         let arraySchemas = [];
         for (let i = 0; i < 100; i++) {
-            arraySchemas.push(t.array(objectSchemas[i * 2]));
+            arraySchemas.push(array(objectSchemas[i * 2]));
         }
 
         let discSchemas = [];
         for (let i = 0; i < 50; i++) {
-            discSchemas.push(t.union('mixed_obj_a_' + i, {
+            discSchemas.push(union('mixed_obj_a_' + i, {
                 ['mix_x_' + i]: objectSchemas[i],
                 ['mix_y_' + i]: objectSchemas[i + 100]
             }));
@@ -264,7 +267,7 @@ describe('stress: parse and strict on large objects', () => {
                 obj['pf_' + i] = 'val_' + i;
             }
         }
-        let schema = t.object(def);
+        let schema = object(def);
         expect(conform(obj, schema)).toBe(true);
         expect(obj['pf_0']).toBeInstanceOf(Date);
         expect(obj['pf_3']).toBeInstanceOf(Date);
@@ -282,7 +285,7 @@ describe('stress: parse and strict on large objects', () => {
         for (let i = 0; i < 20; i++) {
             obj['remove_' + i] = 'junk';
         }
-        let schema = t.object(def);
+        let schema = object(def);
         expect(Object.keys(obj).length).toBe(50);
         expect(is(obj, schema, STRICT_DELETE)).toBe(true);
         expect(Object.keys(obj).length).toBe(30);

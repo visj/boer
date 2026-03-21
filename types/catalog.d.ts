@@ -246,6 +246,6 @@ export interface HeapConfig {
 }
 
 export interface Config {
-    t: HeapConfig;
-    v: HeapConfig;
+    heap: HeapConfig;
+    scratch: HeapConfig;
 }

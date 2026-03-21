@@ -2,7 +2,7 @@
 // Bit 31:  COMPLEX   (0 = primitive typedef, 1 = complex typedef)
 // Bit 30:  NULLABLE  (typedef accepts null)
 // Bit 29:  OPTIONAL  (typedef accepts undefined)
-// Bit 28:  VOLATILE  (typedef lives in volatile storage)
+// Bit 28:  SCRATCH   (typedef lives in scratch storage)
 // Bits 0-27:
 //   If COMPLEX=0: primitive type flags (layered bit mask)
 //   If COMPLEX=1: index into KIND table
@@ -10,7 +10,7 @@
 const COMPLEX = (1 << 31) >>> 0;
 const NULLABLE = (1 << 30) >>> 0;
 const OPTIONAL = (1 << 29) >>> 0;
-const VOLATILE = (1 << 28) >>> 0;
+const SCRATCH = (1 << 28) >>> 0;
 
 /**
  * Primitive type bits (bits 16-27)
@@ -173,7 +173,7 @@ const toString = Object.prototype.toString;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 
 export {
-    COMPLEX, NULLABLE, OPTIONAL, VOLATILE,
+    COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
     ANY, NEVER, FALSE, TRUE, BOOLEAN,
     NUMBER, STRING, INTEGER, BIGINT,
     ARRAY, OBJECT, DATE, URI,

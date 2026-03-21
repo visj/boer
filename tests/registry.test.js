@@ -4,16 +4,19 @@ import {
     STRICT_REJECT
 } from 'uvd/catalog';
 import { catalog } from 'uvd/catalog';
+import { allocators, $allocators } from 'uvd/alloc';
 
 describe('registry: isolation', () => {
-    test('registry() returns an object with t, v, check, diagnose, etc.', () => {
+    test('registry() returns an object with is, guard, conform, diagnose, etc.', () => {
         let r = catalog();
-        expect(typeof r.t.object).toBe('function');
-        expect(typeof r.t.array).toBe('function');
-        expect(typeof r.t.union).toBe('function');
-        expect(typeof r.v.object).toBe('function');
-        expect(typeof r.v.array).toBe('function');
-        expect(typeof r.v.union).toBe('function');
+        let { object, array, union } = allocators(r);
+        let { $object, $array, $union } = $allocators(r);
+        expect(typeof object).toBe('function');
+        expect(typeof array).toBe('function');
+        expect(typeof union).toBe('function');
+        expect(typeof $object).toBe('function');
+        expect(typeof $array).toBe('function');
+        expect(typeof $union).toBe('function');
         expect(typeof r.is).toBe('function');
         expect(typeof r.guard).toBe('function');
         expect(typeof r.conform).toBe('function');
@@ -23,9 +26,11 @@ describe('registry: isolation', () => {
     test('two registries have independent state', () => {
         let r1 = catalog();
         let r2 = catalog();
+        let t1 = allocators(r1);
+        let t2 = allocators(r2);
 
-        let schema1 = r1.t.object({ name: STRING, age: NUMBER });
-        let schema2 = r2.t.object({ x: NUMBER, y: NUMBER });
+        let schema1 = t1.object({ name: STRING, age: NUMBER });
+        let schema2 = t2.object({ x: NUMBER, y: NUMBER });
 
         // Each registry validates its own schemas correctly
         expect(r1.is({ name: 'Alice', age: 30 }, schema1)).toBe(true);
@@ -35,8 +40,9 @@ describe('registry: isolation', () => {
     test('cross-registry typedef usage is undefined behavior', () => {
         let r1 = catalog();
         let r2 = catalog();
+        let t1 = allocators(r1);
 
-        let schema = r1.t.object({ name: STRING });
+        let schema = t1.object({ name: STRING });
 
         // Using r1's schema with r2's is is undefined behavior.
         // r2's KINDS/OBJECTS are uninitialized at this index, so the result
@@ -47,14 +53,16 @@ describe('registry: isolation', () => {
     test('registries have independent key dictionaries', () => {
         let r1 = catalog();
         let r2 = catalog();
+        let t1 = allocators(r1);
+        let t2 = allocators(r2);
 
         // Register schemas with different key sets
-        r1.t.object({ alpha: STRING });
-        r2.t.object({ beta: NUMBER });
+        t1.object({ alpha: STRING });
+        t2.object({ beta: NUMBER });
 
         // Each registry only knows about its own keys
-        let s1 = r1.t.object({ alpha: STRING });
-        let s2 = r2.t.object({ beta: NUMBER });
+        let s1 = t1.object({ alpha: STRING });
+        let s2 = t2.object({ beta: NUMBER });
 
         expect(r1.is({ alpha: 'hello' }, s1)).toBe(true);
         expect(r2.is({ beta: 42 }, s2)).toBe(true);
@@ -63,9 +71,11 @@ describe('registry: isolation', () => {
     test('registries support arrays independently', () => {
         let r1 = catalog();
         let r2 = catalog();
+        let t1 = allocators(r1);
+        let t2 = allocators(r2);
 
-        let arr1 = r1.t.array(STRING);
-        let arr2 = r2.t.array(NUMBER);
+        let arr1 = t1.array(STRING);
+        let arr2 = t2.array(NUMBER);
 
         expect(r1.is(['a', 'b'], arr1)).toBe(true);
         expect(r1.is([1, 2], arr1)).toBe(false);
@@ -76,10 +86,11 @@ describe('registry: isolation', () => {
 
     test('registries support unions independently', () => {
         let r1 = catalog();
+        let t1 = allocators(r1);
 
-        let u = r1.t.union('kind', {
-            a: r1.t.object({ kind: STRING, val: NUMBER }),
-            b: r1.t.object({ kind: STRING, name: STRING })
+        let u = t1.union('kind', {
+            a: t1.object({ kind: STRING, val: NUMBER }),
+            b: t1.object({ kind: STRING, name: STRING })
         });
 
         expect(r1.is({ kind: 'a', val: 42 }, u)).toBe(true);
@@ -89,10 +100,11 @@ describe('registry: isolation', () => {
 
     test('registry supports nullable and optional complex types', () => {
         let r = catalog();
+        let { object, array } = allocators(r);
 
-        let schema = r.t.object({
-            data: r.t.array(NUMBER) | NULL,
-            meta: r.t.object({ v: STRING }) | NULL | UNDEFINED
+        let schema = object({
+            data: array(NUMBER) | NULL,
+            meta: object({ v: STRING }) | NULL | UNDEFINED
         });
 
         expect(r.is({ data: [1, 2], meta: { v: 'ok' } }, schema)).toBe(true);
@@ -103,7 +115,8 @@ describe('registry: isolation', () => {
 
     test('registry conform works with rich types', () => {
         let r = catalog();
-        let schema = r.t.object({ created: STRING | NUMBER });
+        let { object } = allocators(r);
+        let schema = object({ created: STRING | NUMBER });
         let obj = { created: 42 };
         expect(r.conform(obj, schema)).toBe(true);
         expect(obj.created).toBe(42);
@@ -111,7 +124,8 @@ describe('registry: isolation', () => {
 
     test('registry strict works', () => {
         let r = catalog();
-        let schema = r.t.object({ name: STRING });
+        let { object } = allocators(r);
+        let schema = object({ name: STRING });
 
         expect(r.is({ name: 'Alice' }, schema, STRICT_REJECT)).toBe(true);
         expect(r.is({ name: 'Alice', extra: true }, schema, STRICT_REJECT)).toBe(false);
@@ -119,7 +133,8 @@ describe('registry: isolation', () => {
 
     test('registry diagnose works', () => {
         let r = catalog();
-        let schema = r.t.object({ name: STRING, age: NUMBER });
+        let { object } = allocators(r);
+        let schema = object({ name: STRING, age: NUMBER });
         let errors = r.diagnose({ name: 42, age: 'wrong' }, schema);
         expect(errors.length).toBe(2);
     });

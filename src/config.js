@@ -15,29 +15,29 @@ const CONFIG_KEYS = ['slab', 'objects', 'arrays', 'unions', 'tuples', 'matches',
  */
 function config(cfg) {
     /** @type {uvd.cat.HeapConfig} */
-    let t = { slab: DEFAULT_T.slab, objects: DEFAULT_T.objects, arrays: DEFAULT_T.arrays, unions: DEFAULT_T.unions, tuples: DEFAULT_T.tuples, matches: DEFAULT_T.matches, kinds: DEFAULT_T.kinds, validators: DEFAULT_T.validators };
-    let v = { slab: DEFAULT_V.slab, objects: DEFAULT_V.objects, arrays: DEFAULT_V.arrays, unions: DEFAULT_V.unions, tuples: DEFAULT_V.tuples, matches: DEFAULT_V.matches, kinds: DEFAULT_V.kinds, validators: DEFAULT_V.validators };
+    let heap = { slab: DEFAULT_T.slab, objects: DEFAULT_T.objects, arrays: DEFAULT_T.arrays, unions: DEFAULT_T.unions, tuples: DEFAULT_T.tuples, matches: DEFAULT_T.matches, kinds: DEFAULT_T.kinds, validators: DEFAULT_T.validators };
+    let scratch = { slab: DEFAULT_V.slab, objects: DEFAULT_V.objects, arrays: DEFAULT_V.arrays, unions: DEFAULT_V.unions, tuples: DEFAULT_V.tuples, matches: DEFAULT_V.matches, kinds: DEFAULT_V.kinds, validators: DEFAULT_V.validators };
     if (cfg) {
-        const cfg_t = cfg.t;
+        const cfg_t = cfg.heap;
         if (cfg_t) {
             for (let i = 0; i < CONFIG_KEYS.length; i++) {
                 let key = CONFIG_KEYS[i];
                 const val = cfg_t[key];
                 assertIsNumber(val, 0);
-                t[key] = val;
+                heap[key] = val;
             }
         }
-        const cfg_v = cfg.v;
+        const cfg_v = cfg.scratch;
         if (cfg_v) {
             for (let i = 0; i < CONFIG_KEYS.length; i++) {
                 let key = CONFIG_KEYS[i];
                 const val = cfg_v[key];
                 assertIsNumber(val, ERR_CONFIG_FIELD_MUST_BE_NUMBER);
-                v[key] = val;
+                scratch[key] = val;
             }
         }
     }
-    return { t, v };
+    return { heap, scratch };
 }
 
 /**

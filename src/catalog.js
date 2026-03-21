@@ -1,11 +1,8 @@
 /// <reference path="../global.d.ts" />
 import { config, malloc } from './config.js';
 import {
-    COMPLEX, NULLABLE, OPTIONAL, VOLATILE,
-    ANY, NEVER, FALSE, TRUE, BOOLEAN,
-    NUMBER, STRING, INTEGER, BIGINT,
-    ARRAY, OBJECT, DATE, URI,
-    SIMPLE, PRIM_MASK, KIND_MASK,
+    COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
+    ANY, SIMPLE, PRIM_MASK, KIND_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION,
     K_REFINE, K_TUPLE, K_RECORD, K_OR, K_EXCLUSIVE,
     K_INTERSECT, K_NOT, K_CONDITIONAL,
@@ -16,18 +13,12 @@ import {
     V_ARR_UNIQUE, V_OBJ_MIN, V_OBJ_MAX, V_OBJ_PAT_PROP, V_OBJ_PROP_NAM,
     V_OBJ_NO_ADD, V_OBJ_DEP_REQ,
     popcnt16,
-    FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME, FMT_MAP,
+    FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
-    STRIP, PLAIN, NOT_STRICT, STRICT_REJECT, STRICT_DELETE, STRICT_PROTO,
-    STRICT_MODE_MASK, U8, U16, U32, FAIL, codepointLen, hasOwnProperty, toString
+    NOT_STRICT, STRICT_REJECT, STRICT_DELETE, STRICT_PROTO,
+    STRICT_MODE_MASK, U16, U32, FAIL, codepointLen, hasOwnProperty, toString
 } from './const.js';
 import {
-    assert, assertIsNumber, assertIsObject,
-    ERR_ARRAY_ELEMENT_MUST_BE_NUMBER,
-    ERR_CONFIG_FIELD_MUST_BE_NUMBER
-} from './error.js';
-import {
-    nullable, optional, isNumber, isObject,
     sortByKeyId, parseValue, _isValue, describeType
 } from './util.js';
 
@@ -38,8 +29,8 @@ import {
  */
 function catalog(cfg) {
     cfg = config(cfg);
-    let HEAP = malloc(cfg.t);
-    let VOL_HEAP = malloc(cfg.v);
+    let HEAP = malloc(cfg.heap);
+    let SCR_HEAP = malloc(cfg.scratch);
 
     // Primary heap store
     let SLAB = HEAP.SLAB;
@@ -53,19 +44,19 @@ function catalog(cfg) {
     let REGEX_CACHE = HEAP.REGEX_CACHE;
     let CALLBACKS = HEAP.CALLBACKS;
 
-    // Volatile heap store
-    let V_SLAB = VOL_HEAP.SLAB;
-    let V_OBJECTS = VOL_HEAP.OBJECTS;
-    let V_ARRAYS = VOL_HEAP.ARRAYS;
-    let V_UNIONS = VOL_HEAP.UNIONS;
-    let V_TUPLES = VOL_HEAP.TUPLES;
-    let V_MATCHES = VOL_HEAP.MATCHES;
-    let V_KINDS = VOL_HEAP.KINDS;
-    let V_VALIDATORS = VOL_HEAP.VALIDATORS;
-    let V_REGEX_CACHE = VOL_HEAP.REGEX_CACHE;
-    let V_CALLBACKS = VOL_HEAP.CALLBACKS;
+    // Scratch heap store
+    let S_SLAB = SCR_HEAP.SLAB;
+    let S_OBJECTS = SCR_HEAP.OBJECTS;
+    let S_ARRAYS = SCR_HEAP.ARRAYS;
+    let S_UNIONS = SCR_HEAP.UNIONS;
+    let S_TUPLES = SCR_HEAP.TUPLES;
+    let S_MATCHES = SCR_HEAP.MATCHES;
+    let S_KINDS = SCR_HEAP.KINDS;
+    let S_VALIDATORS = SCR_HEAP.VALIDATORS;
+    let S_REGEX_CACHE = SCR_HEAP.REGEX_CACHE;
+    let S_CALLBACKS = SCR_HEAP.CALLBACKS;
 
-    // --- KEY DICTIONARY (shared between permanent and volatile) ---
+    // --- KEY DICTIONARY (shared between permanent and scratch) ---
     /** @type {number} */
     let keyseq = 1;
     /** @const @type {!Map<string,number>} */
@@ -78,17 +69,17 @@ function catalog(cfg) {
     /**
      * @returns {void}
      */
-    function rewindVolatile() {
-        VOL_HEAP.PTR = 0;
-        VOL_HEAP.OBJ_COUNT = 0;
-        VOL_HEAP.ARR_COUNT = 0;
-        VOL_HEAP.TUP_COUNT = 0;
-        VOL_HEAP.MAT_COUNT = 0;
-        VOL_HEAP.UNION_COUNT = 0;
-        VOL_HEAP.KIND_PTR = 0;
-        VOL_HEAP.VAL_PTR = 0;
-        V_REGEX_CACHE.length = 0;
-        V_CALLBACKS.length = 0;
+    function rewindScratch() {
+        SCR_HEAP.PTR = 0;
+        SCR_HEAP.OBJ_COUNT = 0;
+        SCR_HEAP.ARR_COUNT = 0;
+        SCR_HEAP.TUP_COUNT = 0;
+        SCR_HEAP.MAT_COUNT = 0;
+        SCR_HEAP.UNION_COUNT = 0;
+        SCR_HEAP.KIND_PTR = 0;
+        SCR_HEAP.VAL_PTR = 0;
+        S_REGEX_CACHE.length = 0;
+        S_CALLBACKS.length = 0;
         rewindPending = false;
     }
 
@@ -109,21 +100,21 @@ function catalog(cfg) {
     /**
      * @param {number} header
      * @param {number} registryIndex
-     * @param {boolean} volatile
+     * @param {boolean} scratch
      * @param {number} slots
      * @returns {number}
      */
-    function allocKind(header, registryIndex, volatile, slots) {
-        if (volatile) {
-            let ptr = VOL_HEAP.KIND_PTR;
-            if (ptr + slots > VOL_HEAP.KIND_LEN) {
-                let buffer = new Uint32Array(VOL_HEAP.KIND_LEN *= 2);
-                buffer.set(V_KINDS);
-                VOL_HEAP.KINDS = V_KINDS = buffer;
+    function allocKind(header, registryIndex, scratch, slots) {
+        if (scratch) {
+            let ptr = SCR_HEAP.KIND_PTR;
+            if (ptr + slots > SCR_HEAP.KIND_LEN) {
+                let buffer = new Uint32Array(SCR_HEAP.KIND_LEN *= 2);
+                buffer.set(S_KINDS);
+                SCR_HEAP.KINDS = S_KINDS = buffer;
             }
-            V_KINDS[ptr] = header;
-            V_KINDS[ptr + 1] = registryIndex;
-            VOL_HEAP.KIND_PTR += slots;
+            S_KINDS[ptr] = header;
+            S_KINDS[ptr + 1] = registryIndex;
+            SCR_HEAP.KIND_PTR += slots;
             return ptr;
         }
         let ptr = HEAP.KIND_PTR;
@@ -141,23 +132,23 @@ function catalog(cfg) {
     /**
      * @param {number} vHeader
      * @param {!Array<number>} payloads
-     * @param {boolean} volatile
+     * @param {boolean} scratch
      * @returns {number}
      */
-    function allocValidator(vHeader, payloads, volatile) {
+    function allocValidator(vHeader, payloads, scratch) {
         let needed = 1 + payloads.length;
-        if (volatile) {
-            if (VOL_HEAP.VAL_PTR + needed > VOL_HEAP.VAL_LEN) {
-                let buffer = new Float64Array(VOL_HEAP.VAL_LEN *= 2);
-                buffer.set(V_VALIDATORS);
-                VOL_HEAP.VALIDATORS = V_VALIDATORS = buffer;
+        if (scratch) {
+            if (SCR_HEAP.VAL_PTR + needed > SCR_HEAP.VAL_LEN) {
+                let buffer = new Float64Array(SCR_HEAP.VAL_LEN *= 2);
+                buffer.set(S_VALIDATORS);
+                SCR_HEAP.VALIDATORS = S_VALIDATORS = buffer;
             }
-            let ptr = VOL_HEAP.VAL_PTR;
-            V_VALIDATORS[ptr] = vHeader;
+            let ptr = SCR_HEAP.VAL_PTR;
+            S_VALIDATORS[ptr] = vHeader;
             for (let i = 0; i < payloads.length; i++) {
-                V_VALIDATORS[ptr + 1 + i] = payloads[i];
+                S_VALIDATORS[ptr + 1 + i] = payloads[i];
             }
-            VOL_HEAP.VAL_PTR += needed;
+            SCR_HEAP.VAL_PTR += needed;
             return ptr;
         }
         if (HEAP.VAL_PTR + needed > HEAP.VAL_LEN) {
@@ -175,189 +166,25 @@ function catalog(cfg) {
     }
 
     /**
-     * @param {number} primConst
-     * @param {!uvd.cat.Validators} opts
-     * @param {boolean} volatile
-     * @returns {{vHeader: number, payloads: !Array<number>}}
-     */
-    function buildValidatorPayload(primConst, opts, volatile) {
-        let vHeader = 0;
-        /** @type {!Array<number>} */
-        let payloads = [];
-        if (primConst & STRING) {
-            const strOpts = /** @type {uvd.cat.StringValidators} */(opts);
-            if (strOpts.minLength !== void 0) {
-                vHeader |= V_STR_MIN_LEN;
-                payloads.push(strOpts.minLength);
-            }
-            if (strOpts.maxLength !== void 0) {
-                vHeader |= V_STR_MAX_LEN;
-                payloads.push(strOpts.maxLength);
-            }
-            if (strOpts.pattern !== void 0) {
-                vHeader |= V_STR_PATTERN;
-                let cache = volatile ? V_REGEX_CACHE : REGEX_CACHE;
-                let idx = cache.push(strOpts.pattern instanceof RegExp ? strOpts.pattern : new RegExp(strOpts.pattern)) - 1;
-                payloads.push(idx);
-            }
-            if (strOpts.format !== void 0) {
-                let fmt = FMT_MAP[strOpts.format];
-                if (fmt === void 0) {
-                    throw new Error('Unknown string format: ' + strOpts.format);
-                }
-                vHeader |= V_STR_FORMAT;
-                payloads.push(fmt);
-            }
-        } else if (primConst & (NUMBER | INTEGER)) {
-            const nbrOpts = /** @type {!uvd.cat.NumberValidators} */(opts);
-            let min = nbrOpts.minimum;
-            let exMin = nbrOpts.exclusiveMinimum;
-            if (min !== void 0 && exMin !== void 0) {
-                if (exMin >= min) {
-                    vHeader |= V_NUM_MIN | V_NUM_EX_MIN;
-                    payloads.push(exMin);
-                } else {
-                    vHeader |= V_NUM_MIN;
-                    payloads.push(min);
-                }
-            } else if (min !== void 0) {
-                vHeader |= V_NUM_MIN;
-                payloads.push(min);
-            } else if (exMin !== void 0) {
-                vHeader |= V_NUM_MIN | V_NUM_EX_MIN;
-                payloads.push(exMin);
-            }
-            let max = nbrOpts.maximum;
-            let exMax = nbrOpts.exclusiveMaximum;
-            if (max !== void 0 && exMax !== void 0) {
-                if (exMax <= max) {
-                    vHeader |= V_NUM_MAX | V_NUM_EX_MAX;
-                    payloads.push(exMax);
-                } else {
-                    vHeader |= V_NUM_MAX;
-                    payloads.push(max);
-                }
-            } else if (max !== void 0) {
-                vHeader |= V_NUM_MAX;
-                payloads.push(max);
-            } else if (exMax !== void 0) {
-                vHeader |= V_NUM_MAX | V_NUM_EX_MAX;
-                payloads.push(exMax);
-            }
-            if (nbrOpts.multipleOf !== void 0) {
-                vHeader |= V_NUM_MULTIPLE;
-                payloads.push(nbrOpts.multipleOf);
-            }
-        }
-        return { vHeader, payloads };
-    }
-
-    /**
-     * @param {number} primConst
-     * @returns {function(!Object=): number}
-     */
-    function primitiveImpl(primConst) {
-        return function (opts) {
-            if (opts === void 0) {
-                return primConst;
-            }
-            let { vHeader, payloads } = buildValidatorPayload(primConst, opts, false);
-            let valIdx = allocValidator(vHeader, payloads, false);
-            let kindHeader = K_PRIMITIVE | HAS_VALIDATOR | primConst;
-            let ptr = allocKind(kindHeader, valIdx, false, 2);
-            return (COMPLEX | ptr) >>> 0;
-        };
-    }
-
-    /**
-     * @param {number} primConst
-     * @returns {function(!Object=): number}
-     */
-    function volatilePrimitiveImpl(primConst) {
-        return function (opts) {
-            if (opts === void 0) {
-                return primConst;
-            }
-            if (rewindPending) {
-                rewindVolatile();
-            }
-            let { vHeader, payloads } = buildValidatorPayload(primConst, opts, true);
-            let valIdx = allocValidator(vHeader, payloads, true);
-            let kindHeader = K_PRIMITIVE | HAS_VALIDATOR | primConst;
-            let ptr = allocKind(kindHeader, valIdx, true, 2);
-            return (COMPLEX | VOLATILE | ptr) >>> 0;
-        };
-    }
-
-    /**
-     * @template T
-     * @param {uvd.cat.Type<T,R>} typedef
-     * @param {function(*): boolean} fn
-     * @param {boolean} volatile
-     * @returns {uvd.cat.Complex<T, R>}
-     */
-    function refineImpl(typedef, fn, volatile) {
-        assertIsNumber(typedef, 0);
-        let callbacks = volatile ? V_CALLBACKS : CALLBACKS;
-        let callbackIdx = callbacks.push(fn) - 1;
-        let kindPtr = allocKind(K_REFINE, typedef >>> 0, volatile, 3);
-        let kinds = volatile ? V_KINDS : KINDS;
-        kinds[kindPtr + 2] = callbackIdx;
-        let flags = COMPLEX | kindPtr;
-        if (volatile) {
-            flags |= VOLATILE;
-        }
-        if (typedef & NULLABLE) {
-            flags |= NULLABLE;
-        }
-        if (typedef & OPTIONAL) {
-            flags |= OPTIONAL;
-        }
-        //@ts-ignore
-        return flags >>> 0;
-    }
-
-    /**
-     * Helper to normalize variadic (a, b, c) or array-first ([a, b, c]) args
-     * into a flat array of types.
-     * @param {*} first
-     * @param {*} second
-     * @param {*} third
-     * @returns {!Array<number>}
-     */
-    function normalizeTypeArgs(first, second, third) {
-        if (Array.isArray(first)) {
-            return first;
-        }
-        if (third !== void 0) {
-            return [first, second, third];
-        }
-        if (second !== void 0) {
-            return [first, second];
-        }
-        return [first];
-    }
-
-    /**
      * Allocate entries on the SLAB and register in a typed registry (TUPLES or MATCHES).
      * @param {!Array<number>} types
-     * @param {boolean} volatile
+     * @param {boolean} scratch
      * @param {string} kind - 'tuple' or 'match'
      * @returns {number} registry index
      */
-    function allocOnSlab(types, volatile, kind) {
+    function allocOnSlab(types, scratch, kind) {
         let count = types.length;
-        let heap = volatile ? VOL_HEAP : HEAP;
-        let slab = volatile ? V_SLAB : SLAB;
+        let heap = scratch ? SCR_HEAP : HEAP;
+        let slab = scratch ? S_SLAB : SLAB;
         let ptr = heap.PTR;
 
         // Grow slab if needed
-        if (volatile) {
-            if (ptr + count > VOL_HEAP.SLAB_LEN) {
-                let buffer = new Uint32Array(VOL_HEAP.SLAB_LEN *= 2);
-                buffer.set(V_SLAB);
-                VOL_HEAP.SLAB = V_SLAB = buffer;
-                slab = V_SLAB;
+        if (scratch) {
+            if (ptr + count > SCR_HEAP.SLAB_LEN) {
+                let buffer = new Uint32Array(SCR_HEAP.SLAB_LEN *= 2);
+                buffer.set(S_SLAB);
+                SCR_HEAP.SLAB = S_SLAB = buffer;
+                slab = S_SLAB;
             }
         } else {
             if (ptr + count > HEAP.SLAB_LEN) {
@@ -377,17 +204,17 @@ function catalog(cfg) {
 
         // Register in the appropriate registry
         if (kind === 'tuple') {
-            let tuples = volatile ? V_TUPLES : TUPLES;
+            let tuples = scratch ? S_TUPLES : TUPLES;
             let id = heap.TUP_COUNT++;
 
             if ((id + 1) * 2 > heap.TUP_LEN) {
-                if (volatile) {
-                    let buffer = VOL_HEAP.TUP_TYPE === U16 ?
-                        new Uint16Array(VOL_HEAP.TUP_LEN *= 2) :
-                        new Uint32Array(VOL_HEAP.TUP_LEN *= 2);
-                    buffer.set(V_TUPLES);
-                    VOL_HEAP.TUPLES = V_TUPLES = buffer;
-                    tuples = V_TUPLES;
+                if (scratch) {
+                    let buffer = SCR_HEAP.TUP_TYPE === U16 ?
+                        new Uint16Array(SCR_HEAP.TUP_LEN *= 2) :
+                        new Uint32Array(SCR_HEAP.TUP_LEN *= 2);
+                    buffer.set(S_TUPLES);
+                    SCR_HEAP.TUPLES = S_TUPLES = buffer;
+                    tuples = S_TUPLES;
                 } else {
                     let buffer = HEAP.TUP_TYPE === U16 ?
                         new Uint16Array(HEAP.TUP_LEN *= 2) :
@@ -399,13 +226,13 @@ function catalog(cfg) {
             }
 
             // Check U16 overflow
-            if (volatile) {
-                if (VOL_HEAP.TUP_TYPE === U16 && offset > 65535) {
-                    let buffer = new Uint32Array(VOL_HEAP.TUP_LEN);
-                    buffer.set(V_TUPLES);
-                    VOL_HEAP.TUPLES = V_TUPLES = buffer;
-                    VOL_HEAP.TUP_TYPE = U32;
-                    tuples = V_TUPLES;
+            if (scratch) {
+                if (SCR_HEAP.TUP_TYPE === U16 && offset > 65535) {
+                    let buffer = new Uint32Array(SCR_HEAP.TUP_LEN);
+                    buffer.set(S_TUPLES);
+                    SCR_HEAP.TUPLES = S_TUPLES = buffer;
+                    SCR_HEAP.TUP_TYPE = U32;
+                    tuples = S_TUPLES;
                 }
             } else {
                 if (HEAP.TUP_TYPE === U16 && offset > 65535) {
@@ -423,17 +250,17 @@ function catalog(cfg) {
         }
 
         // kind === 'match'
-        let matches = volatile ? V_MATCHES : MATCHES;
+        let matches = scratch ? S_MATCHES : MATCHES;
         let id = heap.MAT_COUNT++;
 
         if ((id + 1) * 2 > heap.MAT_LEN) {
-            if (volatile) {
-                let buffer = VOL_HEAP.MAT_TYPE === U16 ?
-                    new Uint16Array(VOL_HEAP.MAT_LEN *= 2) :
-                    new Uint32Array(VOL_HEAP.MAT_LEN *= 2);
-                buffer.set(V_MATCHES);
-                VOL_HEAP.MATCHES = V_MATCHES = buffer;
-                matches = V_MATCHES;
+            if (scratch) {
+                let buffer = SCR_HEAP.MAT_TYPE === U16 ?
+                    new Uint16Array(SCR_HEAP.MAT_LEN *= 2) :
+                    new Uint32Array(SCR_HEAP.MAT_LEN *= 2);
+                buffer.set(S_MATCHES);
+                SCR_HEAP.MATCHES = S_MATCHES = buffer;
+                matches = S_MATCHES;
             } else {
                 let buffer = HEAP.MAT_TYPE === U16 ?
                     new Uint16Array(HEAP.MAT_LEN *= 2) :
@@ -444,13 +271,13 @@ function catalog(cfg) {
             }
         }
 
-        if (volatile) {
-            if (VOL_HEAP.MAT_TYPE === U16 && offset > 65535) {
-                let buffer = new Uint32Array(VOL_HEAP.MAT_LEN);
-                buffer.set(V_MATCHES);
-                VOL_HEAP.MATCHES = V_MATCHES = buffer;
-                VOL_HEAP.MAT_TYPE = U32;
-                matches = V_MATCHES;
+        if (scratch) {
+            if (SCR_HEAP.MAT_TYPE === U16 && offset > 65535) {
+                let buffer = new Uint32Array(SCR_HEAP.MAT_LEN);
+                buffer.set(S_MATCHES);
+                SCR_HEAP.MATCHES = S_MATCHES = buffer;
+                SCR_HEAP.MAT_TYPE = U32;
+                matches = S_MATCHES;
             }
         } else {
             if (HEAP.MAT_TYPE === U16 && offset > 65535) {
@@ -466,369 +293,6 @@ function catalog(cfg) {
         matches[id * 2 + 1] = count;
         return id;
     }
-
-    // /**
-    //  * @param {number} first
-    //  * @param {number} second
-    //  * @param {number | undefined} third
-    //  * @param {boolean} volatile
-    //  * @returns {number}
-    //  */
-    // function tupleImpl(first, second, third, volatile) {
-    //     // TODO
-    //     // let id = allocOnSlab(types, volatile, 'tuple');
-    //     // let kindPtr = allocKind(K_TUPLE, id, volatile, 2);
-    //     // return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
-    // }
-
-    /**
-     * @template T
-     * @param {!Array<number>} types
-     * @param {boolean} volatile
-     * @returns {uvd.cat.Complex<T>}
-     */
-    function tupleArrayImpl(types, volatile) {
-        let id = allocOnSlab(types, volatile, 'tuple');
-        let kindPtr = allocKind(K_TUPLE, id, volatile, 2);
-        //@ts-ignore
-        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
-    }
-
-    /**
-     * @template T
-     * @param {uvd.cat.Type<T,R>} valueType
-     * @param {boolean} volatile
-     * @returns {uvd.cat.Complex<Record<string,T>,R>}
-     */
-    function recordImpl(valueType, volatile) {
-        assertIsNumber(valueType, 0);
-        let kindPtr = allocKind(K_RECORD, valueType >>> 0, volatile, 2);
-        //@ts-ignore
-        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
-    }
-
-    /**
-     * @template T
-     * @param {uvd.cat.Type<T,R>[]} types
-     * @param {boolean} volatile
-     * @returns {uvd.cat.Type<T,R>}
-     */
-    function orImpl(types, volatile) {
-        // Fast path: if all inputs are raw primitives (no COMPLEX bit),
-        // just OR the bits together — no allocation needed.
-        let allPrimitive = true;
-        let merged = 0;
-        let j = 0;
-        let flags = COMPLEX | (volatile ? VOLATILE : 0)
-        let length = types.length;
-        for (let i = 0; i < length; i++, j++) {
-            const type = /** @type {number} */(types[i]);
-            if (type & NULLABLE) {
-                flags |= NULLABLE;
-            }
-            if (type & OPTIONAL) {
-                flags |= OPTIONAL;
-            }
-            if (type & COMPLEX) {
-                allPrimitive = false;
-                break;
-            }
-            merged |= type;
-        }
-        if (allPrimitive) {
-            //@ts-ignore
-            return merged >>> 0;
-        }
-        let id = allocOnSlab(types, volatile, 'match');
-        let kindPtr = allocKind(K_OR, id, volatile, 2);
-        flags |= kindPtr;
-        for (; j < length; j++) {
-            const type = /** @type {number} */(types[j]);
-            if (type & NULLABLE) {
-                flags |= NULLABLE;
-            }
-            if (type & OPTIONAL) {
-                flags |= OPTIONAL;
-            }
-        }
-        //@ts-ignore
-        return flags >>> 0;
-    }
-
-    /**
-     * @template T
-     * @param {!Array<number>} types
-     * @param {boolean} volatile
-     * @returns {uvd.cat.Complex<T,R>}
-     */
-    function exclusiveImpl(types, volatile) {
-        let id = allocOnSlab(types, volatile, 'match');
-        let kindPtr = allocKind(K_EXCLUSIVE, id, volatile, 2);
-        //@ts-ignore
-        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
-    }
-
-    /**
-     * @template T
-     * @param {Array<number>} types
-     * @param {boolean} volatile
-     * @returns {uvd.cat.Complex<T,R>}
-     */
-    function intersectImpl(types, volatile) {
-        let id = allocOnSlab(types, volatile, 'match');
-        let kindPtr = allocKind(K_INTERSECT, id, volatile, 2);
-        //@ts-ignore
-        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
-    }
-
-    /**
-     * @template T
-     * @param {uvd.cat.Type<T,R>} typedef
-     * @param {boolean} volatile
-     * @returns {uvd.cat.Complex<T,R>}
-     */
-    function notImpl(typedef, volatile) {
-        assertIsNumber(typedef, 0);
-        let kindPtr = allocKind(K_NOT, typedef >>> 0, volatile, 2);
-        //@ts-ignore
-        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
-    }
-
-    /**
-     * @template T
-     * @param {uvd.cat.WhenValidators} config
-     * @param {boolean} volatile
-     * @returns {uvd.cat.Complex<T,R>}
-     */
-    function whenImpl(config, volatile) {
-        // Always store 3 slots: [if, then, else]
-        // Use 0 as sentinel for "no constraint" (always passes)
-        let types = [
-            config.if >>> 0,
-            config.then !== void 0 ? config.then >>> 0 : 0,
-            config.else !== void 0 ? config.else >>> 0 : 0
-        ];
-        let id = allocOnSlab(types, volatile, 'match');
-        let kindPtr = allocKind(K_CONDITIONAL, id, volatile, 2);
-        //@ts-ignore
-        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
-    }
-
-
-
-    // --- SCHEMA BUILDERS ---
-
-    /**
-     * @throws
-     * @template {uvd.cat.StrictSchema<any,R>} T
-     * @param {T} definition
-     * @param {boolean} volatile
-     * @param {uvd.cat.ObjectValidators=} opts
-     * @returns {uvd.cat.Complex<uvd.cat.InferStrictSchema<T,R>, R>}
-     */
-    function objectImpl(definition, volatile, opts) {
-        let keys = Object.keys(definition);
-        let count = keys.length;
-        let required = count * 2;
-        /** @type {Array<number>} */
-        let resolved = new Array(required);
-        for (let i = 0, j = 0; i < count; i++, j += 2) {
-            let key = keys[i];
-            let type = definition[key];
-            if (isNumber(type)) {
-                let isComplex = (type >>> 31) === 1;
-                if (isComplex) {
-                    // Strip the top 4 bits to get the raw payload
-                    let payload = type & PRIM_MASK;
-
-                    // If they OR'd a primitive, the payload will be artificially massive
-                    let kindLimit = (type & VOLATILE) ? VOL_HEAP.KIND_PTR : HEAP.KIND_PTR;
-                    if (payload >= kindLimit) {
-                        throw new Error('Object corruption at key ' + key + '. You cannot use the bitwise OR operator (|) to combine a complex type with a primitive type');
-                    }
-                }
-            } else if (isObject(type)) {
-                type = objectImpl(/** @type {uvd.cat.Schema<R>} */(type), volatile);
-            } else {
-                throw new Error('Invalid type for key ' + key);
-            }
-            resolved[j] = lookup(key);
-            resolved[j + 1] = /** @type {number} */(type) >>> 0;
-        }
-        /**
-         * Every object is stored sorted by keyId into the slab storage.
-         * The entire object is placed like this:
-         * 
-         * [keyId, typedef, keyId, typedef, keyId, typedef]
-         *  
-         * This allows us to use binary search against keys to avoid allocating Maps,
-         * but likely we can come up with more use cases for this later as well.
-         */
-        sortByKeyId(resolved);
-        let valIdx = 0;
-        const hasValidator = opts !== void 0;
-        if (hasValidator) {
-            let vHeader = 0;
-            /** @type {!Array<number>} */
-            let payloads = [];
-            const minProperties = opts.minProperties;
-            if (minProperties !== void 0) {
-                assertIsNumber(minProperties, 0);
-                vHeader |= V_OBJ_MIN;
-                payloads.push(minProperties);
-            }
-            const maxProperties = opts.maxProperties;
-            if (maxProperties !== void 0) {
-                assertIsNumber(maxProperties, 0);
-                vHeader |= V_OBJ_MAX;
-                payloads.push(maxProperties);
-            }
-            const patternProperties = opts.patternProperties;
-            if (patternProperties !== void 0) {
-                assertIsObject(patternProperties, 0);
-                vHeader |= V_OBJ_PAT_PROP;
-                let patterns = Object.keys(patternProperties);
-                let cache = volatile ? V_REGEX_CACHE : REGEX_CACHE;
-                payloads.push(patterns.length);
-                for (let i = 0; i < patterns.length; i++) {
-                    const pattern = patterns[i];
-                    const match = patternProperties[pattern];
-                    assertIsNumber(match, 0);
-                    let re = new RegExp(patterns[i]);
-                    let idx = cache.push(re) - 1;
-                    payloads.push(idx);
-                    payloads.push(match >>> 0);
-                }
-            }
-            const propertyNames = opts.propertyNames;
-            if (propertyNames !== void 0) {
-                assertIsNumber(propertyNames, 0);
-                vHeader |= V_OBJ_PROP_NAM;
-                payloads.push(propertyNames >>> 0);
-            }
-            if (opts.dependentRequired !== void 0) {
-                vHeader |= V_OBJ_DEP_REQ;
-                let triggers = Object.keys(opts.dependentRequired);
-                payloads.push(triggers.length);
-                for (let i = 0; i < triggers.length; i++) {
-                    let triggerKeyId = lookup(triggers[i]);
-                    let deps = opts.dependentRequired[triggers[i]];
-                    payloads.push(triggerKeyId);
-                    payloads.push(deps.length);
-                    for (let j = 0; j < deps.length; j++) {
-                        payloads.push(lookup(deps[j]));
-                    }
-                }
-            }
-            if (opts.additionalProperties === false) {
-                vHeader |= V_OBJ_NO_ADD;
-            }
-            valIdx = allocValidator(vHeader, payloads, volatile);
-        }
-        let id = registerObject(resolved, count, volatile);
-        let kindHeader = hasValidator ? (K_OBJECT | HAS_VALIDATOR) : K_OBJECT;
-        let slots = hasValidator ? 3 : 2;
-        let kindPtr = allocKind(kindHeader, id, volatile, slots);
-        if (hasValidator) {
-            let kinds = volatile ? V_KINDS : KINDS;
-            kinds[kindPtr + 2] = valIdx;
-        }
-        //@ts-ignore
-        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
-    }
-
-    /**
-     * @throws
-     * @template T
-     * @param {uvd.cat.Type<T,R>} elemType
-     * @param {boolean} volatile
-     * @param {uvd.cat.ArrayValidators=} opts
-     * @returns {uvd.cat.Complex<T[], R>}
-     */
-    function arrayImpl(elemType, volatile, opts) {
-        assertIsNumber(elemType, ERR_ARRAY_ELEMENT_MUST_BE_NUMBER);
-        const hasVal = opts !== void 0;
-        let valIdx = 0;
-        if (hasVal) {
-            let vHeader = 0;
-            /** @type {!Array<number>} */
-            let payloads = [];
-            if (opts.minItems !== void 0) {
-                vHeader |= V_ARR_MIN;
-                payloads.push(opts.minItems);
-            }
-            if (opts.maxItems !== void 0) {
-                vHeader |= V_ARR_MAX;
-                payloads.push(opts.maxItems);
-            }
-            if (opts.uniqueItems) {
-                vHeader |= V_ARR_UNIQUE;
-            }
-            if (opts.contains !== void 0) {
-                vHeader |= V_ARR_CONTAINS;
-                payloads.push(opts.contains >>> 0);
-            }
-            if (opts.minContains !== void 0) {
-                vHeader |= V_ARR_MIN_CT;
-                payloads.push(opts.minContains);
-            }
-            if (opts.maxContains !== void 0) {
-                vHeader |= V_ARR_MAX_CT;
-                payloads.push(opts.maxContains);
-            }
-            valIdx = allocValidator(vHeader, payloads, volatile);
-        }
-        let index = registerArray(elemType, volatile);
-        let kindHeader = hasVal ? (K_ARRAY | HAS_VALIDATOR) : K_ARRAY;
-        let slots = hasVal ? 3 : 2;
-        let kindPtr = allocKind(kindHeader, index, volatile, slots);
-        if (hasVal) {
-            let kinds = volatile ? V_KINDS : KINDS;
-            kinds[kindPtr + 2] = valIdx;
-        }
-        //@ts-ignore
-        return (COMPLEX | (volatile ? VOLATILE : 0) | kindPtr) >>> 0;
-    }
-
-    /**
-     * @throws
-     * @template {Record<string, uvd.cat.Type<any,R>>} T
-     * @template {string} D
-     * @param {D} discriminator
-     * @param {T} variants
-     * @param {boolean} volatile
-     * @returns {uvd.cat.Complex<{ [K in keyof T]: uvd.cat.Infer<T[K]> & { [P in D]: K } }[keyof T], R>}
-     */
-    function unionImpl(discriminator, variants, volatile) {
-        if (!isObject(variants) || Array.isArray(variants)) {
-            throw new Error('discriminated variants must be an object literal { key: type }');
-        }
-        if (typeof discriminator !== 'string') {
-            throw new Error('discriminated discriminator must be a string');
-        }
-        let keys = Object.keys(variants);
-        let count = keys.length;
-        let required = count * 2;
-
-        // Resolve variant [keyId, type] pairs
-        /** @type {!Array<number>} */
-        let resolved = new Array(required);
-        for (let i = 0; i < count; i++) {
-            let type = variants[keys[i]];
-            if (typeof type !== 'number') {
-                throw new Error('Invalid variant type for key ' + keys[i]);
-            }
-            resolved[i * 2] = lookup(keys[i]);
-            resolved[i * 2 + 1] = type >>> 0;
-        }
-
-        let discKeyId = lookup(discriminator);
-        let id = registerUnion(resolved, count, discKeyId, volatile);
-        let kindId = allocKind(K_UNION, id, volatile, 2);
-        //@ts-ignore
-        return (COMPLEX | (volatile ? VOLATILE : 0) | kindId) >>> 0;
-    }
-
     /**
      * @param {*} holder
      * @param {string|number} slot
@@ -868,9 +332,9 @@ function catalog(cfg) {
             return (data === null ? (typedef & NULLABLE) : (typedef & OPTIONAL)) !== 0;
         }
         if (typedef & COMPLEX) {
-            let volatile = (typedef & VOLATILE) !== 0;
+            let scratch = (typedef & SCRATCH) !== 0;
             let ptr = typedef & KIND_MASK;
-            let kinds = volatile ? V_KINDS : KINDS;
+            let kinds = scratch ? S_KINDS : KINDS;
             let header = kinds[ptr];
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
@@ -881,7 +345,7 @@ function catalog(cfg) {
                 if (!Array.isArray(data)) {
                     return false;
                 }
-                let arrays = volatile ? V_ARRAYS : ARRAYS;
+                let arrays = scratch ? S_ARRAYS : ARRAYS;
                 let length = data.length;
                 let innerType = arrays[ri];
                 for (let i = 0; i < length; i++) {
@@ -912,8 +376,8 @@ function catalog(cfg) {
                 if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                     return false;
                 }
-                let objects = volatile ? V_OBJECTS : OBJECTS;
-                let slab = volatile ? V_SLAB : SLAB;
+                let objects = scratch ? S_OBJECTS : OBJECTS;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = objects[ri * 2];
                 let length = objects[ri * 2 + 1];
                 for (let i = 0; i < length; i++) {
@@ -989,8 +453,8 @@ function catalog(cfg) {
                 if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                     return false;
                 }
-                let unions = volatile ? V_UNIONS : UNIONS;
-                let slab = volatile ? V_SLAB : SLAB;
+                let unions = scratch ? S_UNIONS : UNIONS;
+                let slab = scratch ? S_SLAB : SLAB;
                 let discKey = KEY_INDEX.get(unions[ri * 3 + 2]);
                 if (discKey === void 0) {
                     return false;
@@ -1015,8 +479,8 @@ function catalog(cfg) {
                 if (!Array.isArray(data)) {
                     return false;
                 }
-                let tuples = volatile ? V_TUPLES : TUPLES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let tuples = scratch ? S_TUPLES : TUPLES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = tuples[ri * 2];
                 let length = tuples[ri * 2 + 1];
                 if (data.length !== length) {
@@ -1078,8 +542,8 @@ function catalog(cfg) {
                 return true;
             }
             if (ct === K_OR) {
-                let matches = volatile ? V_MATCHES : MATCHES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let matches = scratch ? S_MATCHES : MATCHES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = matches[ri * 2];
                 let count = matches[ri * 2 + 1];
                 for (let i = 0; i < count; i++) {
@@ -1090,8 +554,8 @@ function catalog(cfg) {
                 return false;
             }
             if (ct === K_EXCLUSIVE) {
-                let matches = volatile ? V_MATCHES : MATCHES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let matches = scratch ? S_MATCHES : MATCHES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = matches[ri * 2];
                 let count = matches[ri * 2 + 1];
                 let matchCount = 0;
@@ -1106,8 +570,8 @@ function catalog(cfg) {
                 return matchCount === 1;
             }
             if (ct === K_INTERSECT) {
-                let matches = volatile ? V_MATCHES : MATCHES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let matches = scratch ? S_MATCHES : MATCHES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = matches[ri * 2];
                 let count = matches[ri * 2 + 1];
                 for (let i = 0; i < count; i++) {
@@ -1121,8 +585,8 @@ function catalog(cfg) {
                 return !_is(data, ri, strict);
             }
             if (ct === K_CONDITIONAL) {
-                let matches = volatile ? V_MATCHES : MATCHES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let matches = scratch ? S_MATCHES : MATCHES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = matches[ri * 2];
                 let ifType = slab[offset];
                 let thenType = slab[offset + 1];
@@ -1183,9 +647,9 @@ function catalog(cfg) {
             return (data === null ? (typedef & NULLABLE) : (typedef & OPTIONAL)) !== 0;
         }
         if (typedef & COMPLEX) {
-            let volatile = (typedef & VOLATILE) !== 0;
+            let scratch = (typedef & SCRATCH) !== 0;
             let ptr = typedef & KIND_MASK;
-            let kinds = volatile ? V_KINDS : KINDS;
+            let kinds = scratch ? S_KINDS : KINDS;
             let header = kinds[ptr];
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
@@ -1197,7 +661,7 @@ function catalog(cfg) {
                 if (!Array.isArray(data)) {
                     return false;
                 }
-                let arrays = volatile ? V_ARRAYS : ARRAYS;
+                let arrays = scratch ? S_ARRAYS : ARRAYS;
                 let elemType = arrays[ri];
                 let length = data.length;
                 for (let i = 0; i < length; i++) {
@@ -1211,8 +675,8 @@ function catalog(cfg) {
                 if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                     return false;
                 }
-                let objects = volatile ? V_OBJECTS : OBJECTS;
-                let slab = volatile ? V_SLAB : SLAB;
+                let objects = scratch ? S_OBJECTS : OBJECTS;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = objects[ri * 2];
                 let length = objects[ri * 2 + 1];
                 for (let i = 0; i < length; i++) {
@@ -1231,8 +695,8 @@ function catalog(cfg) {
                 if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                     return false;
                 }
-                let unions = volatile ? V_UNIONS : UNIONS;
-                let slab = volatile ? V_SLAB : SLAB;
+                let unions = scratch ? S_UNIONS : UNIONS;
+                let slab = scratch ? S_SLAB : SLAB;
                 let discKey = KEY_INDEX.get(unions[ri * 3 + 2]);
                 if (discKey === void 0) {
                     return false;
@@ -1257,8 +721,8 @@ function catalog(cfg) {
                 if (!Array.isArray(data)) {
                     return false;
                 }
-                let tuples = volatile ? V_TUPLES : TUPLES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let tuples = scratch ? S_TUPLES : TUPLES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = tuples[ri * 2];
                 let length = tuples[ri * 2 + 1];
                 if (data.length !== length) {
@@ -1285,8 +749,8 @@ function catalog(cfg) {
                 return true;
             }
             if (ct === K_OR) {
-                let matches = volatile ? V_MATCHES : MATCHES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let matches = scratch ? S_MATCHES : MATCHES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = matches[ri * 2];
                 let count = matches[ri * 2 + 1];
                 for (let i = 0; i < count; i++) {
@@ -1297,8 +761,8 @@ function catalog(cfg) {
                 return false;
             }
             if (ct === K_EXCLUSIVE) {
-                let matches = volatile ? V_MATCHES : MATCHES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let matches = scratch ? S_MATCHES : MATCHES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = matches[ri * 2];
                 let count = matches[ri * 2 + 1];
                 let matchCount = 0;
@@ -1313,8 +777,8 @@ function catalog(cfg) {
                 return matchCount === 1;
             }
             if (ct === K_INTERSECT) {
-                let matches = volatile ? V_MATCHES : MATCHES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let matches = scratch ? S_MATCHES : MATCHES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = matches[ri * 2];
                 let count = matches[ri * 2 + 1];
                 for (let i = 0; i < count; i++) {
@@ -1328,8 +792,8 @@ function catalog(cfg) {
                 return !_conform(data, ri, reify);
             }
             if (ct === K_CONDITIONAL) {
-                let matches = volatile ? V_MATCHES : MATCHES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let matches = scratch ? S_MATCHES : MATCHES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = matches[ri * 2];
                 let ifType = slab[offset];
                 let thenType = slab[offset + 1];
@@ -1370,7 +834,7 @@ function catalog(cfg) {
      * @returns {void}
      */
     function _diagnose(data, typedef, path, errors) {
-        const kinds = (typedef & VOLATILE) === 0 ? KINDS : V_KINDS;
+        const kinds = (typedef & SCRATCH) === 0 ? KINDS : S_KINDS;
         if (data === void 0) {
             if (!(typedef & OPTIONAL)) {
                 errors.push({ path, message: 'unexpected undefined, expected ' + describeType(typedef, kinds) });
@@ -1384,9 +848,9 @@ function catalog(cfg) {
             return;
         }
         if (typedef & COMPLEX) {
-            let volatile = (typedef & VOLATILE) !== 0;
+            let scratch = (typedef & SCRATCH) !== 0;
             let ptr = typedef & KIND_MASK;
-            let kinds = volatile ? V_KINDS : KINDS;
+            let kinds = scratch ? S_KINDS : KINDS;
             let header = kinds[ptr];
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
@@ -1411,7 +875,7 @@ function catalog(cfg) {
                     errors.push({ path, message: 'expected array, got ' + typeof data });
                     return;
                 }
-                let arrays = volatile ? V_ARRAYS : ARRAYS;
+                let arrays = scratch ? S_ARRAYS : ARRAYS;
                 let itemType = arrays[ri];
                 let length = data.length;
                 for (let i = 0; i < length; i++) {
@@ -1420,8 +884,8 @@ function catalog(cfg) {
                 return;
             }
             if (ct === K_UNION) {
-                let unions = volatile ? V_UNIONS : UNIONS;
-                let slab = volatile ? V_SLAB : SLAB;
+                let unions = scratch ? S_UNIONS : UNIONS;
+                let slab = scratch ? S_SLAB : SLAB;
                 let discKey = KEY_INDEX.get(unions[ri * 3 + 2]);
                 if (discKey === void 0) {
                     errors.push({ path, message: '!! CRITICAL ERROR !! Please file an issue at Github !!' });
@@ -1452,8 +916,8 @@ function catalog(cfg) {
                     errors.push({ path, message: 'expected object, got ' + typeof data });
                     return;
                 }
-                let objects = volatile ? V_OBJECTS : OBJECTS;
-                let slab = volatile ? V_SLAB : SLAB;
+                let objects = scratch ? S_OBJECTS : OBJECTS;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = objects[ri * 2];
                 let length = objects[ri * 2 + 1];
                 for (let i = 0; i < length; i++) {
@@ -1477,8 +941,8 @@ function catalog(cfg) {
                     errors.push({ path, message: 'expected tuple, got ' + typeof data });
                     return;
                 }
-                let tuples = volatile ? V_TUPLES : TUPLES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let tuples = scratch ? S_TUPLES : TUPLES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = tuples[ri * 2];
                 let length = tuples[ri * 2 + 1];
                 if (data.length !== length) {
@@ -1503,8 +967,8 @@ function catalog(cfg) {
                 return;
             }
             if (ct === K_OR) {
-                let matches = volatile ? V_MATCHES : MATCHES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let matches = scratch ? S_MATCHES : MATCHES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = matches[ri * 2];
                 let count = matches[ri * 2 + 1];
                 for (let i = 0; i < count; i++) {
@@ -1516,8 +980,8 @@ function catalog(cfg) {
                 return;
             }
             if (ct === K_EXCLUSIVE) {
-                let matches = volatile ? V_MATCHES : MATCHES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let matches = scratch ? S_MATCHES : MATCHES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = matches[ri * 2];
                 let count = matches[ri * 2 + 1];
                 let matchCount = 0;
@@ -1534,8 +998,8 @@ function catalog(cfg) {
                 return;
             }
             if (ct === K_INTERSECT) {
-                let matches = volatile ? V_MATCHES : MATCHES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let matches = scratch ? S_MATCHES : MATCHES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = matches[ri * 2];
                 let count = matches[ri * 2 + 1];
                 for (let i = 0; i < count; i++) {
@@ -1552,8 +1016,8 @@ function catalog(cfg) {
                 return;
             }
             if (ct === K_CONDITIONAL) {
-                let matches = volatile ? V_MATCHES : MATCHES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let matches = scratch ? S_MATCHES : MATCHES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = matches[ri * 2];
                 let ifType = slab[offset];
                 let thenType = slab[offset + 1];
@@ -1625,11 +1089,11 @@ function catalog(cfg) {
      * @param {*} value
      * @param {number} primBits
      * @param {number} valIdx
-     * @param {boolean} volatile
+     * @param {boolean} scratch
      * @returns {boolean}
      */
-    function runPrimValidator(value, primBits, valIdx, volatile) {
-        let vals = volatile ? V_VALIDATORS : VALIDATORS;
+    function runPrimValidator(value, primBits, valIdx, scratch) {
+        let vals = scratch ? S_VALIDATORS : VALIDATORS;
         let vHeader = vals[valIdx] | 0;
         let base = valIdx + 1;
         if (typeof value === 'string') {
@@ -1647,7 +1111,7 @@ function catalog(cfg) {
             }
             if (vHeader & V_STR_PATTERN) {
                 let p = base + popcnt16(vHeader & (V_STR_PATTERN - 1));
-                let regexCache = volatile ? V_REGEX_CACHE : REGEX_CACHE;
+                let regexCache = scratch ? S_REGEX_CACHE : REGEX_CACHE;
                 if (!regexCache[vals[p] | 0].test(value)) {
                     return false;
                 }
@@ -1725,11 +1189,11 @@ function catalog(cfg) {
     /**
      * @param {!Array<*>} data
      * @param {number} valIdx
-     * @param {boolean} volatile
+     * @param {boolean} scratch
      * @returns {boolean}
      */
-    function runArrayValidator(data, valIdx, volatile) {
-        let vals = volatile ? V_VALIDATORS : VALIDATORS;
+    function runArrayValidator(data, valIdx, scratch) {
+        let vals = scratch ? S_VALIDATORS : VALIDATORS;
         let vHeader = vals[valIdx] | 0;
         let base = valIdx + 1;
         if (vHeader & V_ARR_MIN) {
@@ -1775,13 +1239,13 @@ function catalog(cfg) {
     /**
      * @param {!Record<string,any>} data
      * @param {number} valIdx
-     * @param {boolean} volatile
+     * @param {boolean} scratch
      * @param {number} ri
      * @returns {boolean}
      */
-    function runObjectValidator(data, valIdx, volatile, ri) {
-        let vals = volatile ? V_VALIDATORS : VALIDATORS;
-        let regexCache = volatile ? V_REGEX_CACHE : REGEX_CACHE;
+    function runObjectValidator(data, valIdx, scratch, ri) {
+        let vals = scratch ? S_VALIDATORS : VALIDATORS;
+        let regexCache = scratch ? S_REGEX_CACHE : REGEX_CACHE;
         let vHeader = vals[valIdx] | 0;
         let p = valIdx + 1;
         let keys = Object.keys(data);
@@ -1839,8 +1303,8 @@ function catalog(cfg) {
             }
         }
         if (vHeader & V_OBJ_NO_ADD) {
-            let objects = volatile ? V_OBJECTS : OBJECTS;
-            let slab = volatile ? V_SLAB : SLAB;
+            let objects = scratch ? S_OBJECTS : OBJECTS;
+            let slab = scratch ? S_SLAB : SLAB;
             let offset = objects[ri * 2];
             let length = objects[ri * 2 + 1];
             for (let ki = 0; ki < keyCount; ki++) {
@@ -1902,9 +1366,9 @@ function catalog(cfg) {
             // COMPLEX types: fall through to kind handler (needed for K_CONDITIONAL)
         }
         if (typedef & COMPLEX) {
-            let volatile = (typedef & VOLATILE) !== 0;
+            let scratch = (typedef & SCRATCH) !== 0;
             let ptr = typedef & KIND_MASK;
-            let kinds = volatile ? V_KINDS : KINDS;
+            let kinds = scratch ? S_KINDS : KINDS;
             let header = kinds[ptr];
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
@@ -1914,20 +1378,20 @@ function catalog(cfg) {
                     return false;
                 }
                 if (header & HAS_VALIDATOR) {
-                    return runPrimValidator(data, primBits, ri, volatile);
+                    return runPrimValidator(data, primBits, ri, scratch);
                 }
                 return true;
             }
             if (ct === K_ARRAY) {
                 if (!Array.isArray(data)) return false;
-                let arrays = volatile ? V_ARRAYS : ARRAYS;
+                let arrays = scratch ? S_ARRAYS : ARRAYS;
                 let innerType = arrays[ri];
                 let length = data.length;
                 for (let i = 0; i < length; i++) {
                     if (!_validateSlot(data[i], innerType)) return false;
                 }
                 if (header & HAS_VALIDATOR) {
-                    return runArrayValidator(data, kinds[ptr + 2], volatile);
+                    return runArrayValidator(data, kinds[ptr + 2], scratch);
                 }
                 return true;
             }
@@ -1935,8 +1399,8 @@ function catalog(cfg) {
                 if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                     return false;
                 }
-                let unions = volatile ? V_UNIONS : UNIONS;
-                let slab = volatile ? V_SLAB : SLAB;
+                let unions = scratch ? S_UNIONS : UNIONS;
+                let slab = scratch ? S_SLAB : SLAB;
                 let discKey = KEY_INDEX.get(unions[ri * 3 + 2]);
                 if (discKey === void 0) {
                     return false;
@@ -1955,8 +1419,8 @@ function catalog(cfg) {
                 if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                     return false;
                 }
-                let objects = volatile ? V_OBJECTS : OBJECTS;
-                let slab = volatile ? V_SLAB : SLAB;
+                let objects = scratch ? S_OBJECTS : OBJECTS;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = objects[ri * 2];
                 let length = objects[ri * 2 + 1];
                 for (let i = 0; i < length; i++) {
@@ -1979,7 +1443,7 @@ function catalog(cfg) {
                     }
                 }
                 if (header & HAS_VALIDATOR) {
-                    return runObjectValidator(data, kinds[ptr + 2], volatile, ri);
+                    return runObjectValidator(data, kinds[ptr + 2], scratch, ri);
                 }
                 return true;
             }
@@ -1987,15 +1451,15 @@ function catalog(cfg) {
                 if (!_validate(data, ri)) {
                     return false;
                 }
-                let callbacks = volatile ? V_CALLBACKS : CALLBACKS;
+                let callbacks = scratch ? S_CALLBACKS : CALLBACKS;
                 return !!callbacks[kinds[ptr + 2]](data);
             }
             if (ct === K_TUPLE) {
                 if (!Array.isArray(data)) {
                     return false;
                 }
-                let tuples = volatile ? V_TUPLES : TUPLES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let tuples = scratch ? S_TUPLES : TUPLES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = tuples[ri * 2];
                 let length = tuples[ri * 2 + 1];
                 if (data.length !== length) {
@@ -2022,8 +1486,8 @@ function catalog(cfg) {
                 return true;
             }
             if (ct === K_OR) {
-                let matches = volatile ? V_MATCHES : MATCHES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let matches = scratch ? S_MATCHES : MATCHES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = matches[ri * 2];
                 let count = matches[ri * 2 + 1];
                 for (let i = 0; i < count; i++) {
@@ -2034,8 +1498,8 @@ function catalog(cfg) {
                 return false;
             }
             if (ct === K_EXCLUSIVE) {
-                let matches = volatile ? V_MATCHES : MATCHES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let matches = scratch ? S_MATCHES : MATCHES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = matches[ri * 2];
                 let count = matches[ri * 2 + 1];
                 let matchCount = 0;
@@ -2050,8 +1514,8 @@ function catalog(cfg) {
                 return matchCount === 1;
             }
             if (ct === K_INTERSECT) {
-                let matches = volatile ? V_MATCHES : MATCHES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let matches = scratch ? S_MATCHES : MATCHES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = matches[ri * 2];
                 let count = matches[ri * 2 + 1];
                 for (let i = 0; i < count; i++) {
@@ -2065,8 +1529,8 @@ function catalog(cfg) {
                 return !_validate(data, ri);
             }
             if (ct === K_CONDITIONAL) {
-                let matches = volatile ? V_MATCHES : MATCHES;
-                let slab = volatile ? V_SLAB : SLAB;
+                let matches = scratch ? S_MATCHES : MATCHES;
+                let slab = scratch ? S_SLAB : SLAB;
                 let offset = matches[ri * 2];
                 let ifType = slab[offset];
                 let thenType = slab[offset + 1];
@@ -2105,38 +1569,38 @@ function catalog(cfg) {
      * Writes pre-resolved [keyId, typedef, ...] pairs to SLAB, registers in OBJECTS.
      * @param {!Array<number>} resolved - sorted [keyId, typedef] pairs
      * @param {number} count - number of properties (resolved.length / 2)
-     * @param {boolean} volatile
+     * @param {boolean} scratch
      * @returns {number} object registry id
      */
-    function registerObject(resolved, count, volatile) {
+    function registerObject(resolved, count, scratch) {
         let required = count * 2;
-        if (volatile) {
-            if (VOL_HEAP.PTR + required > VOL_HEAP.SLAB_LEN) {
-                let buffer = new Uint32Array(VOL_HEAP.SLAB_LEN *= 2);
-                buffer.set(V_SLAB);
-                VOL_HEAP.SLAB = V_SLAB = buffer;
+        if (scratch) {
+            if (SCR_HEAP.PTR + required > SCR_HEAP.SLAB_LEN) {
+                let buffer = new Uint32Array(SCR_HEAP.SLAB_LEN *= 2);
+                buffer.set(S_SLAB);
+                SCR_HEAP.SLAB = S_SLAB = buffer;
             }
-            let offset = VOL_HEAP.PTR;
+            let offset = SCR_HEAP.PTR;
             for (let i = 0; i < required; i++) {
-                V_SLAB[offset + i] = resolved[i];
+                S_SLAB[offset + i] = resolved[i];
             }
-            if ((VOL_HEAP.OBJ_COUNT + 1) * 2 > VOL_HEAP.OBJ_LEN) {
-                let buffer = VOL_HEAP.OBJ_TYPE === U16 ?
-                    new Uint16Array(VOL_HEAP.OBJ_LEN *= 2) :
-                    new Uint32Array(VOL_HEAP.OBJ_LEN *= 2);
-                buffer.set(V_OBJECTS);
-                VOL_HEAP.OBJECTS = V_OBJECTS = buffer;
+            if ((SCR_HEAP.OBJ_COUNT + 1) * 2 > SCR_HEAP.OBJ_LEN) {
+                let buffer = SCR_HEAP.OBJ_TYPE === U16 ?
+                    new Uint16Array(SCR_HEAP.OBJ_LEN *= 2) :
+                    new Uint32Array(SCR_HEAP.OBJ_LEN *= 2);
+                buffer.set(S_OBJECTS);
+                SCR_HEAP.OBJECTS = S_OBJECTS = buffer;
             }
-            if (VOL_HEAP.OBJ_TYPE === U16 && VOL_HEAP.PTR + required > 65535) {
-                let buffer = new Uint32Array(VOL_HEAP.OBJ_LEN);
-                buffer.set(V_OBJECTS);
-                VOL_HEAP.OBJECTS = V_OBJECTS = buffer;
-                VOL_HEAP.OBJ_TYPE = U32;
+            if (SCR_HEAP.OBJ_TYPE === U16 && SCR_HEAP.PTR + required > 65535) {
+                let buffer = new Uint32Array(SCR_HEAP.OBJ_LEN);
+                buffer.set(S_OBJECTS);
+                SCR_HEAP.OBJECTS = S_OBJECTS = buffer;
+                SCR_HEAP.OBJ_TYPE = U32;
             }
-            let id = VOL_HEAP.OBJ_COUNT++;
-            V_OBJECTS[id * 2] = offset;
-            V_OBJECTS[id * 2 + 1] = count;
-            VOL_HEAP.PTR += required;
+            let id = SCR_HEAP.OBJ_COUNT++;
+            S_OBJECTS[id * 2] = offset;
+            S_OBJECTS[id * 2 + 1] = count;
+            SCR_HEAP.PTR += required;
             return id;
         }
         if (HEAP.PTR + required > HEAP.SLAB_LEN) {
@@ -2171,18 +1635,18 @@ function catalog(cfg) {
     /**
      * Registers an element type in ARRAYS.
      * @param {number} elemType
-     * @param {boolean} volatile
+     * @param {boolean} scratch
      * @returns {number} array registry id
      */
-    function registerArray(elemType, volatile) {
-        if (volatile) {
-            let index = VOL_HEAP.ARR_COUNT++;
-            if (index >= VOL_HEAP.ARR_LEN) {
-                let buffer = new Uint32Array(VOL_HEAP.ARR_LEN *= 2);
-                buffer.set(V_ARRAYS);
-                VOL_HEAP.ARRAYS = V_ARRAYS = buffer;
+    function registerArray(elemType, scratch) {
+        if (scratch) {
+            let index = SCR_HEAP.ARR_COUNT++;
+            if (index >= SCR_HEAP.ARR_LEN) {
+                let buffer = new Uint32Array(SCR_HEAP.ARR_LEN *= 2);
+                buffer.set(S_ARRAYS);
+                SCR_HEAP.ARRAYS = S_ARRAYS = buffer;
             }
-            V_ARRAYS[index] = elemType >>> 0;
+            S_ARRAYS[index] = elemType >>> 0;
             return index;
         }
         let index = HEAP.ARR_COUNT++;
@@ -2200,31 +1664,31 @@ function catalog(cfg) {
      * @param {!Array<number>} resolved - [keyId, typedef, ...] pairs
      * @param {number} count - number of variants (resolved.length / 2)
      * @param {number} discKeyId - discriminator key id
-     * @param {boolean} volatile
+     * @param {boolean} scratch
      * @returns {number} union registry id
      */
-    function registerUnion(resolved, count, discKeyId, volatile) {
+    function registerUnion(resolved, count, discKeyId, scratch) {
         let required = count * 2;
-        if (volatile) {
-            if (VOL_HEAP.PTR + required > VOL_HEAP.SLAB_LEN) {
-                let buffer = new Uint32Array(VOL_HEAP.SLAB_LEN *= 2);
-                buffer.set(V_SLAB);
-                VOL_HEAP.SLAB = V_SLAB = buffer;
+        if (scratch) {
+            if (SCR_HEAP.PTR + required > SCR_HEAP.SLAB_LEN) {
+                let buffer = new Uint32Array(SCR_HEAP.SLAB_LEN *= 2);
+                buffer.set(S_SLAB);
+                SCR_HEAP.SLAB = S_SLAB = buffer;
             }
-            let offset = VOL_HEAP.PTR;
+            let offset = SCR_HEAP.PTR;
             for (let i = 0; i < required; i++) {
-                V_SLAB[offset + i] = resolved[i];
+                S_SLAB[offset + i] = resolved[i];
             }
-            VOL_HEAP.PTR += required;
-            let id = VOL_HEAP.UNION_COUNT++;
-            if ((id + 1) * 3 > VOL_HEAP.UNION_LEN) {
-                let buffer = new Uint32Array(VOL_HEAP.UNION_LEN *= 2);
-                buffer.set(V_UNIONS);
-                VOL_HEAP.UNIONS = V_UNIONS = buffer;
+            SCR_HEAP.PTR += required;
+            let id = SCR_HEAP.UNION_COUNT++;
+            if ((id + 1) * 3 > SCR_HEAP.UNION_LEN) {
+                let buffer = new Uint32Array(SCR_HEAP.UNION_LEN *= 2);
+                buffer.set(S_UNIONS);
+                SCR_HEAP.UNIONS = S_UNIONS = buffer;
             }
-            V_UNIONS[id * 3] = offset;
-            V_UNIONS[id * 3 + 1] = count;
-            V_UNIONS[id * 3 + 2] = discKeyId;
+            S_UNIONS[id * 3] = offset;
+            S_UNIONS[id * 3 + 1] = count;
+            S_UNIONS[id * 3 + 2] = discKeyId;
             return id;
         }
         if (HEAP.PTR + required > HEAP.SLAB_LEN) {
@@ -2249,112 +1713,26 @@ function catalog(cfg) {
         return id;
     }
 
-    /**
-     * @type {uvd.cat.SchemaBuilder<R>}
-     */
-    const t = {
-        object: (def, opts) => objectImpl(def, false, opts),
-        array: (type, opts) => arrayImpl(type, false, opts),
-        union: (disc, variants) => unionImpl(disc, variants, false),
-        refine: (typedef, fn) => refineImpl(typedef, fn, false),
-        tuple: (first, second, third) => tupleArrayImpl(normalizeTypeArgs(first, second, third), false),
-        record: (valueType) => recordImpl(valueType, false),
-        or: (first, second, third) => orImpl(normalizeTypeArgs(first, second, third), false),
-        exclusive: (first, second, third) => exclusiveImpl(normalizeTypeArgs(first, second, third), false),
-        intersect: (first, second, third) => intersectImpl(normalizeTypeArgs(first, second, third), false),
-        not: (typedef) => notImpl(typedef, false),
-        when: (config) => whenImpl(config, false),
-        optional: optional,
-        nullable: nullable,
-        string: primitiveImpl(STRING),
-        number: primitiveImpl(NUMBER),
-        boolean: primitiveImpl(BOOLEAN),
-        bigint: primitiveImpl(BIGINT),
-        date: primitiveImpl(DATE),
-        uri: primitiveImpl(URI),
-    };
-
-    /**
-     * @type {uvd.cat.SchemaBuilder<R>}
-     */
-    const v = {
-        object: (def, opts) => {
-            if (rewindPending) {
-                rewindVolatile();
-            }
-            return objectImpl(def, true, opts);
-        },
-        array: (type, opts) => {
-            if (rewindPending) {
-                rewindVolatile();
-            }
-            return arrayImpl(type, true, opts);
-        },
-        union: (disc, variants) => {
-            if (rewindPending) {
-                rewindVolatile();
-            }
-            return unionImpl(disc, variants, true);
-        },
-        refine: (typedef, fn) => {
-            if (rewindPending) { rewindVolatile(); }
-            return refineImpl(typedef, fn, true);
-        },
-        tuple: (first, second, third) => {
-            if (rewindPending) { rewindVolatile(); }
-            return tupleArrayImpl(normalizeTypeArgs(first, second, third), true);
-        },
-        record: (valueType) => {
-            if (rewindPending) { rewindVolatile(); }
-            return recordImpl(valueType, true);
-        },
-        or: (first, second, third) => {
-            if (rewindPending) { rewindVolatile(); }
-            return orImpl(normalizeTypeArgs(first, second, third), true);
-        },
-        exclusive: (first, second, third) => {
-            if (rewindPending) { rewindVolatile(); }
-            return exclusiveImpl(normalizeTypeArgs(first, second, third), true);
-        },
-        intersect: (first, second, third) => {
-            if (rewindPending) { rewindVolatile(); }
-            return intersectImpl(normalizeTypeArgs(first, second, third), true);
-        },
-        not: (typedef) => {
-            if (rewindPending) { rewindVolatile(); }
-            return notImpl(typedef, true);
-        },
-        when: (config) => {
-            if (rewindPending) { rewindVolatile(); }
-            return whenImpl(config, true);
-        },
-        optional: optional,
-        nullable: nullable,
-        string: volatilePrimitiveImpl(STRING),
-        number: volatilePrimitiveImpl(NUMBER),
-        boolean: volatilePrimitiveImpl(BOOLEAN),
-        bigint: volatilePrimitiveImpl(BIGINT),
-        date: volatilePrimitiveImpl(DATE),
-        uri: volatilePrimitiveImpl(URI),
-    };
-
     let DICT = {
         KEY_DICT,
         KEY_INDEX,
     };
 
     return {
-        t, v, is, guard, conform, validate, diagnose, __heap: {
-            HEAP, VOL_HEAP, DICT,
+        is, guard, conform, validate, diagnose, __heap: {
+            HEAP, SCR_HEAP, DICT,
+            REGEX_CACHE, CALLBACKS, S_REGEX_CACHE, S_CALLBACKS,
             allocKind, allocValidator, allocOnSlab, lookup,
             registerObject, registerArray, registerUnion,
+            rewindPending() { return rewindPending; },
+            rewind() { rewindScratch(); },
         }
     };
 }
 
 export {
     catalog, sortByKeyId,
-    COMPLEX, NULLABLE, OPTIONAL, VOLATILE,
+    COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION, K_REFINE, K_TUPLE,
     K_RECORD, K_OR, K_EXCLUSIVE, K_INTERSECT, K_NOT, K_CONDITIONAL,
     HAS_VALIDATOR,
