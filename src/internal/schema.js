@@ -1,10 +1,10 @@
-/// <reference path="../global.d.ts" />
+/// <reference path="../../global.d.ts" />
 import {
     ANY, NEVER, STRING, NUMBER, INTEGER, BOOLEAN, NULLABLE, ARRAY, OBJECT,
     V_STR_MIN_LEN, V_STR_MAX_LEN,
     V_NUM_MIN, V_NUM_MAX, V_NUM_MULTIPLE, V_NUM_EX_MIN, V_NUM_EX_MAX,
     V_ARR_MIN, V_ARR_MAX, V_ARR_UNIQUE,
-    V_OBJ_MIN, V_OBJ_MAX,
+    V_OBJ_MIN, V_OBJ_MAX, V_OBJ_PAT_PROP, V_OBJ_NO_ADD,
 } from "./const.js";
 
 /**
@@ -42,6 +42,7 @@ export const N_EXCLUSIVE = 8;
 export const N_INTERSECT = 9;
 export const N_NOT = 10;
 export const N_CONDITIONAL = 11;
+export const N_TUPLE = 12;
 export const N_REF = 255;
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -204,7 +205,7 @@ function collectValidators(schema) {
 
     let pattern = schema.pattern;
     if (pattern !== void 0) {
-        let re = new RegExp(pattern);
+        let re = new RegExp(pattern, "u");
         callbacks.push(/** @param {*} d */(d) => typeof d !== 'string' || re.test(d));
     }
 
@@ -310,7 +311,7 @@ function mapSingleTypePrim(type) {
 
 /**
  * @param {JSONSchema|boolean} schema — a JSON Schema document (object or boolean)
- * @returns {uvd.ast.FlatAst}
+ * @returns {uvd.FlatAst}
  */
 export function parseJsonSchema(schema) {
     // ── Core SoA node arrays ──
@@ -509,6 +510,97 @@ export function parseJsonSchema(schema) {
         // ── Composition keywords ──
 
         let allOf = sch.allOf;
+        let anyOf = sch.anyOf;
+        let oneOf = sch.oneOf;
+        let notSchema = sch.not;
+        let ifSchema = sch.if;
+        let hasComposition = allOf !== void 0 || anyOf !== void 0 || oneOf !== void 0
+            || notSchema !== void 0 || ifSchema !== void 0;
+        // Count how many composition keywords are present
+        let compositionCount = (allOf !== void 0 ? 1 : 0) + (anyOf !== void 0 ? 1 : 0)
+            + (oneOf !== void 0 ? 1 : 0) + (notSchema !== void 0 ? 1 : 0)
+            + (ifSchema !== void 0 ? 1 : 0);
+
+        // ── Type + validators + structural keywords ──
+
+        let { vHeader, payloads: vPayloadArr, callbacks: cbs } = collectValidators(sch);
+        let typeVal = sch.type;
+        const hasType = typeVal !== void 0;
+        const hasVHeader = vHeader !== 0;
+        const hasCbs = cbs.length > 0;
+
+        let props = sch.properties;
+        let required = sch.required;
+        let items = sch.items;
+        let additionalProps = sch.additionalProperties;
+        let patternProps = sch.patternProperties;
+        let prefixItems = sch.prefixItems;
+        const hasProps = props !== void 0 || required !== void 0;
+        const hasItems = items !== void 0;
+        const hasAdditionalProps = additionalProps !== void 0;
+        const hasPatternProps = patternProps !== void 0;
+        const hasPrefixItems = prefixItems !== void 0;
+
+        let hasSiblings = hasType || hasVHeader || hasCbs || hasProps || hasItems
+            || hasAdditionalProps || hasPatternProps || hasPrefixItems;
+
+        // If composition keywords coexist with structural/type/validator keywords,
+        // or multiple composition keywords exist at the same level,
+        // wrap everything in an implicit allOf.
+        if ((hasComposition && hasSiblings) || compositionCount > 1) {
+            // Collect sub-schemas to combine via allOf
+            /** @type {Array<*>} */
+            let parts = [];
+
+            // Sibling structural/type/validator keywords → separate sub-schema
+            if (hasSiblings) {
+                /** @type {Record<string, any>} */
+                let siblingSchema = {};
+                if (hasType) siblingSchema.type = typeVal;
+                if (props !== void 0) siblingSchema.properties = props;
+                if (required !== void 0) siblingSchema.required = required;
+                if (items !== void 0) siblingSchema.items = items;
+                if (hasAdditionalProps) siblingSchema.additionalProperties = additionalProps;
+                if (hasPatternProps) siblingSchema.patternProperties = patternProps;
+                if (hasPrefixItems) siblingSchema.prefixItems = prefixItems;
+                for (let key of ['minLength', 'maxLength', 'minimum', 'maximum',
+                    'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
+                    'minItems', 'maxItems', 'uniqueItems',
+                    'minProperties', 'maxProperties', 'pattern',
+                    'enum', 'const']) {
+                    if (sch[key] !== void 0) siblingSchema[key] = sch[key];
+                }
+                parts.push(siblingSchema);
+            }
+
+            // Each composition keyword becomes its own sub-schema
+            if (allOf !== void 0) parts.push({ allOf });
+            if (anyOf !== void 0) parts.push({ anyOf });
+            if (oneOf !== void 0) parts.push({ oneOf });
+            if (notSchema !== void 0) parts.push({ not: notSchema });
+            if (ifSchema !== void 0) {
+                /** @type {Record<string, any>} */
+                let ifPart = { if: ifSchema };
+                if (sch.then !== void 0) ifPart.then = sch.then;
+                if (sch.else !== void 0) ifPart.else = sch.else;
+                parts.push(ifPart);
+            }
+
+            // Wrap in implicit allOf
+            let edgeBase = astEdges.length;
+            astKinds[nodeId] = N_INTERSECT;
+            astChild0[nodeId] = edgeBase;
+            astChild1[nodeId] = parts.length;
+
+            for (let i = 0; i < parts.length; i++) {
+                let slot = astEdges.length;
+                astEdges.push(0);
+                let partId = allocNode();
+                pushFrame(parts[i], partId, LINK_EDGE, slot);
+            }
+            continue;
+        }
+
         if (allOf !== void 0) {
             let edgeBase = astEdges.length;
             astKinds[nodeId] = N_INTERSECT;
@@ -523,7 +615,6 @@ export function parseJsonSchema(schema) {
             continue;
         }
 
-        let anyOf = sch.anyOf;
         if (anyOf !== void 0) {
             let edgeBase = astEdges.length;
             astKinds[nodeId] = N_OR;
@@ -538,7 +629,6 @@ export function parseJsonSchema(schema) {
             continue;
         }
 
-        let oneOf = sch.oneOf;
         if (oneOf !== void 0) {
             let edgeBase = astEdges.length;
             astKinds[nodeId] = N_EXCLUSIVE;
@@ -553,7 +643,6 @@ export function parseJsonSchema(schema) {
             continue;
         }
 
-        let notSchema = sch.not;
         if (notSchema !== void 0) {
             let childId = allocNode();
             astKinds[nodeId] = N_NOT;
@@ -562,7 +651,6 @@ export function parseJsonSchema(schema) {
             continue;
         }
 
-        let ifSchema = sch.if;
         if (ifSchema !== void 0) {
             let edgeBase = astEdges.length;
             astEdges.push(SENTINEL, SENTINEL, SENTINEL); // [if, then, else]
@@ -585,22 +673,9 @@ export function parseJsonSchema(schema) {
             continue;
         }
 
-        // ── Type + validators + structural keywords ──
-
-        let { vHeader, payloads: vPayloadArr, callbacks: cbs } = collectValidators(sch);
-        let typeVal = sch.type;
-        const hasType = typeVal !== void 0;
-        const hasVHeader = vHeader !== 0;
-        const hasCbs = cbs.length > 0;
-
-        let props = sch.properties;
-        let required = sch.required;
-        let items = sch.items;
-        const hasProps = props !== void 0 || required !== void 0;
-        const hasItems = items !== void 0;
-
         // Empty schema {} → matches everything
-        if (!hasType && !hasVHeader && !hasCbs && !hasProps && !hasItems) {
+        if (!hasType && !hasVHeader && !hasCbs && !hasProps && !hasItems
+            && !hasAdditionalProps && !hasPatternProps && !hasPrefixItems) {
             astKinds[nodeId] = N_PRIM;
             astFlags[nodeId] = (ANY | NULLABLE) >>> 0;
             continue;
@@ -649,8 +724,8 @@ export function parseJsonSchema(schema) {
             }
         }
 
-        // ── Object structural node (properties / required) ──
-        if (hasProps) {
+        // ── Object structural node (properties / required / additionalProperties / patternProperties) ──
+        if (hasProps || hasAdditionalProps || hasPatternProps) {
             let propObj = props || Object.create(null);
             let propKeys = Object.keys(propObj);
             let requiredSet = required ? new Set(required) : new Set();
@@ -706,8 +781,92 @@ export function parseJsonSchema(schema) {
                 pushFrame(childSchema, childId, LINK_EDGE, childSlot);
             }
 
+            // additionalProperties: store child node id after property edges
+            // astFlags bit 0 = has additionalProperties child
+            let objVHeader = vHeader;
+            if (hasAdditionalProps && additionalProps !== true) {
+                if (additionalProps === false) {
+                    objVHeader |= V_OBJ_NO_ADD;
+                } else {
+                    // Schema → compile it, store as extra edge after properties
+                    objVHeader |= V_OBJ_NO_ADD;
+                    astFlags[objNodeId] |= 1; // bit 0 = has additionalProperties child
+                    let addChildId = allocNode();
+                    let addSlot = astEdges.length;
+                    astEdges.push(0); // placeholder
+                    pushFrame(additionalProps, addChildId, LINK_EDGE, addSlot);
+                }
+            }
+
+            // patternProperties: store [pattern, childNodeId] pairs after properties
+            // astFlags bit 1 = has patternProperties children
+            if (hasPatternProps) {
+                let patKeys = Object.keys(patternProps);
+                astFlags[objNodeId] |= 2; // bit 1 = has patternProperties
+                // Store pattern count then [patternString, childNodeId] pairs
+                astEdges.push(patKeys.length);
+                for (let i = 0; i < patKeys.length; i++) {
+                    let pat = patKeys[i];
+                    let patNameIdx = propNames.length;
+                    propNames.push(pat);
+                    astEdges.push(patNameIdx); // pattern string index
+                    let patChildId = allocNode();
+                    let patSlot = astEdges.length;
+                    astEdges.push(0); // placeholder for child node id
+                    pushFrame(patternProps[pat], patChildId, LINK_EDGE, patSlot);
+                }
+            }
+
             // Attach validators (minProperties, maxProperties, etc.)
-            if (hasVHeader) writeValidators(objNodeId, vHeader, vPayloadArr);
+            if (objVHeader !== 0 || hasVHeader) {
+                writeValidators(objNodeId, objVHeader, vPayloadArr);
+            }
+            continue;
+        }
+
+        // ── Tuple structural node (prefixItems) ──
+        if (hasPrefixItems) {
+            let isExplicitArray = typeStr === 'array';
+            let tupleNodeId;
+
+            if (isExplicitArray) {
+                tupleNodeId = typeNodeId;
+            } else {
+                tupleNodeId = allocNode();
+                let ifId = allocNode();
+                astKinds[ifId] = N_PRIM;
+                astFlags[ifId] = ARRAY;
+
+                let condBase = astEdges.length;
+                astEdges.push(ifId, tupleNodeId, SENTINEL);
+                astKinds[typeNodeId] = N_CONDITIONAL;
+                astChild0[typeNodeId] = condBase;
+            }
+
+            // Write N_TUPLE: astChild0 = edge offset, astChild1 = prefix length
+            // astFlags bit 0 = has items (rest type) child
+            let edgeBase = astEdges.length;
+            astKinds[tupleNodeId] = N_TUPLE;
+            astChild0[tupleNodeId] = edgeBase;
+            astChild1[tupleNodeId] = prefixItems.length;
+
+            for (let i = 0; i < prefixItems.length; i++) {
+                let slot = astEdges.length;
+                astEdges.push(0); // placeholder
+                let childId = allocNode();
+                pushFrame(prefixItems[i], childId, LINK_EDGE, slot);
+            }
+
+            // items alongside prefixItems → rest type
+            if (hasItems) {
+                astFlags[tupleNodeId] |= 1; // bit 0 = has rest type child
+                let restSlot = astEdges.length;
+                astEdges.push(0);
+                let restChildId = allocNode();
+                pushFrame(items, restChildId, LINK_EDGE, restSlot);
+            }
+
+            if (hasVHeader) writeValidators(tupleNodeId, vHeader, vPayloadArr);
             continue;
         }
 

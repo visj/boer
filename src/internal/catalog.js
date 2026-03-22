@@ -1,8 +1,8 @@
-/// <reference path="../global.d.ts" />
-import { config, malloc } from './config.js';
+/// <reference path="../../global.d.ts" />
+import { config, heap } from './config.js';
 import {
     COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
-    ANY, SIMPLE, PRIM_MASK, KIND_MASK,
+    ANY, NEVER, SIMPLE, PRIM_MASK, KIND_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION,
     K_REFINE, K_TUPLE, K_RECORD, K_OR, K_EXCLUSIVE,
     K_INTERSECT, K_NOT, K_CONDITIONAL,
@@ -16,7 +16,7 @@ import {
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
     NOT_STRICT, STRICT_REJECT, STRICT_DELETE, STRICT_PROTO,
-    STRICT_MODE_MASK, U16, U32, FAIL, codepointLen, hasOwnProperty, toString
+    STRICT_MODE_MASK, FAIL, codepointLen, hasOwnProperty, toString
 } from './const.js';
 import {
     sortByKeyId, parseValue, _isValue, describeType
@@ -24,13 +24,13 @@ import {
 
 /**
  * @template {symbol} R
- * @param {uvd.cat.Config=} cfg 
- * @returns {uvd.cat.Catalog<R>}
+ * @param {uvd.Config=} cfg 
+ * @returns {uvd.Catalog<R>}
  */
 function catalog(cfg) {
     cfg = config(cfg);
-    let HEAP = malloc(cfg.heap);
-    let SCR_HEAP = malloc(cfg.scratch);
+    let HEAP = heap(cfg.heap);
+    let SCR_HEAP = heap(cfg.scratch);
 
     // Primary heap store
     let SLAB = HEAP.SLAB;
@@ -207,45 +207,23 @@ function catalog(cfg) {
             let tuples = scratch ? S_TUPLES : TUPLES;
             let id = heap.TUP_COUNT++;
 
-            if ((id + 1) * 2 > heap.TUP_LEN) {
+            if ((id + 1) * 3 > heap.TUP_LEN) {
                 if (scratch) {
-                    let buffer = SCR_HEAP.TUP_TYPE === U16 ?
-                        new Uint16Array(SCR_HEAP.TUP_LEN *= 2) :
-                        new Uint32Array(SCR_HEAP.TUP_LEN *= 2);
+                    let buffer = new Uint32Array(SCR_HEAP.TUP_LEN *= 2);
                     buffer.set(S_TUPLES);
                     SCR_HEAP.TUPLES = S_TUPLES = buffer;
                     tuples = S_TUPLES;
                 } else {
-                    let buffer = HEAP.TUP_TYPE === U16 ?
-                        new Uint16Array(HEAP.TUP_LEN *= 2) :
-                        new Uint32Array(HEAP.TUP_LEN *= 2);
+                    let buffer = new Uint32Array(HEAP.TUP_LEN *= 2);
                     buffer.set(TUPLES);
                     HEAP.TUPLES = TUPLES = buffer;
                     tuples = TUPLES;
                 }
             }
 
-            // Check U16 overflow
-            if (scratch) {
-                if (SCR_HEAP.TUP_TYPE === U16 && offset > 65535) {
-                    let buffer = new Uint32Array(SCR_HEAP.TUP_LEN);
-                    buffer.set(S_TUPLES);
-                    SCR_HEAP.TUPLES = S_TUPLES = buffer;
-                    SCR_HEAP.TUP_TYPE = U32;
-                    tuples = S_TUPLES;
-                }
-            } else {
-                if (HEAP.TUP_TYPE === U16 && offset > 65535) {
-                    let buffer = new Uint32Array(HEAP.TUP_LEN);
-                    buffer.set(TUPLES);
-                    HEAP.TUPLES = TUPLES = buffer;
-                    HEAP.TUP_TYPE = U32;
-                    tuples = TUPLES;
-                }
-            }
-
-            tuples[id * 2] = offset;
-            tuples[id * 2 + 1] = count;
+            tuples[id * 3] = offset;
+            tuples[id * 3 + 1] = count;
+            tuples[id * 3 + 2] = NEVER; // exact length (programmatic API default)
             return id;
         }
 
@@ -255,36 +233,14 @@ function catalog(cfg) {
 
         if ((id + 1) * 2 > heap.MAT_LEN) {
             if (scratch) {
-                let buffer = SCR_HEAP.MAT_TYPE === U16 ?
-                    new Uint16Array(SCR_HEAP.MAT_LEN *= 2) :
-                    new Uint32Array(SCR_HEAP.MAT_LEN *= 2);
+                let buffer = new Uint32Array(SCR_HEAP.MAT_LEN *= 2);
                 buffer.set(S_MATCHES);
                 SCR_HEAP.MATCHES = S_MATCHES = buffer;
                 matches = S_MATCHES;
             } else {
-                let buffer = HEAP.MAT_TYPE === U16 ?
-                    new Uint16Array(HEAP.MAT_LEN *= 2) :
-                    new Uint32Array(HEAP.MAT_LEN *= 2);
+                let buffer = new Uint32Array(HEAP.MAT_LEN *= 2);
                 buffer.set(MATCHES);
                 HEAP.MATCHES = MATCHES = buffer;
-                matches = MATCHES;
-            }
-        }
-
-        if (scratch) {
-            if (SCR_HEAP.MAT_TYPE === U16 && offset > 65535) {
-                let buffer = new Uint32Array(SCR_HEAP.MAT_LEN);
-                buffer.set(S_MATCHES);
-                SCR_HEAP.MATCHES = S_MATCHES = buffer;
-                SCR_HEAP.MAT_TYPE = U32;
-                matches = S_MATCHES;
-            }
-        } else {
-            if (HEAP.MAT_TYPE === U16 && offset > 65535) {
-                let buffer = new Uint32Array(HEAP.MAT_LEN);
-                buffer.set(MATCHES);
-                HEAP.MATCHES = MATCHES = buffer;
-                HEAP.MAT_TYPE = U32;
                 matches = MATCHES;
             }
         }
@@ -311,7 +267,9 @@ function catalog(cfg) {
         let vm = type & PRIM_MASK;
         if (vm !== 0) {
             let result = parseValue(data, vm, reify);
-            if (result === FAIL) return false;
+            if (result === FAIL) {
+                return false;
+            }
             holder[slot] = result;
             return true;
         }
@@ -378,8 +336,8 @@ function catalog(cfg) {
                 }
                 let objects = scratch ? S_OBJECTS : OBJECTS;
                 let slab = scratch ? S_SLAB : SLAB;
-                let offset = objects[ri * 2];
-                let length = objects[ri * 2 + 1];
+                let offset = objects[ri * 3];
+                let length = objects[ri * 3 + 1];
                 for (let i = 0; i < length; i++) {
                     let key = KEY_INDEX.get(slab[offset + (i * 2)]);
                     if (key === void 0) {
@@ -481,9 +439,10 @@ function catalog(cfg) {
                 }
                 let tuples = scratch ? S_TUPLES : TUPLES;
                 let slab = scratch ? S_SLAB : SLAB;
-                let offset = tuples[ri * 2];
-                let length = tuples[ri * 2 + 1];
-                if (data.length !== length) {
+                let offset = tuples[ri * 3];
+                let length = tuples[ri * 3 + 1];
+                let restType = tuples[ri * 3 + 2];
+                if (data.length < length) {
                     return false;
                 }
                 for (let i = 0; i < length; i++) {
@@ -508,6 +467,13 @@ function catalog(cfg) {
                         continue;
                     }
                     return false;
+                }
+                if (restType !== 0) {
+                    for (let i = length; i < data.length; i++) {
+                        if (!_is(data[i], restType, strict)) {
+                            return false;
+                        }
+                    }
                 }
                 return true;
             }
@@ -622,7 +588,7 @@ function catalog(cfg) {
     /**
      * @template T
      * @param {*} data
-     * @param {uvd.cat.Type<T,R>} typedef
+     * @param {uvd.Type<T,R>} typedef
      * @param {boolean=} preserve
      * @returns {data is T}
      */
@@ -677,8 +643,8 @@ function catalog(cfg) {
                 }
                 let objects = scratch ? S_OBJECTS : OBJECTS;
                 let slab = scratch ? S_SLAB : SLAB;
-                let offset = objects[ri * 2];
-                let length = objects[ri * 2 + 1];
+                let offset = objects[ri * 3];
+                let length = objects[ri * 3 + 1];
                 for (let i = 0; i < length; i++) {
                     let key = KEY_INDEX.get(slab[offset + (i * 2)]);
                     if (key === void 0) {
@@ -723,14 +689,22 @@ function catalog(cfg) {
                 }
                 let tuples = scratch ? S_TUPLES : TUPLES;
                 let slab = scratch ? S_SLAB : SLAB;
-                let offset = tuples[ri * 2];
-                let length = tuples[ri * 2 + 1];
-                if (data.length !== length) {
+                let offset = tuples[ri * 3];
+                let length = tuples[ri * 3 + 1];
+                let restType = tuples[ri * 3 + 2];
+                if (data.length < length) {
                     return false;
                 }
                 for (let i = 0; i < length; i++) {
                     if (!_parseSlot(data, i, slab[offset + i], reify)) {
                         return false;
+                    }
+                }
+                if (restType !== 0) {
+                    for (let i = length; i < data.length; i++) {
+                        if (!_parseSlot(data, i, restType, reify)) {
+                            return false;
+                        }
                     }
                 }
                 return true;
@@ -816,11 +790,11 @@ function catalog(cfg) {
     /**
      * @param {*} data
      * @param {number} typedef
-     * @returns {!Array<uvd.cat.PathError>}
+     * @returns {!Array<uvd.PathError>}
      */
     function diagnose(data, typedef) {
         rewindPending = true;
-        /** @type {!Array<uvd.cat.PathError>} */
+        /** @type {!Array<uvd.PathError>} */
         let errors = [];
         _diagnose(data, typedef, '', errors);
         return errors;
@@ -830,7 +804,7 @@ function catalog(cfg) {
      * @param {*} data
      * @param {number} typedef
      * @param {string} path
-     * @param {!Array<uvd.cat.PathError>} errors
+     * @param {!Array<uvd.PathError>} errors
      * @returns {void}
      */
     function _diagnose(data, typedef, path, errors) {
@@ -918,8 +892,8 @@ function catalog(cfg) {
                 }
                 let objects = scratch ? S_OBJECTS : OBJECTS;
                 let slab = scratch ? S_SLAB : SLAB;
-                let offset = objects[ri * 2];
-                let length = objects[ri * 2 + 1];
+                let offset = objects[ri * 3];
+                let length = objects[ri * 3 + 1];
                 for (let i = 0; i < length; i++) {
                     let key = KEY_INDEX.get(slab[offset + (i * 2)]);
                     if (key === void 0) {
@@ -943,14 +917,20 @@ function catalog(cfg) {
                 }
                 let tuples = scratch ? S_TUPLES : TUPLES;
                 let slab = scratch ? S_SLAB : SLAB;
-                let offset = tuples[ri * 2];
-                let length = tuples[ri * 2 + 1];
-                if (data.length !== length) {
-                    errors.push({ path, message: 'expected tuple of length ' + length + ', got length ' + data.length });
+                let offset = tuples[ri * 3];
+                let length = tuples[ri * 3 + 1];
+                let restType = tuples[ri * 3 + 2];
+                if (data.length < length) {
+                    errors.push({ path, message: 'expected tuple of length >= ' + length + ', got length ' + data.length });
                     return;
                 }
                 for (let i = 0; i < length; i++) {
                     _diagnose(data[i], slab[offset + i], path + '[' + i + ']', errors);
+                }
+                if (restType !== 0) {
+                    for (let i = length; i < data.length; i++) {
+                        _diagnose(data[i], restType, path + '[' + i + ']', errors);
+                    }
                 }
                 return;
             }
@@ -1058,7 +1038,7 @@ function catalog(cfg) {
     /**
      * @template T
      * @param {*} data
-     * @param {uvd.cat.Type<T,R>} typedef
+     * @param {uvd.Type<T,R>} typedef
      * @param {number=} strict
      * @returns {data is T}
      */
@@ -1142,7 +1122,9 @@ function catalog(cfg) {
             }
             if (vHeader & V_NUM_MULTIPLE) {
                 let p = base + popcnt16(vHeader & (V_NUM_MULTIPLE - 1));
-                if (value % vals[p] !== 0) {
+                let quotient = value / vals[p];
+                let isMultiple = Math.abs(Math.round(quotient) - quotient) < 1e-8;
+                if (!isMultiple) {
                     return false;
                 }
             }
@@ -1305,31 +1287,56 @@ function catalog(cfg) {
         if (vHeader & V_OBJ_NO_ADD) {
             let objects = scratch ? S_OBJECTS : OBJECTS;
             let slab = scratch ? S_SLAB : SLAB;
-            let offset = objects[ri * 2];
-            let length = objects[ri * 2 + 1];
+            let offset = objects[ri * 3];
+            let length = objects[ri * 3 + 1];
+            let addType = objects[ri * 3 + 2];
             for (let ki = 0; ki < keyCount; ki++) {
                 let keyId = KEY_DICT.get(keys[ki]);
-                if (keyId === void 0) {
-                    return false;
-                }
-                let lo = 0;
-                let hi = length - 1;
-                let missing = true;
-                while (lo <= hi) {
-                    let mid = (lo + hi) >>> 1;
-                    let sk = slab[offset + (mid << 1)];
-                    if (sk === keyId) {
-                        missing = false;
-                        break;
+                let declared = false;
+                if (keyId !== void 0) {
+                    let lo = 0;
+                    let hi = length - 1;
+                    while (lo <= hi) {
+                        let mid = (lo + hi) >>> 1;
+                        let sk = slab[offset + (mid << 1)];
+                        if (sk === keyId) {
+                            declared = true;
+                            break;
+                        }
+                        if (sk < keyId) {
+                            lo = mid + 1;
+                        } else {
+                            hi = mid - 1;
+                        }
                     }
-                    if (sk < keyId) {
-                        lo = mid + 1;
-                    } else {
-                        hi = mid - 1;
-                    }
                 }
-                if (missing) {
-                    return false;
+                if (!declared) {
+                    // Check if matched by patternProperties
+                    let patternMatched = false;
+                    if (vHeader & V_OBJ_PAT_PROP) {
+                        // Scan pattern entries — they were already validated above,
+                        // but we need to know if this key matched any pattern
+                        let pp = valIdx + 1;
+                        if (vHeader & V_OBJ_MIN) pp++;
+                        if (vHeader & V_OBJ_MAX) pp++;
+                        let patternCount = vals[pp++] | 0;
+                        for (let pi = 0; pi < patternCount; pi++) {
+                            let reIdx = vals[pp++] | 0;
+                            pp++; // skip schemaType
+                            if (regexCache[reIdx].test(keys[ki])) {
+                                patternMatched = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!patternMatched) {
+                        if (addType === 0) {
+                            return false;
+                        }
+                        if (!_validate(data[keys[ki]], addType)) {
+                            return false;
+                        }
+                    }
                 }
             }
         }
@@ -1421,8 +1428,8 @@ function catalog(cfg) {
                 }
                 let objects = scratch ? S_OBJECTS : OBJECTS;
                 let slab = scratch ? S_SLAB : SLAB;
-                let offset = objects[ri * 2];
-                let length = objects[ri * 2 + 1];
+                let offset = objects[ri * 3];
+                let length = objects[ri * 3 + 1];
                 for (let i = 0; i < length; i++) {
                     let key = KEY_INDEX.get(slab[offset + (i * 2)]);
                     if (key === void 0) {
@@ -1460,14 +1467,22 @@ function catalog(cfg) {
                 }
                 let tuples = scratch ? S_TUPLES : TUPLES;
                 let slab = scratch ? S_SLAB : SLAB;
-                let offset = tuples[ri * 2];
-                let length = tuples[ri * 2 + 1];
-                if (data.length !== length) {
+                let offset = tuples[ri * 3];
+                let length = tuples[ri * 3 + 1];
+                let restType = tuples[ri * 3 + 2];
+                if (data.length < length) {
                     return false;
                 }
                 for (let i = 0; i < length; i++) {
                     if (!_validateSlot(data[i], slab[offset + i])) {
                         return false;
+                    }
+                }
+                if (restType !== 0) {
+                    for (let i = length; i < data.length; i++) {
+                        if (!_validateSlot(data[i], restType)) {
+                            return false;
+                        }
                     }
                 }
                 return true;
@@ -1553,7 +1568,7 @@ function catalog(cfg) {
     /**
      * @template T
      * @param {*} data
-     * @param {uvd.cat.Type<T,R>} typedef
+     * @param {uvd.Type<T,R>} typedef
      * @returns {data is T}
      */
     function validate(data, typedef) {
@@ -1570,10 +1585,12 @@ function catalog(cfg) {
      * @param {!Array<number>} resolved - sorted [keyId, typedef] pairs
      * @param {number} count - number of properties (resolved.length / 2)
      * @param {boolean} scratch
+     * @param {number} additionalType
      * @returns {number} object registry id
      */
-    function registerObject(resolved, count, scratch) {
+    function registerObject(resolved, count, scratch, additionalType) {
         let required = count * 2;
+        let addType = additionalType !== void 0 ? additionalType : 0;
         if (scratch) {
             if (SCR_HEAP.PTR + required > SCR_HEAP.SLAB_LEN) {
                 let buffer = new Uint32Array(SCR_HEAP.SLAB_LEN *= 2);
@@ -1584,22 +1601,15 @@ function catalog(cfg) {
             for (let i = 0; i < required; i++) {
                 S_SLAB[offset + i] = resolved[i];
             }
-            if ((SCR_HEAP.OBJ_COUNT + 1) * 2 > SCR_HEAP.OBJ_LEN) {
-                let buffer = SCR_HEAP.OBJ_TYPE === U16 ?
-                    new Uint16Array(SCR_HEAP.OBJ_LEN *= 2) :
-                    new Uint32Array(SCR_HEAP.OBJ_LEN *= 2);
+            if ((SCR_HEAP.OBJ_COUNT + 1) * 3 > SCR_HEAP.OBJ_LEN) {
+                let buffer = new Uint32Array(SCR_HEAP.OBJ_LEN *= 2);
                 buffer.set(S_OBJECTS);
                 SCR_HEAP.OBJECTS = S_OBJECTS = buffer;
-            }
-            if (SCR_HEAP.OBJ_TYPE === U16 && SCR_HEAP.PTR + required > 65535) {
-                let buffer = new Uint32Array(SCR_HEAP.OBJ_LEN);
-                buffer.set(S_OBJECTS);
-                SCR_HEAP.OBJECTS = S_OBJECTS = buffer;
-                SCR_HEAP.OBJ_TYPE = U32;
             }
             let id = SCR_HEAP.OBJ_COUNT++;
-            S_OBJECTS[id * 2] = offset;
-            S_OBJECTS[id * 2 + 1] = count;
+            S_OBJECTS[id * 3] = offset;
+            S_OBJECTS[id * 3 + 1] = count;
+            S_OBJECTS[id * 3 + 2] = addType;
             SCR_HEAP.PTR += required;
             return id;
         }
@@ -1608,26 +1618,19 @@ function catalog(cfg) {
             buffer.set(SLAB);
             HEAP.SLAB = SLAB = buffer;
         }
-        if (HEAP.OBJ_TYPE === U16 && HEAP.PTR + required > 65535) {
-            let buffer = new Uint32Array(HEAP.OBJ_LEN);
-            buffer.set(OBJECTS);
-            HEAP.OBJECTS = OBJECTS = buffer;
-            HEAP.OBJ_TYPE = U32;
-        }
         let offset = HEAP.PTR;
         for (let i = 0; i < required; i++) {
             SLAB[offset + i] = resolved[i];
         }
-        if ((HEAP.OBJ_COUNT + 1) * 2 > HEAP.OBJ_LEN) {
-            let buffer = HEAP.OBJ_TYPE === U16 ?
-                new Uint16Array(HEAP.OBJ_LEN *= 2) :
-                new Uint32Array(HEAP.OBJ_LEN *= 2);
+        if ((HEAP.OBJ_COUNT + 1) * 3 > HEAP.OBJ_LEN) {
+            let buffer = new Uint32Array(HEAP.OBJ_LEN *= 2);
             buffer.set(OBJECTS);
             HEAP.OBJECTS = OBJECTS = buffer;
         }
         let id = HEAP.OBJ_COUNT++;
-        OBJECTS[id * 2] = offset;
-        OBJECTS[id * 2 + 1] = count;
+        OBJECTS[id * 3] = offset;
+        OBJECTS[id * 3 + 1] = count;
+        OBJECTS[id * 3 + 2] = addType;
         HEAP.PTR += required;
         return id;
     }

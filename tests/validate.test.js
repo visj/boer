@@ -3,13 +3,12 @@ import {
     BOOLEAN, NUMBER, STRING,
     BIGINT, DATE, URI
 } from 'uvd';
-import { catalog } from 'uvd/catalog';
-import { allocators, $allocators } from 'uvd/alloc';
+import { catalog, allocators, $allocators } from 'uvd/core';
 
 const cat = catalog();
 const { object, array, string, number, boolean, bigint, date, uri, nullable, optional, refine, union } = allocators(cat);
 const { $object, $array, $string, $refine } = $allocators(cat);
-const { is, validate } = cat;
+const { validate } = cat;
 
 describe('validate: primitive builders — no args', () => {
     test('string() returns STRING constant', () => {
@@ -46,14 +45,14 @@ describe('validate: primitive builders — with validators', () => {
 describe('validate: is ignores validators', () => {
     test('is passes structural type even if validator would fail', () => {
         let td = string({ minLength: 5 });
-        expect(is('hi', td)).toBe(true);
-        expect(is('hello world', td)).toBe(true);
-        expect(is(42, td)).toBe(false);
+        expect(validate('hi', td)).toBe(true);
+        expect(validate('hello world', td)).toBe(true);
+        expect(validate(42, td)).toBe(false);
     });
     test('is passes number even if below minimum', () => {
         let td = number({ minimum: 10 });
-        expect(is(5, td)).toBe(true);
-        expect(is('not a number', td)).toBe(false);
+        expect(validate(5, td)).toBe(true);
+        expect(validate('not a number', td)).toBe(false);
     });
 });
 
@@ -164,8 +163,8 @@ describe('validate: array validators', () => {
     });
     test('is ignores array validators', () => {
         let td = array(STRING, { minItems: 5 });
-        expect(is(['a'], td)).toBe(true);
-        expect(is([], td)).toBe(true);
+        expect(validate(['a'], td)).toBe(true);
+        expect(validate([], td)).toBe(true);
     });
     test('array element type still checked', () => {
         let td = array(STRING, { minItems: 1 });
@@ -184,7 +183,7 @@ describe('validate: object validators', () => {
     });
     test('is ignores object validators', () => {
         let td = object({ name: STRING }, { minProperties: 5 });
-        expect(is({ name: 'Alice' }, td)).toBe(true);
+        expect(validate({ name: 'Alice' }, td)).toBe(true);
     });
 });
 
@@ -273,7 +272,7 @@ describe('validate: string format — email', () => {
     });
     test('is ignores format', () => {
         let td = string({ format: 'email' });
-        expect(is('not-an-email', td)).toBe(true);
+        expect(validate('not-an-email', td)).toBe(true);
     });
 });
 
@@ -368,7 +367,7 @@ describe('validate: array contains', () => {
     test('is ignores contains', () => {
         let gt10 = number({ minimum: 10 });
         let td = array(NUMBER, { contains: gt10 });
-        expect(is([1, 2, 3], td)).toBe(true);
+        expect(validate([1, 2, 3], td)).toBe(true);
     });
 });
 
@@ -540,11 +539,11 @@ describe('validate: refine — complex types', () => {
 describe('validate: refine — is ignores callback', () => {
     test('is passes even when refine would reject', () => {
         let td = refine(STRING, () => false);
-        expect(is('anything', td)).toBe(true);
+        expect(validate('anything', td)).toBe(true);
     });
     test('is still validates inner type', () => {
         let td = refine(STRING, () => true);
-        expect(is(42, td)).toBe(false);
+        expect(validate(42, td)).toBe(false);
     });
 });
 
@@ -605,7 +604,7 @@ describe('validate: additionalProperties: false', () => {
     });
     test('is ignores additionalProperties', () => {
         let td = object({ name: STRING }, { additionalProperties: false });
-        expect(is({ name: 'Alice', extra: true }, td)).toBe(true);
+        expect(validate({ name: 'Alice', extra: true }, td)).toBe(true);
     });
     test('combined with other object validators', () => {
         let td = object({ name: STRING }, {

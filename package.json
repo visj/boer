@@ -13,31 +13,11 @@
       "require": "./dist/index.cjs",
       "default": "./dist/index.js"
     },
-    "./catalog": {
-      "types": "./dist/catalog.d.ts",
-      "import": "./dist/catalog.js",
-      "require": "./dist/catalog.cjs",
-      "default": "./dist/catalog.js"
-    },
-    "./ast": {
-      "type": "./dist/ast.d.ts",
-      "import": "./dist/ast.js",
-      "require": "./dist/ast.cjs"
-    },
-    "./schema": {
-      "types": "./dist/schema.d.ts",
-      "import": "./dist/schema.js",
-      "require": "./dist/schema.cjs"
-    },
-    "./alloc": {
-      "types": "./dist/alloc.d.ts",
-      "import": "./dist/alloc.js",
-      "require": "./dist/alloc.cjs"
-    },
-    "./inspect": {
-      "types": "./dist/inspect.d.ts",
-      "import": "./dist/inspect.js",
-      "require": "./dist/inspect.cjs"
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js",
+      "require": "./dist/core.cjs",
+      "default": "./dist/core.js"
     }
   },
   "files": [

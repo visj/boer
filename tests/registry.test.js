@@ -2,9 +2,8 @@ import { describe, test, expect } from 'bun:test';
 import {
     STRING, NUMBER, NULL, UNDEFINED,
     STRICT_REJECT
-} from 'uvd/catalog';
-import { catalog } from 'uvd/catalog';
-import { allocators, $allocators } from 'uvd/alloc';
+} from 'uvd';
+import { catalog, allocators, $allocators } from 'uvd/core';
 
 describe('registry: isolation', () => {
     test('registry() returns an object with is, guard, conform, diagnose, etc.', () => {
@@ -17,7 +16,7 @@ describe('registry: isolation', () => {
         expect(typeof $object).toBe('function');
         expect(typeof $array).toBe('function');
         expect(typeof $union).toBe('function');
-        expect(typeof r.is).toBe('function');
+        expect(typeof r.validate).toBe('function');
         expect(typeof r.guard).toBe('function');
         expect(typeof r.conform).toBe('function');
         expect(typeof r.diagnose).toBe('function');
@@ -33,8 +32,8 @@ describe('registry: isolation', () => {
         let schema2 = t2.object({ x: NUMBER, y: NUMBER });
 
         // Each registry validates its own schemas correctly
-        expect(r1.is({ name: 'Alice', age: 30 }, schema1)).toBe(true);
-        expect(r2.is({ x: 1, y: 2 }, schema2)).toBe(true);
+        expect(r1.validate({ name: 'Alice', age: 30 }, schema1)).toBe(true);
+        expect(r2.validate({ x: 1, y: 2 }, schema2)).toBe(true);
     });
 
     test('cross-registry typedef usage is undefined behavior', () => {
@@ -47,7 +46,7 @@ describe('registry: isolation', () => {
         // Using r1's schema with r2's is is undefined behavior.
         // r2's KINDS/OBJECTS are uninitialized at this index, so the result
         // is unpredictable. We just verify it doesn't throw.
-        expect(() => r2.is({ name: 'Alice' }, schema)).not.toThrow();
+        expect(() => r2.validate({ name: 'Alice' }, schema)).not.toThrow();
     });
 
     test('registries have independent key dictionaries', () => {
@@ -64,8 +63,8 @@ describe('registry: isolation', () => {
         let s1 = t1.object({ alpha: STRING });
         let s2 = t2.object({ beta: NUMBER });
 
-        expect(r1.is({ alpha: 'hello' }, s1)).toBe(true);
-        expect(r2.is({ beta: 42 }, s2)).toBe(true);
+        expect(r1.validate({ alpha: 'hello' }, s1)).toBe(true);
+        expect(r2.validate({ beta: 42 }, s2)).toBe(true);
     });
 
     test('registries support arrays independently', () => {
@@ -77,11 +76,11 @@ describe('registry: isolation', () => {
         let arr1 = t1.array(STRING);
         let arr2 = t2.array(NUMBER);
 
-        expect(r1.is(['a', 'b'], arr1)).toBe(true);
-        expect(r1.is([1, 2], arr1)).toBe(false);
+        expect(r1.validate(['a', 'b'], arr1)).toBe(true);
+        expect(r1.validate([1, 2], arr1)).toBe(false);
 
-        expect(r2.is([1, 2], arr2)).toBe(true);
-        expect(r2.is(['a', 'b'], arr2)).toBe(false);
+        expect(r2.validate([1, 2], arr2)).toBe(true);
+        expect(r2.validate(['a', 'b'], arr2)).toBe(false);
     });
 
     test('registries support unions independently', () => {
@@ -93,9 +92,9 @@ describe('registry: isolation', () => {
             b: t1.object({ kind: STRING, name: STRING })
         });
 
-        expect(r1.is({ kind: 'a', val: 42 }, u)).toBe(true);
-        expect(r1.is({ kind: 'b', name: 'hello' }, u)).toBe(true);
-        expect(r1.is({ kind: 'c' }, u)).toBe(false);
+        expect(r1.validate({ kind: 'a', val: 42 }, u)).toBe(true);
+        expect(r1.validate({ kind: 'b', name: 'hello' }, u)).toBe(true);
+        expect(r1.validate({ kind: 'c' }, u)).toBe(false);
     });
 
     test('registry supports nullable and optional complex types', () => {
@@ -107,10 +106,10 @@ describe('registry: isolation', () => {
             meta: object({ v: STRING }) | NULL | UNDEFINED
         });
 
-        expect(r.is({ data: [1, 2], meta: { v: 'ok' } }, schema)).toBe(true);
-        expect(r.is({ data: null, meta: null }, schema)).toBe(true);
-        expect(r.is({ data: [1, 2] }, schema)).toBe(true); // meta is optional
-        expect(r.is({ data: 'wrong' }, schema)).toBe(false);
+        expect(r.validate({ data: [1, 2], meta: { v: 'ok' } }, schema)).toBe(true);
+        expect(r.validate({ data: null, meta: null }, schema)).toBe(true);
+        expect(r.validate({ data: [1, 2] }, schema)).toBe(true); // meta is optional
+        expect(r.validate({ data: 'wrong' }, schema)).toBe(false);
     });
 
     test('registry conform works with rich types', () => {
@@ -127,8 +126,8 @@ describe('registry: isolation', () => {
         let { object } = allocators(r);
         let schema = object({ name: STRING });
 
-        expect(r.is({ name: 'Alice' }, schema, STRICT_REJECT)).toBe(true);
-        expect(r.is({ name: 'Alice', extra: true }, schema, STRICT_REJECT)).toBe(false);
+        expect(r.validate({ name: 'Alice' }, schema, STRICT_REJECT)).toBe(true);
+        expect(r.validate({ name: 'Alice', extra: true }, schema, STRICT_REJECT)).toBe(false);
     });
 
     test('registry diagnose works', () => {

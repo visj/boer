@@ -1,14 +1,14 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    BOOLEAN, NUMBER, STRING, BIGINT, DATE, URI, PRIMITIVE,
+    BOOLEAN, NUMBER, STRING, BIGINT, DATE, URI, VALUE,
     NULL, UNDEFINED
 } from 'uvd';
-import { catalog } from 'uvd/catalog';
-import { compile } from '../src/ast.js';
+import { catalog } from 'uvd/core';
+import { compile } from '../src/internal/ast.js';
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
     N_EXCLUSIVE, N_INTERSECT, N_NOT, N_CONDITIONAL, N_REF,
-} from '../src/schema.js';
+} from '../src/internal/schema.js';
 
 const SENTINEL = 0xFFFFFFFF;
 
@@ -174,8 +174,8 @@ describe('ast: compile primitives', () => {
         let root = b.prim(STRING);
         let result = compile(cat, b.build(root));
         expect(result.root).toBe(STRING);
-        expect(cat.is('hello', result.root)).toBe(true);
-        expect(cat.is(42, result.root)).toBe(false);
+        expect(cat.validate('hello', result.root)).toBe(true);
+        expect(cat.validate(42, result.root)).toBe(false);
     });
 
     test('nullable primitive', () => {
@@ -183,9 +183,9 @@ describe('ast: compile primitives', () => {
         let b = flatAstBuilder();
         let root = b.prim((STRING | NULL) >>> 0);
         let result = compile(cat, b.build(root));
-        expect(cat.is(null, result.root)).toBe(true);
-        expect(cat.is('hello', result.root)).toBe(true);
-        expect(cat.is(42, result.root)).toBe(false);
+        expect(cat.validate(null, result.root)).toBe(true);
+        expect(cat.validate('hello', result.root)).toBe(true);
+        expect(cat.validate(42, result.root)).toBe(false);
     });
 });
 
@@ -198,9 +198,9 @@ describe('ast: compile objects', () => {
         let root = b.object({ name: nameNode, age: ageNode });
         let result = compile(cat, b.build(root));
         expect(typeof result.root).toBe('number');
-        expect(cat.is({ name: 'Alice', age: 30 }, result.root)).toBe(true);
-        expect(cat.is({ name: 'Alice' }, result.root)).toBe(false);
-        expect(cat.is({ name: 'Alice', age: 'thirty' }, result.root)).toBe(false);
+        expect(cat.validate({ name: 'Alice', age: 30 }, result.root)).toBe(true);
+        expect(cat.validate({ name: 'Alice' }, result.root)).toBe(false);
+        expect(cat.validate({ name: 'Alice', age: 'thirty' }, result.root)).toBe(false);
     });
 
     test('nested objects', () => {
@@ -212,8 +212,8 @@ describe('ast: compile objects', () => {
         let name = b.prim(STRING);
         let root = b.object({ name, address });
         let result = compile(cat, b.build(root));
-        expect(cat.is({ name: 'Bob', address: { street: '123 Main', city: 'NY' } }, result.root)).toBe(true);
-        expect(cat.is({ name: 'Bob', address: { street: '123 Main' } }, result.root)).toBe(false);
+        expect(cat.validate({ name: 'Bob', address: { street: '123 Main', city: 'NY' } }, result.root)).toBe(true);
+        expect(cat.validate({ name: 'Bob', address: { street: '123 Main' } }, result.root)).toBe(false);
     });
 });
 
@@ -224,9 +224,9 @@ describe('ast: compile arrays', () => {
         let elem = b.prim(STRING);
         let root = b.array(elem);
         let result = compile(cat, b.build(root));
-        expect(cat.is(['hello', 'world'], result.root)).toBe(true);
-        expect(cat.is([1, 2, 3], result.root)).toBe(false);
-        expect(cat.is('not array', result.root)).toBe(false);
+        expect(cat.validate(['hello', 'world'], result.root)).toBe(true);
+        expect(cat.validate([1, 2, 3], result.root)).toBe(false);
+        expect(cat.validate('not array', result.root)).toBe(false);
     });
 
     test('array of objects', () => {
@@ -237,8 +237,8 @@ describe('ast: compile arrays', () => {
         let objNode = b.object({ id: idNode, name: nameNode });
         let root = b.array(objNode);
         let result = compile(cat, b.build(root));
-        expect(cat.is([{ id: 1, name: 'Alice' }], result.root)).toBe(true);
-        expect(cat.is([{ id: 'one', name: 'Alice' }], result.root)).toBe(false);
+        expect(cat.validate([{ id: 1, name: 'Alice' }], result.root)).toBe(true);
+        expect(cat.validate([{ id: 'one', name: 'Alice' }], result.root)).toBe(false);
     });
 });
 
@@ -250,9 +250,9 @@ describe('ast: compile or (anyOf)', () => {
         let n = b.prim(NUMBER);
         let root = b.or([s, n]);
         let result = compile(cat, b.build(root));
-        expect(cat.is('hello', result.root)).toBe(true);
-        expect(cat.is(42, result.root)).toBe(true);
-        expect(cat.is(true, result.root)).toBe(false);
+        expect(cat.validate('hello', result.root)).toBe(true);
+        expect(cat.validate(42, result.root)).toBe(true);
+        expect(cat.validate(true, result.root)).toBe(false);
     });
 
     test('complex or', () => {
@@ -264,9 +264,9 @@ describe('ast: compile or (anyOf)', () => {
         let arrNode = b.array(elemNode);
         let root = b.or([objNode, arrNode]);
         let result = compile(cat, b.build(root));
-        expect(cat.is({ name: 'Alice' }, result.root)).toBe(true);
-        expect(cat.is([1, 2, 3], result.root)).toBe(true);
-        expect(cat.is('string', result.root)).toBe(false);
+        expect(cat.validate({ name: 'Alice' }, result.root)).toBe(true);
+        expect(cat.validate([1, 2, 3], result.root)).toBe(true);
+        expect(cat.validate('string', result.root)).toBe(false);
     });
 });
 
@@ -278,9 +278,9 @@ describe('ast: compile exclusive (oneOf)', () => {
         let n = b.prim(NUMBER);
         let root = b.exclusive([s, n]);
         let result = compile(cat, b.build(root));
-        expect(cat.is('hello', result.root)).toBe(true);
-        expect(cat.is(42, result.root)).toBe(true);
-        expect(cat.is(true, result.root)).toBe(false);
+        expect(cat.validate('hello', result.root)).toBe(true);
+        expect(cat.validate(42, result.root)).toBe(true);
+        expect(cat.validate(true, result.root)).toBe(false);
     });
 });
 
@@ -294,8 +294,8 @@ describe('ast: compile intersect (allOf)', () => {
         let obj2 = b.object({ age: ageNode });
         let root = b.intersect([obj1, obj2]);
         let result = compile(cat, b.build(root));
-        expect(cat.is({ name: 'Alice', age: 30 }, result.root)).toBe(true);
-        expect(cat.is({ name: 'Alice' }, result.root)).toBe(false);
+        expect(cat.validate({ name: 'Alice', age: 30 }, result.root)).toBe(true);
+        expect(cat.validate({ name: 'Alice' }, result.root)).toBe(false);
     });
 });
 
@@ -306,8 +306,8 @@ describe('ast: compile not', () => {
         let s = b.prim(STRING);
         let root = b.not(s);
         let result = compile(cat, b.build(root));
-        expect(cat.is(42, result.root)).toBe(true);
-        expect(cat.is('hello', result.root)).toBe(false);
+        expect(cat.validate(42, result.root)).toBe(true);
+        expect(cat.validate('hello', result.root)).toBe(false);
     });
 });
 
@@ -320,9 +320,9 @@ describe('ast: compile conditional (if/then/else)', () => {
         let elseNode = b.prim(NUMBER);
         let root = b.conditional(ifNode, thenNode, elseNode);
         let result = compile(cat, b.build(root));
-        expect(cat.is('hello', result.root)).toBe(true);
-        expect(cat.is(42, result.root)).toBe(true);
-        expect(cat.is(true, result.root)).toBe(false);
+        expect(cat.validate('hello', result.root)).toBe(true);
+        expect(cat.validate(42, result.root)).toBe(true);
+        expect(cat.validate(true, result.root)).toBe(false);
     });
 });
 
@@ -333,9 +333,9 @@ describe('ast: compile refine', () => {
         let inner = b.prim(NUMBER);
         let root = b.refine(inner, (val) => val > 0);
         let result = compile(cat, b.build(root));
-        expect(cat.is(5, result.root)).toBe(true);
-        expect(cat.is(-1, result.root)).toBe(true);
-        expect(cat.is('hello', result.root)).toBe(false);
+        expect(cat.validate(5, result.root)).toBe(true);
+        expect(cat.validate(-1, result.root)).toBe(true);
+        expect(cat.validate('hello', result.root)).toBe(false);
         expect(cat.validate(5, result.root)).toBe(true);
         expect(cat.validate(-1, result.root)).toBe(false);
         expect(cat.validate('hello', result.root)).toBe(false);
@@ -355,8 +355,8 @@ describe('ast: compile refs (defs)', () => {
         let result = compile(cat, b.build(root, [addressNode], ['Address']));
         expect(typeof result.root).toBe('number');
         expect(typeof result.defs['Address']).toBe('number');
-        expect(cat.is({ name: 'Alice', address: { street: '123 Main', city: 'NY' } }, result.root)).toBe(true);
-        expect(cat.is({ name: 'Alice', address: { street: '123 Main' } }, result.root)).toBe(false);
+        expect(cat.validate({ name: 'Alice', address: { street: '123 Main', city: 'NY' } }, result.root)).toBe(true);
+        expect(cat.validate({ name: 'Alice', address: { street: '123 Main' } }, result.root)).toBe(false);
     });
 
     test('def reused multiple times', () => {
@@ -368,8 +368,8 @@ describe('ast: compile refs (defs)', () => {
         let labelsRef = b.ref(arrNode);
         let root = b.object({ tags: tagsRef, labels: labelsRef });
         let result = compile(cat, b.build(root, [arrNode], ['StringArray']));
-        expect(cat.is({ tags: ['a', 'b'], labels: ['c'] }, result.root)).toBe(true);
-        expect(cat.is({ tags: ['a', 'b'], labels: [1] }, result.root)).toBe(false);
+        expect(cat.validate({ tags: ['a', 'b'], labels: ['c'] }, result.root)).toBe(true);
+        expect(cat.validate({ tags: ['a', 'b'], labels: [1] }, result.root)).toBe(false);
     });
 
     test('multiple defs', () => {
@@ -390,8 +390,8 @@ describe('ast: compile refs (defs)', () => {
             user: { name: 'Alice' },
             comment: { text: 'Great!', author: { name: 'Bob' } },
         };
-        expect(cat.is(data, result.root)).toBe(true);
-        expect(cat.is({ user: { name: 'Alice' }, comment: { text: 'Great!', author: { name: 42 } } }, result.root)).toBe(false);
+        expect(cat.validate(data, result.root)).toBe(true);
+        expect(cat.validate({ user: { name: 'Alice' }, comment: { text: 'Great!', author: { name: 42 } } }, result.root)).toBe(false);
     });
 
     test('primitive def gets promoted to K_PRIMITIVE', () => {
@@ -400,11 +400,11 @@ describe('ast: compile refs (defs)', () => {
         let strNode = b.prim(STRING);
         let root = b.ref(strNode);
         let result = compile(cat, b.build(root, [strNode], ['MyString']));
-        expect(cat.is('hello', result.root)).toBe(true);
-        expect(cat.is(42, result.root)).toBe(false);
+        expect(cat.validate('hello', result.root)).toBe(true);
+        expect(cat.validate(42, result.root)).toBe(false);
     });
 
-    test('CompiledSchema defs can be used directly with is()', () => {
+    test('CompiledSchema defs can be used directly with validate()', () => {
         let cat = catalog();
         let b = flatAstBuilder();
         let nameNode = b.prim(STRING);
@@ -412,8 +412,8 @@ describe('ast: compile refs (defs)', () => {
         let userNode = b.object({ name: nameNode, age: ageNode });
         let root = b.prim(NUMBER);
         let result = compile(cat, b.build(root, [userNode], ['User']));
-        expect(cat.is({ name: 'Alice', age: 30 }, result.defs['User'])).toBe(true);
-        expect(cat.is({ name: 'Alice' }, result.defs['User'])).toBe(false);
+        expect(cat.validate({ name: 'Alice', age: 30 }, result.defs['User'])).toBe(true);
+        expect(cat.validate({ name: 'Alice' }, result.defs['User'])).toBe(false);
     });
 });
 
@@ -425,6 +425,6 @@ describe('ast: string validators', () => {
         let innerObj = b.object({ value: valueNode });
         let root = b.object({ name: innerObj });
         let result = compile(cat, b.build(root));
-        expect(cat.is({ name: { value: 'test' } }, result.root)).toBe(true);
+        expect(cat.validate({ name: { value: 'test' } }, result.root)).toBe(true);
     });
 });

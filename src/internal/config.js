@@ -1,37 +1,37 @@
-/// <reference path="../global.d.ts" />
+/// <reference path="../../global.d.ts" />
 import { U16 } from "./const.js";
 import { assertIsNumber, ERR_CONFIG_FIELD_MUST_BE_NUMBER } from "./error.js";
 
-const DEFAULT_T = { slab: 16384, objects: 4096, arrays: 256, unions: 128, tuples: 128, matches: 256, kinds: 2048, validators: 512 };
-const DEFAULT_V = { slab: 1024, objects: 256, arrays: 64, unions: 32, tuples: 32, matches: 64, kinds: 512, validators: 128 };
+const DEFAULT_HEAP = { slab: 16384, objects: 4096, arrays: 256, unions: 128, tuples: 128, matches: 256, kinds: 2048, validators: 512 };
+const DEFAULT_SCRATCH = { slab: 1024, objects: 256, arrays: 64, unions: 32, tuples: 32, matches: 64, kinds: 512, validators: 128 };
 /**
- * @type {readonly (keyof uvd.cat.HeapConfig)[]}
+ * @type {readonly (keyof uvd.HeapConfig)[]}
  */
 const CONFIG_KEYS = ['slab', 'objects', 'arrays', 'unions', 'tuples', 'matches', 'kinds', 'validators'];
 
 /**
- * @param {uvd.cat.Config=} cfg
- * @returns {uvd.cat.Config}
+ * @param {uvd.Config=} cfg
+ * @returns {uvd.Config}
  */
 function config(cfg) {
-    /** @type {uvd.cat.HeapConfig} */
-    let heap = { slab: DEFAULT_T.slab, objects: DEFAULT_T.objects, arrays: DEFAULT_T.arrays, unions: DEFAULT_T.unions, tuples: DEFAULT_T.tuples, matches: DEFAULT_T.matches, kinds: DEFAULT_T.kinds, validators: DEFAULT_T.validators };
-    let scratch = { slab: DEFAULT_V.slab, objects: DEFAULT_V.objects, arrays: DEFAULT_V.arrays, unions: DEFAULT_V.unions, tuples: DEFAULT_V.tuples, matches: DEFAULT_V.matches, kinds: DEFAULT_V.kinds, validators: DEFAULT_V.validators };
+    /** @type {uvd.HeapConfig} */
+    let heap = { slab: DEFAULT_HEAP.slab, objects: DEFAULT_HEAP.objects, arrays: DEFAULT_HEAP.arrays, unions: DEFAULT_HEAP.unions, tuples: DEFAULT_HEAP.tuples, matches: DEFAULT_HEAP.matches, kinds: DEFAULT_HEAP.kinds, validators: DEFAULT_HEAP.validators };
+    let scratch = { slab: DEFAULT_SCRATCH.slab, objects: DEFAULT_SCRATCH.objects, arrays: DEFAULT_SCRATCH.arrays, unions: DEFAULT_SCRATCH.unions, tuples: DEFAULT_SCRATCH.tuples, matches: DEFAULT_SCRATCH.matches, kinds: DEFAULT_SCRATCH.kinds, validators: DEFAULT_SCRATCH.validators };
     if (cfg) {
-        const cfg_t = cfg.heap;
-        if (cfg_t) {
+        const cfgHeap = cfg.heap;
+        if (cfgHeap) {
             for (let i = 0; i < CONFIG_KEYS.length; i++) {
                 let key = CONFIG_KEYS[i];
-                const val = cfg_t[key];
+                const val = cfgHeap[key];
                 assertIsNumber(val, 0);
                 heap[key] = val;
             }
         }
-        const cfg_v = cfg.scratch;
-        if (cfg_v) {
+        const cfgScratch = cfg.scratch;
+        if (cfgScratch) {
             for (let i = 0; i < CONFIG_KEYS.length; i++) {
                 let key = CONFIG_KEYS[i];
-                const val = cfg_v[key];
+                const val = cfgScratch[key];
                 assertIsNumber(val, ERR_CONFIG_FIELD_MUST_BE_NUMBER);
                 scratch[key] = val;
             }
@@ -42,36 +42,33 @@ function config(cfg) {
 
 /**
  * 
- * @param {uvd.cat.HeapConfig} cfg 
- * @returns {uvd.cat.Heap}
+ * @param {uvd.HeapConfig} cfg 
+ * @returns {uvd.Heap}
  */
-function malloc(cfg) {
+function heap(cfg) {
     return {
         PTR: 0,
         SLAB_LEN: cfg.slab,
         OBJ_LEN: cfg.objects,
-        OBJ_TYPE: U16,
         OBJ_COUNT: 0,
         ARR_LEN: cfg.arrays,
         ARR_COUNT: 0,
         UNION_LEN: cfg.unions,
         UNION_COUNT: 0,
         TUP_LEN: cfg.tuples,
-        TUP_TYPE: U16,
         TUP_COUNT: 0,
         MAT_LEN: cfg.matches,
-        MAT_TYPE: U16,
         MAT_COUNT: 0,
         KIND_LEN: cfg.kinds,
         KIND_PTR: 0,
         VAL_LEN: cfg.validators,
         VAL_PTR: 0,
         SLAB: new Uint32Array(cfg.slab),
-        OBJECTS: new Uint16Array(cfg.objects),
+        OBJECTS: new Uint32Array(cfg.objects),
         ARRAYS: new Uint32Array(cfg.arrays),
         UNIONS: new Uint32Array(cfg.unions),
-        TUPLES: new Uint16Array(cfg.tuples),
-        MATCHES: new Uint16Array(cfg.matches),
+        TUPLES: new Uint32Array(cfg.tuples),
+        MATCHES: new Uint32Array(cfg.matches),
         KINDS: new Uint32Array(cfg.kinds),
         VALIDATORS: new Float64Array(cfg.validators),
         REGEX_CACHE: [],
@@ -79,4 +76,4 @@ function malloc(cfg) {
     };
 }
 
-export { config, malloc }
+export { config, heap }

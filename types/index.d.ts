@@ -11,10 +11,6 @@ export type UVD = typeof UVD;
 
 export declare const uvd: Catalog<UVD>;
 
-// 2. Lock the default builders to this specific symbol
-export declare const t: SchemaBuilder<UVD>;
-export declare const v: SchemaBuilder<UVD>;
-
 // 3. Lock all the default utility functions to the same symbol
 export declare function check<T>(data: any, typedef: Type<T, UVD>): data is T;
 export declare function guard<T>(data: any, typedef: Type<T, UVD>): asserts data is T;
@@ -27,3 +23,4 @@ export { NULL, UNDEFINED, BOOLEAN, NUMBER, STRING, DATE, URI, ANY, NEVER, TRUE, 
 export { Primitive, Complex, Catalog as Atlas }
 
 export { Infer, InferSchema, Type, Complex }
+

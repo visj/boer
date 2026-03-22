@@ -1,74 +1,73 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, BOOLEAN, NUMBER,
-    STRING, BIGINT, DATE, URI, PRIMITIVE
-} from 'uvd/catalog';
-import { catalog } from 'uvd/catalog';
-import { allocators } from 'uvd/alloc';
+    STRING, BIGINT, DATE, URI, VALUE
+} from 'uvd';
+import { catalog, allocators } from 'uvd/core';
 
 const cat = catalog();
 const { object } = allocators(cat);
-const { is, conform } = cat;
+const { validate, conform } = cat;
 
 describe('validate: primitives', () => {
     test('STRING accepts strings only', () => {
-        expect(is('hello', STRING)).toBe(true);
-        expect(is('', STRING)).toBe(true);
-        expect(is(42, STRING)).toBe(false);
-        expect(is(true, STRING)).toBe(false);
-        expect(is(null, STRING)).toBe(false);
-        expect(is(undefined, STRING)).toBe(false);
-        expect(is(BigInt(1), STRING)).toBe(false);
-        expect(is(new Date(), STRING)).toBe(false);
-        expect(is(new URL('https://vilhelm.se'), STRING)).toBe(false);
-        expect(is({}, STRING)).toBe(false);
-        expect(is([], STRING)).toBe(false);
+        expect(validate('hello', STRING)).toBe(true);
+        expect(validate('', STRING)).toBe(true);
+        expect(validate(42, STRING)).toBe(false);
+        expect(validate(true, STRING)).toBe(false);
+        expect(validate(null, STRING)).toBe(false);
+        expect(validate(undefined, STRING)).toBe(false);
+        expect(validate(BigInt(1), STRING)).toBe(false);
+        expect(validate(new Date(), STRING)).toBe(false);
+        expect(validate(new URL('https://vilhelm.se'), STRING)).toBe(false);
+        expect(validate({}, STRING)).toBe(false);
+        expect(validate([], STRING)).toBe(false);
     });
 
     test('NUMBER accepts numbers only', () => {
-        expect(is(0, NUMBER)).toBe(true);
-        expect(is(-1, NUMBER)).toBe(true);
-        expect(is(3.14, NUMBER)).toBe(true);
-        expect(is(NaN, NUMBER)).toBe(true);
-        expect(is(Infinity, NUMBER)).toBe(true);
-        expect(is(-Infinity, NUMBER)).toBe(true);
-        expect(is('42', NUMBER)).toBe(false);
-        expect(is(true, NUMBER)).toBe(false);
-        expect(is(null, NUMBER)).toBe(false);
-        expect(is(undefined, NUMBER)).toBe(false);
+        expect(validate(0, NUMBER)).toBe(true);
+        expect(validate(-1, NUMBER)).toBe(true);
+        expect(validate(3.14, NUMBER)).toBe(true);
+        expect(validate(NaN, NUMBER)).toBe(true);
+        expect(validate(Infinity, NUMBER)).toBe(true);
+        expect(validate(-Infinity, NUMBER)).toBe(true);
+        expect(validate('42', NUMBER)).toBe(false);
+        expect(validate(true, NUMBER)).toBe(false);
+        expect(validate(null, NUMBER)).toBe(false);
+        expect(validate(undefined, NUMBER)).toBe(false);
     });
 
     test('BOOLEAN accepts booleans only', () => {
-        expect(is(true, BOOLEAN)).toBe(true);
-        expect(is(false, BOOLEAN)).toBe(true);
-        expect(is(0, BOOLEAN)).toBe(false);
-        expect(is(1, BOOLEAN)).toBe(false);
-        expect(is('true', BOOLEAN)).toBe(false);
-        expect(is(null, BOOLEAN)).toBe(false);
-        expect(is(undefined, BOOLEAN)).toBe(false);
+        expect(validate(true, BOOLEAN)).toBe(true);
+        expect(validate(false, BOOLEAN)).toBe(true);
+        expect(validate(0, BOOLEAN)).toBe(false);
+        expect(validate(1, BOOLEAN)).toBe(false);
+        expect(validate('true', BOOLEAN)).toBe(false);
+        expect(validate(null, BOOLEAN)).toBe(false);
+        expect(validate(undefined, BOOLEAN)).toBe(false);
     });
 
     test('BIGINT accepts bigints only', () => {
-        expect(is(BigInt(0), BIGINT)).toBe(true);
-        expect(is(BigInt(999999999999999999), BIGINT)).toBe(true);
-        expect(is(BigInt(-1), BIGINT)).toBe(true);
-        expect(is(0, BIGINT)).toBe(false);
-        expect(is('1', BIGINT)).toBe(false);
-        expect(is(null, BIGINT)).toBe(false);
+        expect(validate(BigInt(0), BIGINT)).toBe(true);
+        expect(validate(BigInt(999999999999999999), BIGINT)).toBe(true);
+        expect(validate(BigInt(-1), BIGINT)).toBe(true);
+        expect(validate(0, BIGINT)).toBe(false);
+        expect(validate('1', BIGINT)).toBe(false);
+        expect(validate(null, BIGINT)).toBe(false);
     });
 
     test('DATE accepts Date instances only', () => {
-        expect(is(new Date(), DATE)).toBe(true);
-        expect(is(new Date('2024-01-01'), DATE)).toBe(true);
-        expect(is('2024-01-01', DATE)).toBe(false);
-        expect(is(Date.now(), DATE)).toBe(false);
-        expect(is(null, DATE)).toBe(false);
+        expect(validate(new Date(), DATE)).toBe(true);
+        expect(validate(new Date('2024-01-01'), DATE)).toBe(true);
+        expect(validate('2024-01-01', DATE)).toBe(false);
+        expect(validate(Date.now(), DATE)).toBe(false);
+        expect(validate(null, DATE)).toBe(false);
     });
 
     test('URI accepts URL instances only', () => {
-        expect(is(new URL('https://vilhelm.se'), URI)).toBe(true);
-        expect(is('https://vilhelm.se', URI)).toBe(false);
-        expect(is(null, URI)).toBe(false);
+        expect(validate(new URL('https://vilhelm.se'), URI)).toBe(true);
+        expect(validate('https://vilhelm.se', URI)).toBe(false);
+        expect(validate(null, URI)).toBe(false);
     });
 });
 
@@ -117,87 +116,87 @@ describe('parse: primitives', () => {
 
 describe('validate: null and undefined', () => {
     test('bare NULL allows only null', () => {
-        expect(is(null, NULL)).toBe(true);
-        expect(is(undefined, NULL)).toBe(false);
-        expect(is(0, NULL)).toBe(false);
-        expect(is('', NULL)).toBe(false);
+        expect(validate(null, NULL)).toBe(true);
+        expect(validate(undefined, NULL)).toBe(false);
+        expect(validate(0, NULL)).toBe(false);
+        expect(validate('', NULL)).toBe(false);
     });
 
     test('bare UNDEFINED allows only undefined', () => {
-        expect(is(undefined, UNDEFINED)).toBe(true);
-        expect(is(null, UNDEFINED)).toBe(false);
-        expect(is(0, UNDEFINED)).toBe(false);
+        expect(validate(undefined, UNDEFINED)).toBe(true);
+        expect(validate(null, UNDEFINED)).toBe(false);
+        expect(validate(0, UNDEFINED)).toBe(false);
     });
 
     test('NULL | UNDEFINED allows both null and undefined', () => {
         let type = NULL | UNDEFINED;
-        expect(is(null, type)).toBe(true);
-        expect(is(undefined, type)).toBe(true);
-        expect(is(0, type)).toBe(false);
-        expect(is('', type)).toBe(false);
+        expect(validate(null, type)).toBe(true);
+        expect(validate(undefined, type)).toBe(true);
+        expect(validate(0, type)).toBe(false);
+        expect(validate('', type)).toBe(false);
     });
 
     test('STRING | NULL', () => {
         let type = STRING | NULL;
-        expect(is('hello', type)).toBe(true);
-        expect(is(null, type)).toBe(true);
-        expect(is(undefined, type)).toBe(false);
-        expect(is(42, type)).toBe(false);
+        expect(validate('hello', type)).toBe(true);
+        expect(validate(null, type)).toBe(true);
+        expect(validate(undefined, type)).toBe(false);
+        expect(validate(42, type)).toBe(false);
     });
 
     test('STRING | UNDEFINED', () => {
         let type = STRING | UNDEFINED;
-        expect(is('hello', type)).toBe(true);
-        expect(is(undefined, type)).toBe(true);
-        expect(is(null, type)).toBe(false);
+        expect(validate('hello', type)).toBe(true);
+        expect(validate(undefined, type)).toBe(true);
+        expect(validate(null, type)).toBe(false);
     });
 
     test('STRING | NULL | UNDEFINED', () => {
         let type = STRING | NULL | UNDEFINED;
-        expect(is('hello', type)).toBe(true);
-        expect(is(null, type)).toBe(true);
-        expect(is(undefined, type)).toBe(true);
-        expect(is(42, type)).toBe(false);
+        expect(validate('hello', type)).toBe(true);
+        expect(validate(null, type)).toBe(true);
+        expect(validate(undefined, type)).toBe(true);
+        expect(validate(42, type)).toBe(false);
     });
 
     test('NUMBER | NULL', () => {
         let type = NUMBER | NULL;
-        expect(is(42, type)).toBe(true);
-        expect(is(0, type)).toBe(true);
-        expect(is(null, type)).toBe(true);
-        expect(is(undefined, type)).toBe(false);
-        expect(is('42', type)).toBe(false);
+        expect(validate(42, type)).toBe(true);
+        expect(validate(0, type)).toBe(true);
+        expect(validate(null, type)).toBe(true);
+        expect(validate(undefined, type)).toBe(false);
+        expect(validate('42', type)).toBe(false);
     });
 
     test('BOOLEAN | NULL | UNDEFINED', () => {
         let type = BOOLEAN | NULL | UNDEFINED;
-        expect(is(true, type)).toBe(true);
-        expect(is(false, type)).toBe(true);
-        expect(is(null, type)).toBe(true);
-        expect(is(undefined, type)).toBe(true);
-        expect(is(0, type)).toBe(false);
+        expect(validate(true, type)).toBe(true);
+        expect(validate(false, type)).toBe(true);
+        expect(validate(null, type)).toBe(true);
+        expect(validate(undefined, type)).toBe(true);
+        expect(validate(0, type)).toBe(false);
     });
 
     test('DATE | NULL', () => {
         let type = DATE | NULL;
-        expect(is(new Date(), type)).toBe(true);
-        expect(is(null, type)).toBe(true);
-        expect(is('2024-01-01', type)).toBe(false);
+        expect(validate(new Date(), type)).toBe(true);
+        expect(validate(null, type)).toBe(true);
+        expect(validate('2024-01-01', type)).toBe(false);
     });
 
     test('URI | NULL', () => {
         let type = URI | NULL;
-        expect(is(new URL('https://vilhelm.se'), type)).toBe(true);
-        expect(is(null, type)).toBe(true);
-        expect(is('https://vilhelm.se', type)).toBe(false);
+        expect(validate(new URL('https://vilhelm.se'), type)).toBe(true);
+        expect(validate(null, type)).toBe(true);
+        expect(validate('https://vilhelm.se', type)).toBe(false);
     });
 
     test('BIGINT | NULL | UNDEFINED', () => {
         let type = BIGINT | NULL | UNDEFINED;
-        expect(is(BigInt(0), type)).toBe(true);
-        expect(is(null, type)).toBe(true);
-        expect(is(undefined, type)).toBe(true);
-        expect(is(0, type)).toBe(false);
+        expect(validate(BigInt(0), type)).toBe(true);
+        expect(validate(null, type)).toBe(true);
+        expect(validate(undefined, type)).toBe(true);
+        expect(validate(0, type)).toBe(false);
     });
 });
 
@@ -225,105 +224,105 @@ describe('parse: null and undefined', () => {
 describe('validate: primitive type unions', () => {
     test('STRING | NUMBER', () => {
         let type = STRING | NUMBER;
-        expect(is('hello', type)).toBe(true);
-        expect(is(42, type)).toBe(true);
-        expect(is(true, type)).toBe(false);
-        expect(is(null, type)).toBe(false);
+        expect(validate('hello', type)).toBe(true);
+        expect(validate(42, type)).toBe(true);
+        expect(validate(true, type)).toBe(false);
+        expect(validate(null, type)).toBe(false);
     });
 
     test('STRING | BOOLEAN', () => {
         let type = STRING | BOOLEAN;
-        expect(is('hello', type)).toBe(true);
-        expect(is(true, type)).toBe(true);
-        expect(is(false, type)).toBe(true);
-        expect(is(42, type)).toBe(false);
+        expect(validate('hello', type)).toBe(true);
+        expect(validate(true, type)).toBe(true);
+        expect(validate(false, type)).toBe(true);
+        expect(validate(42, type)).toBe(false);
     });
 
     test('NUMBER | BOOLEAN', () => {
         let type = NUMBER | BOOLEAN;
-        expect(is(42, type)).toBe(true);
-        expect(is(true, type)).toBe(true);
-        expect(is('hello', type)).toBe(false);
+        expect(validate(42, type)).toBe(true);
+        expect(validate(true, type)).toBe(true);
+        expect(validate('hello', type)).toBe(false);
     });
 
     test('STRING | NUMBER | BOOLEAN', () => {
         let type = STRING | NUMBER | BOOLEAN;
-        expect(is('hello', type)).toBe(true);
-        expect(is(42, type)).toBe(true);
-        expect(is(true, type)).toBe(true);
-        expect(is(null, type)).toBe(false);
-        expect(is(BigInt(1), type)).toBe(false);
+        expect(validate('hello', type)).toBe(true);
+        expect(validate(42, type)).toBe(true);
+        expect(validate(true, type)).toBe(true);
+        expect(validate(null, type)).toBe(false);
+        expect(validate(BigInt(1), type)).toBe(false);
     });
 
     test('STRING | NUMBER | NULL', () => {
         let type = STRING | NUMBER | NULL;
-        expect(is('hello', type)).toBe(true);
-        expect(is(42, type)).toBe(true);
-        expect(is(null, type)).toBe(true);
-        expect(is(undefined, type)).toBe(false);
-        expect(is(true, type)).toBe(false);
+        expect(validate('hello', type)).toBe(true);
+        expect(validate(42, type)).toBe(true);
+        expect(validate(null, type)).toBe(true);
+        expect(validate(undefined, type)).toBe(false);
+        expect(validate(true, type)).toBe(false);
     });
 
     test('STRING | NUMBER | BOOLEAN | NULL | UNDEFINED', () => {
         let type = STRING | NUMBER | BOOLEAN | NULL | UNDEFINED;
-        expect(is('hello', type)).toBe(true);
-        expect(is(42, type)).toBe(true);
-        expect(is(true, type)).toBe(true);
-        expect(is(null, type)).toBe(true);
-        expect(is(undefined, type)).toBe(true);
-        expect(is(BigInt(1), type)).toBe(false);
-        expect(is(new Date(), type)).toBe(false);
+        expect(validate('hello', type)).toBe(true);
+        expect(validate(42, type)).toBe(true);
+        expect(validate(true, type)).toBe(true);
+        expect(validate(null, type)).toBe(true);
+        expect(validate(undefined, type)).toBe(true);
+        expect(validate(BigInt(1), type)).toBe(false);
+        expect(validate(new Date(), type)).toBe(false);
     });
 
     test('DATE | STRING (rich + native)', () => {
         let type = DATE | STRING;
-        expect(is(new Date(), type)).toBe(true);
-        expect(is('hello', type)).toBe(true);
-        expect(is(42, type)).toBe(false);
+        expect(validate(new Date(), type)).toBe(true);
+        expect(validate('hello', type)).toBe(true);
+        expect(validate(42, type)).toBe(false);
     });
 
     test('DATE | NUMBER (both rich-compatible)', () => {
         let type = DATE | NUMBER;
-        expect(is(new Date(), type)).toBe(true);
-        expect(is(42, type)).toBe(true);
-        expect(is('hello', type)).toBe(false);
+        expect(validate(new Date(), type)).toBe(true);
+        expect(validate(42, type)).toBe(true);
+        expect(validate('hello', type)).toBe(false);
     });
 
     test('URI | STRING', () => {
         let type = URI | STRING;
-        expect(is(new URL('https://vilhelm.se'), type)).toBe(true);
-        expect(is('hello', type)).toBe(true);
-        expect(is(42, type)).toBe(false);
+        expect(validate(new URL('https://vilhelm.se'), type)).toBe(true);
+        expect(validate('hello', type)).toBe(true);
+        expect(validate(42, type)).toBe(false);
     });
 
     test('BIGINT | NUMBER', () => {
         let type = BIGINT | NUMBER;
-        expect(is(BigInt(5), type)).toBe(true);
-        expect(is(42, type)).toBe(true);
-        expect(is('5', type)).toBe(false);
+        expect(validate(BigInt(5), type)).toBe(true);
+        expect(validate(42, type)).toBe(true);
+        expect(validate('5', type)).toBe(false);
     });
 
     test('DATE | URI | STRING | NULL', () => {
         let type = DATE | URI | STRING | NULL;
-        expect(is(new Date(), type)).toBe(true);
-        expect(is(new URL('https://vilhelm.se'), type)).toBe(true);
-        expect(is('hello', type)).toBe(true);
-        expect(is(null, type)).toBe(true);
-        expect(is(42, type)).toBe(false);
+        expect(validate(new Date(), type)).toBe(true);
+        expect(validate(new URL('https://vilhelm.se'), type)).toBe(true);
+        expect(validate('hello', type)).toBe(true);
+        expect(validate(null, type)).toBe(true);
+        expect(validate(42, type)).toBe(false);
     });
 
     test('all VALUE types combined', () => {
-        let type = PRIMITIVE;
-        expect(is('hello', type)).toBe(true);
-        expect(is(42, type)).toBe(true);
-        expect(is(true, type)).toBe(true);
-        expect(is(BigInt(5), type)).toBe(true);
-        expect(is(new Date(), type)).toBe(true);
-        expect(is(new URL('https://vilhelm.se'), type)).toBe(true);
-        expect(is(null, type)).toBe(false);
-        expect(is(undefined, type)).toBe(false);
-        expect(is({}, type)).toBe(false);
-        expect(is([], type)).toBe(false);
+        let type = VALUE;
+        expect(validate('hello', type)).toBe(true);
+        expect(validate(42, type)).toBe(true);
+        expect(validate(true, type)).toBe(true);
+        expect(validate(BigInt(5), type)).toBe(true);
+        expect(validate(new Date(), type)).toBe(true);
+        expect(validate(new URL('https://vilhelm.se'), type)).toBe(true);
+        expect(validate(null, type)).toBe(false);
+        expect(validate(undefined, type)).toBe(false);
+        expect(validate({}, type)).toBe(false);
+        expect(validate([], type)).toBe(false);
     });
 });
 

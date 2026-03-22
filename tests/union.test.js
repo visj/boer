@@ -1,13 +1,12 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, NUMBER, STRING, DATE
-} from 'uvd/catalog';
-import { catalog } from 'uvd/catalog';
-import { allocators } from 'uvd/alloc';
+} from 'uvd';
+import { catalog, allocators } from 'uvd/core';
 
 const cat = catalog();
 const { object, array, union } = allocators(cat);
-const { is, conform } = cat;
+const { validate, conform } = cat;
 
 describe('discriminated: schema builder', () => {
     test('returns a complex typedef (bit 31 set)', () => {
@@ -41,30 +40,30 @@ describe('validate: basic unions', () => {
     });
 
     test('matches correct variant', () => {
-        expect(is({ type: 'circle', radius: 5 }, ShapeUnion)).toBe(true);
-        expect(is({ type: 'rect', w: 10, h: 20 }, ShapeUnion)).toBe(true);
+        expect(validate({ type: 'circle', radius: 5 }, ShapeUnion)).toBe(true);
+        expect(validate({ type: 'rect', w: 10, h: 20 }, ShapeUnion)).toBe(true);
     });
 
     test('rejects unknown discriminator value', () => {
-        expect(is({ type: 'triangle', sides: 3 }, ShapeUnion)).toBe(false);
+        expect(validate({ type: 'triangle', sides: 3 }, ShapeUnion)).toBe(false);
     });
 
     test('rejects correct discriminator but wrong fields', () => {
-        expect(is({ type: 'circle', radius: 'five' }, ShapeUnion)).toBe(false);
-        expect(is({ type: 'rect', w: 10, h: 'twenty' }, ShapeUnion)).toBe(false);
+        expect(validate({ type: 'circle', radius: 'five' }, ShapeUnion)).toBe(false);
+        expect(validate({ type: 'rect', w: 10, h: 'twenty' }, ShapeUnion)).toBe(false);
     });
 
     test('rejects missing discriminator', () => {
-        expect(is({ radius: 5 }, ShapeUnion)).toBe(false);
+        expect(validate({ radius: 5 }, ShapeUnion)).toBe(false);
     });
 
     test('rejects non-object inputs', () => {
-        expect(is(null, ShapeUnion)).toBe(false);
-        expect(is(undefined, ShapeUnion)).toBe(false);
-        expect(is('circle', ShapeUnion)).toBe(false);
-        expect(is(42, ShapeUnion)).toBe(false);
-        expect(is([], ShapeUnion)).toBe(false);
-        expect(is(true, ShapeUnion)).toBe(false);
+        expect(validate(null, ShapeUnion)).toBe(false);
+        expect(validate(undefined, ShapeUnion)).toBe(false);
+        expect(validate('circle', ShapeUnion)).toBe(false);
+        expect(validate(42, ShapeUnion)).toBe(false);
+        expect(validate([], ShapeUnion)).toBe(false);
+        expect(validate(true, ShapeUnion)).toBe(false);
     });
 });
 
@@ -77,14 +76,14 @@ describe('validate: union with many variants', () => {
     });
 
     test('each variant validates correctly', () => {
-        expect(is({ event: 'click', x: 10, y: 20 }, EventUnion)).toBe(true);
-        expect(is({ event: 'keypress', key: 'a', code: 65 }, EventUnion)).toBe(true);
-        expect(is({ event: 'scroll', dx: 0, dy: -10 }, EventUnion)).toBe(true);
-        expect(is({ event: 'resize', width: 800, height: 600 }, EventUnion)).toBe(true);
+        expect(validate({ event: 'click', x: 10, y: 20 }, EventUnion)).toBe(true);
+        expect(validate({ event: 'keypress', key: 'a', code: 65 }, EventUnion)).toBe(true);
+        expect(validate({ event: 'scroll', dx: 0, dy: -10 }, EventUnion)).toBe(true);
+        expect(validate({ event: 'resize', width: 800, height: 600 }, EventUnion)).toBe(true);
     });
 
     test('wrong fields for variant', () => {
-        expect(is({ event: 'click', key: 'a' }, EventUnion)).toBe(false);
+        expect(validate({ event: 'click', key: 'a' }, EventUnion)).toBe(false);
     });
 });
 
@@ -95,12 +94,12 @@ describe('validate: union with rich types', () => {
     });
 
     test('validates with Date instances', () => {
-        expect(is({ level: 'info', message: 'ok', ts: new Date() }, LogEntry)).toBe(true);
-        expect(is({ level: 'error', message: 'fail', ts: new Date(), stack: 'at...' }, LogEntry)).toBe(true);
+        expect(validate({ level: 'info', message: 'ok', ts: new Date() }, LogEntry)).toBe(true);
+        expect(validate({ level: 'error', message: 'fail', ts: new Date(), stack: 'at...' }, LogEntry)).toBe(true);
     });
 
     test('rejects with string dates (validate is strict)', () => {
-        expect(is({ level: 'info', message: 'ok', ts: '2024-01-01' }, LogEntry)).toBe(false);
+        expect(validate({ level: 'info', message: 'ok', ts: '2024-01-01' }, LogEntry)).toBe(false);
     });
 });
 
@@ -112,25 +111,25 @@ describe('validate: nullable unions', () => {
 
     test('Union | NULL', () => {
         let type = ShapeUnion | NULL;
-        expect(is(null, type)).toBe(true);
-        expect(is({ type: 'circle', radius: 5 }, type)).toBe(true);
-        expect(is(undefined, type)).toBe(false);
+        expect(validate(null, type)).toBe(true);
+        expect(validate({ type: 'circle', radius: 5 }, type)).toBe(true);
+        expect(validate(undefined, type)).toBe(false);
     });
 
     test('Union | UNDEFINED', () => {
         let type = ShapeUnion | UNDEFINED;
-        expect(is(undefined, type)).toBe(true);
-        expect(is({ type: 'circle', radius: 5 }, type)).toBe(true);
-        expect(is(null, type)).toBe(false);
+        expect(validate(undefined, type)).toBe(true);
+        expect(validate({ type: 'circle', radius: 5 }, type)).toBe(true);
+        expect(validate(null, type)).toBe(false);
     });
 
     test('Union | NULL | UNDEFINED', () => {
         let type = ShapeUnion | NULL | UNDEFINED;
-        expect(is(null, type)).toBe(true);
-        expect(is(undefined, type)).toBe(true);
-        expect(is({ type: 'square', side: 10 }, type)).toBe(true);
-        expect(is({ type: 'triangle' }, type)).toBe(false);
-        expect(is('string', type)).toBe(false);
+        expect(validate(null, type)).toBe(true);
+        expect(validate(undefined, type)).toBe(true);
+        expect(validate({ type: 'square', side: 10 }, type)).toBe(true);
+        expect(validate({ type: 'triangle' }, type)).toBe(false);
+        expect(validate('string', type)).toBe(false);
     });
 });
 
@@ -142,29 +141,29 @@ describe('validate: union as object field', () => {
 
     test('required union field', () => {
         let schema = object({ op: ActionUnion });
-        expect(is({ op: { action: 'create', name: 'item' } }, schema)).toBe(true);
-        expect(is({ op: { action: 'delete', id: 42 } }, schema)).toBe(true);
-        expect(is({ op: null }, schema)).toBe(false);
-        expect(is({}, schema)).toBe(false);
+        expect(validate({ op: { action: 'create', name: 'item' } }, schema)).toBe(true);
+        expect(validate({ op: { action: 'delete', id: 42 } }, schema)).toBe(true);
+        expect(validate({ op: null }, schema)).toBe(false);
+        expect(validate({}, schema)).toBe(false);
     });
 
     test('nullable union field', () => {
         let schema = object({ op: ActionUnion | NULL });
-        expect(is({ op: null }, schema)).toBe(true);
-        expect(is({ op: { action: 'create', name: 'item' } }, schema)).toBe(true);
+        expect(validate({ op: null }, schema)).toBe(true);
+        expect(validate({ op: { action: 'create', name: 'item' } }, schema)).toBe(true);
     });
 
     test('optional union field', () => {
         let schema = object({ op: ActionUnion | UNDEFINED });
-        expect(is({}, schema)).toBe(true);
-        expect(is({ op: { action: 'delete', id: 1 } }, schema)).toBe(true);
+        expect(validate({}, schema)).toBe(true);
+        expect(validate({ op: { action: 'delete', id: 1 } }, schema)).toBe(true);
     });
 
     test('nullable optional union field', () => {
         let schema = object({ op: ActionUnion | NULL | UNDEFINED });
-        expect(is({}, schema)).toBe(true);
-        expect(is({ op: null }, schema)).toBe(true);
-        expect(is({ op: { action: 'create', name: 'x' } }, schema)).toBe(true);
+        expect(validate({}, schema)).toBe(true);
+        expect(validate({ op: null }, schema)).toBe(true);
+        expect(validate({ op: { action: 'create', name: 'x' } }, schema)).toBe(true);
     });
 });
 
@@ -176,16 +175,16 @@ describe('validate: array of unions', () => {
 
     test('Array<Union>', () => {
         let type = array(MsgUnion);
-        expect(is([
+        expect(validate([
             { type: 'text', body: 'hello' },
             { type: 'image', url: 'https://vilhelm.se/a.png', width: 200 }
         ], type)).toBe(true);
-        expect(is([], type)).toBe(true);
+        expect(validate([], type)).toBe(true);
     });
 
     test('Array<Union | null>', () => {
         let type = array(MsgUnion | NULL);
-        expect(is([
+        expect(validate([
             { type: 'text', body: 'hello' },
             null,
             { type: 'image', url: 'https://vilhelm.se/a.png', width: 200 }
@@ -194,13 +193,13 @@ describe('validate: array of unions', () => {
 
     test('Array<Union | null> | null', () => {
         let type = array(MsgUnion | NULL) | NULL;
-        expect(is(null, type)).toBe(true);
-        expect(is([null, { type: 'text', body: 'hi' }], type)).toBe(true);
+        expect(validate(null, type)).toBe(true);
+        expect(validate([null, { type: 'text', body: 'hi' }], type)).toBe(true);
     });
 
     test('Array<Union> rejects invalid variants in array', () => {
         let type = array(MsgUnion);
-        expect(is([
+        expect(validate([
             { type: 'text', body: 'hello' },
             { type: 'video', src: 'x.mp4' }  // unknown variant
         ], type)).toBe(false);
@@ -232,8 +231,8 @@ describe('parse: unions', () => {
 describe('union: edge cases', () => {
     test('single variant union', () => {
         let type = union('kind', { only: object({ kind: STRING, val: NUMBER }) });
-        expect(is({ kind: 'only', val: 42 }, type)).toBe(true);
-        expect(is({ kind: 'other', val: 42 }, type)).toBe(false);
+        expect(validate({ kind: 'only', val: 42 }, type)).toBe(true);
+        expect(validate({ kind: 'other', val: 42 }, type)).toBe(false);
     });
 
     test('union variants with optional/nullable fields', () => {
@@ -241,15 +240,15 @@ describe('union: edge cases', () => {
             full: object({ mode: STRING, a: NUMBER, b: NUMBER }),
             partial: object({ mode: STRING, a: NUMBER, b: NUMBER | UNDEFINED })
         });
-        expect(is({ mode: 'partial', a: 1 }, type)).toBe(true);
-        expect(is({ mode: 'full', a: 1 }, type)).toBe(false); // b required for 'full'
+        expect(validate({ mode: 'partial', a: 1 }, type)).toBe(true);
+        expect(validate({ mode: 'full', a: 1 }, type)).toBe(false); // b required for 'full'
     });
 
     test('union with extra properties on input (ignored)', () => {
         let type = union('kind', {
             x: object({ kind: STRING, val: NUMBER })
         });
-        expect(is({ kind: 'x', val: 1, extra: 'ignored' }, type)).toBe(true);
+        expect(validate({ kind: 'x', val: 1, extra: 'ignored' }, type)).toBe(true);
     });
 
     test('union where variant has array field', () => {
@@ -257,9 +256,9 @@ describe('union: edge cases', () => {
             list: object({ type: STRING, items: array(NUMBER) }),
             single: object({ type: STRING, item: NUMBER })
         });
-        expect(is({ type: 'list', items: [1, 2, 3] }, type)).toBe(true);
-        expect(is({ type: 'single', item: 42 }, type)).toBe(true);
-        expect(is({ type: 'list', items: [1, '2'] }, type)).toBe(false);
+        expect(validate({ type: 'list', items: [1, 2, 3] }, type)).toBe(true);
+        expect(validate({ type: 'single', item: 42 }, type)).toBe(true);
+        expect(validate({ type: 'list', items: [1, '2'] }, type)).toBe(false);
     });
 
     test('union where variant has nested union field', () => {
@@ -270,15 +269,15 @@ describe('union: edge cases', () => {
         let OuterUnion = union('outer', {
             wrap: object({ outer: STRING, child: InnerUnion })
         });
-        expect(is({
+        expect(validate({
             outer: 'wrap',
             child: { inner: 'a', val: 42 }
         }, OuterUnion)).toBe(true);
-        expect(is({
+        expect(validate({
             outer: 'wrap',
             child: { inner: 'b', val: 'hello' }
         }, OuterUnion)).toBe(true);
-        expect(is({
+        expect(validate({
             outer: 'wrap',
             child: { inner: 'a', val: 'wrong' }
         }, OuterUnion)).toBe(false);

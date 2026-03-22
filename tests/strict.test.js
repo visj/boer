@@ -3,19 +3,18 @@ import {
     UNDEFINED, NULL, NUMBER, STRING, STRICT_DELETE,
     STRICT_REJECT
 } from 'uvd';
-import { catalog } from 'uvd/catalog';
-import { allocators } from 'uvd/alloc';
+import { catalog, allocators } from 'uvd/core';
 
 const cat = catalog();
 const { object, array, union } = allocators(cat);
-const { is } = cat;
+const { validate } = cat;
 
 function strictDelete(obj, schema) {
-    return is(obj, schema, STRICT_DELETE);
+    return validate(obj, schema, STRICT_DELETE);
 }
 
 function strictReject(obj, schema) {
-    return is(obj, schema, STRICT_REJECT);
+    return validate(obj, schema, STRICT_REJECT);
 }
 
 describe('strict reject: flat objects', () => {

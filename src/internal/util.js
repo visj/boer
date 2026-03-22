@@ -13,7 +13,7 @@ import {
 
 /**
  * @template T
- * @template {uvd.cat.Primitive<T> | uvd.cat.Complex<T>} D
+ * @template {uvd.Type<T>} D
  * @param {D} typedef
  * @returns {D}
  */
@@ -24,7 +24,7 @@ function nullable(typedef) {
 
 /**
  * @template T
- * @template {uvd.cat.Primitive<T> | uvd.cat.Complex<T>} D
+ * @template {uvd.Type<T>} D
  * @param {D} typedef
  * @returns {D}
  */

@@ -2,9 +2,8 @@ import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, BOOLEAN, NUMBER,
     STRING, BIGINT, DATE, URI
-} from 'uvd/catalog';
-import { catalog } from 'uvd/catalog';
-import { allocators } from 'uvd/alloc';
+} from 'uvd';
+import { catalog, allocators } from 'uvd/core';
 
 const cat = catalog();
 const { object, array, union } = allocators(cat);

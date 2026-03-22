@@ -2,9 +2,9 @@ import { describe, test, expect } from "bun:test";
 import fs from "fs";
 import path from "path";
 
-import { parseJsonSchema } from "../src/schema.js";
-import { compile } from "../src/ast.js";
-import { catalog } from "../src/catalog.js";
+import { parseJsonSchema } from "../src/internal/schema.js";
+import { compile } from "../src/internal/ast.js";
+import { catalog } from "../src/internal/catalog.js";
 
 const cat = catalog();
 const { validate } = cat;
@@ -16,26 +16,56 @@ const SUITE_DIR = path.resolve(import.meta.dir, "suite/tests/draft2020-12");
 // 🟢 THE WHITELIST: Start with the absolute basics.
 // As you implement features in your parser, uncomment the next file!
 const TARGET_FILES = [
-    "type.json",           // The absolute foundation (string, number, array, object, null)
-    "maxLength.json",      // String validators
+    // ── Foundation ──
+    "type.json",
+    "properties.json",
+    "required.json",
+    "items.json",
+
+    // ── Tier 1.1: Standalone validators (already parsed by collectValidators) ──
+    "maxLength.json",
     "minLength.json",
-    "maximum.json",        // Number validators
+    "maximum.json",
     "minimum.json",
-    "properties.json",     // Object properties
-    "required.json",       // Required properties
-    "items.json",          // Array items
+    "exclusiveMinimum.json",
+    "exclusiveMaximum.json",
+    "multipleOf.json",
+    "minItems.json",
+    "maxItems.json",
+    "minProperties.json",
+    "maxProperties.json",
+    "uniqueItems.json",
+    "pattern.json",
+    "enum.json",
+    "const.json",
+
+    // ── Tier 2.1-2.2: Object keywords ──
+    "additionalProperties.json",
+    "patternProperties.json",
+
+    // ── Tier 1.2: Composition & control flow (already compiled) ──
+    "boolean_schema.json",
+    "allOf.json",
+    "anyOf.json",
+    "oneOf.json",
+    "not.json",
+    "if-then-else.json",
+    "default.json",
 ];
 
 // Skip test groups that use features not yet implemented
 const SKIP_GROUPS = new Set([
-    // properties.json — patternProperties/additionalProperties not yet supported
-    "properties, patternProperties, additionalProperties interaction",
     // items.json — prefixItems not yet supported
     "items and subitems",
     "prefixItems with no additional items allowed",
     "items does not look in applicators, valid case",
     "prefixItems validation adjusts the starting index for items",
     "items with heterogeneous array",
+    // uniqueItems.json — additionalItems not yet supported
+    "uniqueItems with an array of items and additionalItems=false",
+    "uniqueItems=false with an array of items and additionalItems=false",
+    // not.json — unevaluatedProperties not yet supported
+    "collect annotations inside a 'not', even if collection is disabled",
 ]);
 
 for (const file of TARGET_FILES) {

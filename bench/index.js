@@ -3,8 +3,8 @@ import { z } from 'zod';
 import * as v from 'valibot';
 import { Type } from '@sinclair/typebox';
 import Ajv from 'ajv';
-import { t, is, validate, NUMBER, DATE, STRING, BOOLEAN, UNDEFINED, URI } from 'uvd';
-import { catalog } from 'uvd/catalog';
+import { object, union, array, validate, NUMBER, DATE, STRING, BOOLEAN, UNDEFINED, URI } from 'uvd';
+import { catalog, allocators } from 'uvd/core';
 
 const rawData = {
     id: 123456,
@@ -26,26 +26,43 @@ const jsonStr = JSON.stringify(rawData);
 
 // --- SCHEMAS ---
 
-const UvdItem = t.union("type", {
-    physical: t.object({ type: STRING, sku: STRING, weight: NUMBER }),
-    digital: t.object({ type: STRING, sku: STRING, downloadUrl: URI })
+const UvdItem = union("type", {
+    physical: object({ type: STRING, sku: STRING, weight: NUMBER }),
+    digital: object({ type: STRING, sku: STRING, downloadUrl: URI })
 });
 
-const UvdOrder = t.object({
+const UvdOrder = object({
     id: NUMBER,
     createdAt: DATE,
     status: STRING,
-    customer: t.object({
+    customer: object({
         id: NUMBER,
         name: STRING,
-        tags: t.array(STRING),
-        preferences: t.object({
+        tags: array(STRING),
+        preferences: object({
             newsletter: BOOLEAN,
             sms: BOOLEAN | UNDEFINED
         })
     }),
-    items: t.array(UvdItem)
+    items: array(UvdItem)
 });
+const PTR = Symbol();
+
+/**
+ * @constructor
+ * @param {number} ptr 
+ */
+function Pointer(ptr) {
+    this[PTR] = ptr;
+}
+
+Object.defineProperty(Pointer.prototype, '__ptr', {
+    get: function() {
+        return this[PTR];
+    }
+})
+
+const UvdOrderPointer = new Pointer(UvdOrder);
 
 const ZodItem = z.discriminatedUnion("type", [
     z.object({ type: z.literal("physical"), sku: z.string(), weight: z.number() }),
@@ -117,6 +134,7 @@ const ajv = new Ajv({ coerceTypes: false, formats: { uri: true, 'date-time': tru
 const ajvValidate = ajv.compile(TypeBoxOrder);
 
 const setupCatalog = catalog();
+const { object: s_object, union: s_union, array: s_array } = allocators(setupCatalog);
 
 group('Building schema (Setup time)', () => {
     bench('Zod', function () {
@@ -144,25 +162,25 @@ group('Building schema (Setup time)', () => {
 
     bench('uvd (In-Place Bitwise)', function () {
         const { t } = setupCatalog;
-        const UvdItem = t.union("type", {
-            physical: t.object({ type: STRING, sku: STRING, weight: NUMBER }),
-            digital: t.object({ type: STRING, sku: STRING, downloadUrl: URI })
+        const UvdItem = s_union("type", {
+            physical: s_object({ type: STRING, sku: STRING, weight: NUMBER }),
+            digital: s_object({ type: STRING, sku: STRING, downloadUrl: URI })
         });
 
-        const UvdOrder = t.object({
+        const UvdOrder = s_object({
             id: NUMBER,
             createdAt: DATE,
             status: STRING,
-            customer: t.object({
+            customer: s_object({
                 id: NUMBER,
                 name: STRING,
-                tags: t.array(STRING),
-                preferences: t.object({
+                tags: s_array(STRING),
+                preferences: s_object({
                     newsletter: BOOLEAN,
                     sms: BOOLEAN | UNDEFINED
                 })
             }),
-            items: t.array(UvdItem)
+            items: s_array(UvdItem)
         });
     });
 
@@ -227,14 +245,18 @@ group('Pure Parsing (Setup Time Excluded)', () => {
     bench('Zod', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { ZodOrder.parse(data); }
+            bench(data) { ZodOrder.safeParse(data); }
         };
     });
 
     bench('uvd (In-Place Bitwise)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { validate(data, UvdOrder); }
+            bench(data) {
+                // const ptr = UvdOrderPointer.__ptr; 
+                // validate(data, ptr);
+                validate(data, UvdOrder);
+            }
         };
     });
 
@@ -279,7 +301,10 @@ group('Pure Parsing (Second time after JIT is warmed up)', () => {
     bench('uvd (In-Place Bitwise)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { validate(data, UvdOrder); }
+            bench(data) {
+                const ptr = UvdOrderPointer.__ptr; 
+                validate(data, ptr);
+            }
         };
     });
 });

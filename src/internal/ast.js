@@ -1,4 +1,4 @@
-/// <reference path="../global.d.ts" />
+/// <reference path="../../global.d.ts" />
 import {
     COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION, K_REFINE, K_TUPLE,
@@ -6,11 +6,11 @@ import {
     HAS_VALIDATOR, sortByKeyId,
 } from "./catalog.js";
 
-import { popcnt16 } from "./const.js";
+import { popcnt16, V_OBJ_PAT_PROP } from "./const.js";
 
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
-    N_EXCLUSIVE, N_INTERSECT, N_NOT, N_CONDITIONAL, N_REF,
+    N_EXCLUSIVE, N_INTERSECT, N_NOT, N_CONDITIONAL, N_TUPLE, N_REF,
 } from "./schema.js";
 
 const KIND_MASK = 0x0FFFFFFF;
@@ -66,9 +66,9 @@ const SENTINEL = 0xFFFFFFFF;
 /**
  * Compiles a FlatAst into the catalog's heap storage.
  * @template {symbol} R
- * @param {uvd.cat.Catalog<R>} cat — a catalog instance returned by catalog()
- * @param {uvd.ast.FlatAst} ast
- * @returns {uvd.ast.CompiledSchema}
+ * @param {uvd.Catalog<R>} cat — a catalog instance returned by catalog()
+ * @param {uvd.FlatAst} ast
+ * @returns {uvd.CompiledSchema}
  */
 export function compile(cat, ast) {
     let heap = cat.__heap;
@@ -207,6 +207,21 @@ export function compile(cat, ast) {
                     for (let i = 0; i < count; i++) {
                         stack[sp++] = astEdges[offset + i * 3 + 1]; // childId
                     }
+                    let flags = astFlags[nodeId];
+                    let extraOff = offset + count * 3;
+                    // additionalProperties child (bit 0)
+                    if (flags & 1) {
+                        stack[sp++] = astEdges[extraOff];
+                        extraOff++;
+                    }
+                    // patternProperties children (bit 1)
+                    if (flags & 2) {
+                        let patCount = astEdges[extraOff++];
+                        for (let i = 0; i < patCount; i++) {
+                            extraOff++; // skip pattern name index
+                            stack[sp++] = astEdges[extraOff++]; // child id
+                        }
+                    }
                     break;
                 }
                 case N_ARRAY: {
@@ -234,6 +249,18 @@ export function compile(cat, ast) {
                     stack[sp++] = astEdges[base]; // if
                     break;
                 }
+                case N_TUPLE: {
+                    let offset = astChild0[nodeId];
+                    let count  = astChild1[nodeId];
+                    for (let i = 0; i < count; i++) {
+                        stack[sp++] = astEdges[offset + i];
+                    }
+                    // rest type child (bit 0)
+                    if (astFlags[nodeId] & 1) {
+                        stack[sp++] = astEdges[offset + count];
+                    }
+                    break;
+                }
                 case N_REFINE: {
                     stack[sp++] = astChild0[nodeId]; // inner type
                     break;
@@ -253,17 +280,70 @@ export function compile(cat, ast) {
                 for (let i = 0; i < count; i++) {
                     let nameIdx = astEdges[offset + i * 3];
                     let childId = astEdges[offset + i * 3 + 1];
-                    let flags   = astEdges[offset + i * 3 + 2];
+                    let oflags  = astEdges[offset + i * 3 + 2];
 
                     resolved[i * 2] = lookup(propNames[nameIdx]);
                     let compiled = astCompiled[childId] >>> 0;
-                    if (flags) compiled = (compiled | OPTIONAL) >>> 0;
+                    if (oflags) compiled = (compiled | OPTIONAL) >>> 0;
                     resolved[i * 2 + 1] = compiled;
                 }
                 sortByKeyId(resolved);
 
-                let objId = registerObject(resolved, count, scratch);
+                // Read extra edges: additionalProperties + patternProperties
+                let objFlags = astFlags[nodeId];
+                let extraOff = offset + count * 3;
+                let additionalType = 0;
+
+                if (objFlags & 1) {
+                    // additionalProperties child
+                    additionalType = astCompiled[astEdges[extraOff]] >>> 0;
+                    extraOff++;
+                }
+
+                // patternProperties: build validator payloads
+                let patPayloads = null;
+                if (objFlags & 2) {
+                    let patCount = astEdges[extraOff++];
+                    patPayloads = [];
+                    for (let i = 0; i < patCount; i++) {
+                        let patNameIdx = astEdges[extraOff++];
+                        let patChildId = astEdges[extraOff++];
+                        let patString = propNames[patNameIdx];
+                        let patCompiledType = astCompiled[patChildId] >>> 0;
+                        patPayloads.push(patString, patCompiledType);
+                    }
+                }
+
+                let objId = registerObject(resolved, count, scratch, additionalType);
+
+                // Build validator
                 let [hasVal, valIdx] = compileValidator(nodeId);
+
+                // If patternProperties exist, we need to inject V_OBJ_PAT_PROP into validator
+                if (patPayloads !== null) {
+                    let vHeader = astVHeaders[nodeId];
+                    let off = astVOffset[nodeId];
+                    let pcount = popcnt16(vHeader & 0xFFFF);
+                    // Rebuild payloads with patternProperties appended
+                    let nodePayloads = [];
+                    for (let i = 0; i < pcount; i++) {
+                        nodePayloads.push(vPayloads[off + i]);
+                    }
+                    // V_OBJ_PAT_PROP payload: [count, reIdx0, type0, reIdx1, type1, ...]
+                    let regexCache = scratch ? heap.S_REGEX_CACHE : heap.REGEX_CACHE;
+                    nodePayloads.push(patPayloads.length / 2); // pattern count
+                    for (let i = 0; i < patPayloads.length; i += 2) {
+                        let re = new RegExp(patPayloads[i], "u");
+                        let reIdx = regexCache.length;
+                        regexCache.push(re);
+                        nodePayloads.push(reIdx);
+                        nodePayloads.push(patPayloads[i + 1]);
+                    }
+                    vHeader |= V_OBJ_PAT_PROP;
+                    valIdx = allocValidator(vHeader, nodePayloads, scratch);
+                    hasVal = true;
+                }
+
                 let kindHeader = hasVal ? (K_OBJECT | HAS_VALIDATOR) : K_OBJECT;
                 let slots = hasVal ? 3 : 2;
                 let kindPtr = allocKind(kindHeader, objId, scratch, slots);
@@ -354,6 +434,33 @@ export function compile(cat, ast) {
                 let types = [ifType, thenType, elseType];
                 let matchId = allocOnSlab(types, scratch, 'match');
                 let kindPtr = allocKind(K_CONDITIONAL, matchId, scratch, 2);
+                astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
+                break;
+            }
+
+            case N_TUPLE: {
+                let offset = astChild0[nodeId];
+                let count  = astChild1[nodeId];
+                let types = new Array(count);
+                for (let i = 0; i < count; i++) {
+                    types[i] = astCompiled[astEdges[offset + i]];
+                }
+                let tupleId = allocOnSlab(types, scratch, 'tuple');
+
+                // Set rest type if present
+                let restType = 0;
+                if (astFlags[nodeId] & 1) {
+                    restType = astCompiled[astEdges[offset + count]] >>> 0;
+                }
+                // Write rest type to TUPLES slot 2
+                let tuplesArr = scratch ? heap.SCR_HEAP.TUPLES : HEAP.TUPLES;
+                tuplesArr[tupleId * 3 + 2] = restType;
+
+                let [hasVal, valIdx] = compileValidator(nodeId);
+                let kindHeader = hasVal ? (K_TUPLE | HAS_VALIDATOR) : K_TUPLE;
+                let slots = hasVal ? 3 : 2;
+                let kindPtr = allocKind(kindHeader, tupleId, scratch, slots);
+                if (hasVal) HEAP.KINDS[kindPtr + 2] = valIdx;
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
                 break;
             }

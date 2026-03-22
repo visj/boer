@@ -1,15 +1,15 @@
 import {
-    PRIMITIVE, NULL, UNDEFINED, BOOLEAN,
+    VALUE, NULL, UNDEFINED, BOOLEAN,
     NUMBER, STRING, DATE, URI, BIGINT,
     ANY, NEVER, TRUE, FALSE, ARRAY, OBJECT,
     STRICT_REJECT, STRICT_DELETE, STRICT_PROTO
-} from './const.js';
+} from './internal/const.js';
 import {
     catalog
-} from "./catalog.js";
-import { allocators, $allocators } from './alloc.js';
+} from "./internal/catalog.js";
+import { allocators, $allocators } from './internal/allocate.js';
 
-/** @type {uvd.cat.Catalog<uvd.UVD>} */
+/** @type {uvd.Catalog<uvd.UVD>} */
 const uvd = catalog();
 
 const {
@@ -49,7 +49,7 @@ export {
 }
 
 export {
-    PRIMITIVE, NULL, UNDEFINED, BOOLEAN,
+    VALUE, NULL, UNDEFINED, BOOLEAN,
     NUMBER, STRING, DATE, URI, BIGINT,
     ANY, NEVER, TRUE, FALSE, ARRAY, OBJECT,
     STRICT_REJECT, STRICT_DELETE, STRICT_PROTO

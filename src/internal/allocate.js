@@ -1,4 +1,4 @@
-/// <reference path="../global.d.ts" />
+/// <reference path="../../global.d.ts" />
 import {
     COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
     STRING, NUMBER, BOOLEAN, BIGINT, DATE, URI, INTEGER,
@@ -70,7 +70,7 @@ function buildValidatorPayload(ctx, primConst, opts, scratch) {
         if (strOpts.pattern !== void 0) {
             vHeader |= V_STR_PATTERN;
             let cache = scratch ? ctx.S_REGEX_CACHE : ctx.REGEX_CACHE;
-            let idx = cache.push(strOpts.pattern instanceof RegExp ? strOpts.pattern : new RegExp(strOpts.pattern)) - 1;
+            let idx = cache.push(strOpts.pattern instanceof RegExp ? strOpts.pattern : new RegExp(strOpts.pattern, "u")) - 1;
             payloads.push(idx);
         }
         if (strOpts.format !== void 0) {
@@ -333,6 +333,7 @@ function objectImpl(ctx, definition, scratch, opts) {
     }
     sortByKeyId(resolved);
     let valIdx = 0;
+    let additionalType = 0;
     const hasValidator = opts !== void 0;
     if (hasValidator) {
         let vHeader = 0;
@@ -361,7 +362,7 @@ function objectImpl(ctx, definition, scratch, opts) {
                 const pattern = patterns[i];
                 const match = patternProperties[pattern];
                 assertIsNumber(match, 0);
-                let re = new RegExp(patterns[i]);
+                let re = new RegExp(patterns[i], "u");
                 let idx = cache.push(re) - 1;
                 payloads.push(idx);
                 payloads.push(match >>> 0);
@@ -387,12 +388,17 @@ function objectImpl(ctx, definition, scratch, opts) {
                 }
             }
         }
-        if (opts.additionalProperties === false) {
+        let addProp = opts.additionalProperties;
+        if (addProp === false) {
             vHeader |= V_OBJ_NO_ADD;
+        } else if (typeof addProp === 'number') {
+            // addProp is a compiled type — validate additional keys against it
+            vHeader |= V_OBJ_NO_ADD;
+            additionalType = addProp;
         }
         valIdx = ctx.allocValidator(vHeader, payloads, scratch);
     }
-    let id = ctx.registerObject(resolved, count, scratch);
+    let id = ctx.registerObject(resolved, count, scratch, additionalType);
     let kindHeader = hasValidator ? (K_OBJECT | HAS_VALIDATOR) : K_OBJECT;
     let slots = hasValidator ? 3 : 2;
     let kindPtr = ctx.allocKind(kindHeader, id, scratch, slots);

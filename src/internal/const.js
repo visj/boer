@@ -45,10 +45,10 @@ const CONTEXT = (1 << 8) >>> 0;
 
 /**
  * SIMPLE: all non-header type bits (used internally for masking kind headers)
- * PRIMITIVE: true value types only (no containers, no meta types)
+ * VALUE: true value types only (no containers, no meta types)
  */
 const SIMPLE = (ANY | NEVER | FALSE | TRUE | NUMBER | STRING | INTEGER | BIGINT | ARRAY | OBJECT | DATE | URI);
-const PRIMITIVE = (FALSE | TRUE | NUMBER | STRING | INTEGER | BIGINT | DATE | URI);
+const VALUE = (FALSE | TRUE | NUMBER | STRING | INTEGER | BIGINT | DATE | URI);
 const PRIM_MASK = 0x0FFFFFFF;
 const KIND_MASK = 0x0FFFFFFF;
 
@@ -177,7 +177,7 @@ export {
     ANY, NEVER, FALSE, TRUE, BOOLEAN,
     NUMBER, STRING, INTEGER, BIGINT,
     ARRAY, OBJECT, DATE, URI,
-    CONTEXT, SIMPLE, PRIMITIVE, PRIM_MASK, KIND_MASK,
+    CONTEXT, SIMPLE, VALUE, PRIM_MASK, KIND_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION,
     K_REFINE, K_TUPLE, K_RECORD, K_OR, K_EXCLUSIVE,
     K_INTERSECT, K_NOT, K_CONDITIONAL,

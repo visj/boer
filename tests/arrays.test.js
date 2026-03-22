@@ -4,13 +4,12 @@ import {
     STRING, BIGINT, DATE, URI,
 } from 'uvd';
 import {
-    catalog
-} from 'uvd/catalog';
-import { allocators } from 'uvd/alloc';
+    catalog, allocators
+} from 'uvd/core';
 
 const cat = catalog();
 const { object, array, union } = allocators(cat);
-const { is, conform } = cat;
+const { validate, conform } = cat;
 
 describe('arrays.test.js', () => {
 
@@ -33,132 +32,132 @@ describe('arrays.test.js', () => {
     describe('validate: basic arrays', () => {
         test('Array<string>', () => {
             let type = array(STRING);
-            expect(is(['a', 'b', 'c'], type)).toBe(true);
-            expect(is([], type)).toBe(true);
-            expect(is([1, 2], type)).toBe(false);
-            expect(is(['a', 1], type)).toBe(false);
-            expect(is('not-array', type)).toBe(false);
-            expect(is(null, type)).toBe(false);
-            expect(is(undefined, type)).toBe(false);
+            expect(validate(['a', 'b', 'c'], type)).toBe(true);
+            expect(validate([], type)).toBe(true);
+            expect(validate([1, 2], type)).toBe(false);
+            expect(validate(['a', 1], type)).toBe(false);
+            expect(validate('not-array', type)).toBe(false);
+            expect(validate(null, type)).toBe(false);
+            expect(validate(undefined, type)).toBe(false);
         });
 
         test('Array<number>', () => {
             let type = array(NUMBER);
-            expect(is([1, 2, 3], type)).toBe(true);
-            expect(is([0, -1, 3.14, NaN, Infinity], type)).toBe(true);
-            expect(is([], type)).toBe(true);
-            expect(is([1, '2'], type)).toBe(false);
+            expect(validate([1, 2, 3], type)).toBe(true);
+            expect(validate([0, -1, 3.14, NaN, Infinity], type)).toBe(true);
+            expect(validate([], type)).toBe(true);
+            expect(validate([1, '2'], type)).toBe(false);
         });
 
         test('Array<boolean>', () => {
             let type = array(BOOLEAN);
-            expect(is([true, false, true], type)).toBe(true);
-            expect(is([true, 0], type)).toBe(false);
+            expect(validate([true, false, true], type)).toBe(true);
+            expect(validate([true, 0], type)).toBe(false);
         });
 
         test('Array<bigint>', () => {
             let type = array(BIGINT);
-            expect(is([BigInt(1), BigInt(2)], type)).toBe(true);
-            expect(is([1, 2], type)).toBe(false);
+            expect(validate([BigInt(1), BigInt(2)], type)).toBe(true);
+            expect(validate([1, 2], type)).toBe(false);
         });
 
         test('Array<Date>', () => {
             let type = array(DATE);
-            expect(is([new Date(), new Date('2024-01-01')], type)).toBe(true);
-            expect(is(['2024-01-01'], type)).toBe(false);
+            expect(validate([new Date(), new Date('2024-01-01')], type)).toBe(true);
+            expect(validate(['2024-01-01'], type)).toBe(false);
         });
 
         test('Array<URL>', () => {
             let type = array(URI);
-            expect(is([new URL('https://vilhelm.se')], type)).toBe(true);
-            expect(is(['https://vilhelm.se'], type)).toBe(false);
+            expect(validate([new URL('https://vilhelm.se')], type)).toBe(true);
+            expect(validate(['https://vilhelm.se'], type)).toBe(false);
         });
     });
 
     describe('validate: array nullability disambiguation', () => {
         test('array(NUMBER): no nulls anywhere', () => {
             let type = array(NUMBER);
-            expect(is([1, 2, 3], type)).toBe(true);
-            expect(is(null, type)).toBe(false);
-            expect(is([1, null, 3], type)).toBe(false);
+            expect(validate([1, 2, 3], type)).toBe(true);
+            expect(validate(null, type)).toBe(false);
+            expect(validate([1, null, 3], type)).toBe(false);
         });
 
         test('array(NUMBER) | NULL: outer null, elements non-null', () => {
             let type = array(NUMBER) | NULL;
-            expect(is(null, type)).toBe(true);           // outer null OK
-            expect(is([1, 2, 3], type)).toBe(true);
-            expect(is([1, null, 3], type)).toBe(false);   // element null NOT OK
+            expect(validate(null, type)).toBe(true);           // outer null OK
+            expect(validate([1, 2, 3], type)).toBe(true);
+            expect(validate([1, null, 3], type)).toBe(false);   // element null NOT OK
         });
 
         test('array(NUMBER) | UNDEFINED: outer undefined OK', () => {
             let type = array(NUMBER) | UNDEFINED;
-            expect(is(undefined, type)).toBe(true);
-            expect(is([1, 2], type)).toBe(true);
-            expect(is(null, type)).toBe(false);
+            expect(validate(undefined, type)).toBe(true);
+            expect(validate([1, 2], type)).toBe(true);
+            expect(validate(null, type)).toBe(false);
         });
 
         test('array(NUMBER | NULL): element null, outer non-null', () => {
             let type = array(NUMBER | NULL);
-            expect(is([1, null, 3], type)).toBe(true);   // element null OK
-            expect(is([1, 2, 3], type)).toBe(true);
-            expect(is(null, type)).toBe(false);           // outer null NOT OK
+            expect(validate([1, null, 3], type)).toBe(true);   // element null OK
+            expect(validate([1, 2, 3], type)).toBe(true);
+            expect(validate(null, type)).toBe(false);           // outer null NOT OK
         });
 
         test('array(NUMBER | NULL) | NULL | UNDEFINED: both levels nullable', () => {
             let type = array(NUMBER | NULL) | NULL | UNDEFINED;
-            expect(is(null, type)).toBe(true);            // outer null
-            expect(is(undefined, type)).toBe(true);       // outer undefined
-            expect(is([1, null, 3], type)).toBe(true);    // element null
-            expect(is([1, 2, 3], type)).toBe(true);
-            expect(is([1, 'two', 3], type)).toBe(false);  // wrong element type
+            expect(validate(null, type)).toBe(true);            // outer null
+            expect(validate(undefined, type)).toBe(true);       // outer undefined
+            expect(validate([1, null, 3], type)).toBe(true);    // element null
+            expect(validate([1, 2, 3], type)).toBe(true);
+            expect(validate([1, 'two', 3], type)).toBe(false);  // wrong element type
         });
 
         test('array(NUMBER | NULL) | NULL vs array(NUMBER) | NULL', () => {
             let withElemNull = array(NUMBER | NULL) | NULL;
             let withoutElemNull = array(NUMBER) | NULL;
 
-            expect(is(null, withElemNull)).toBe(true);
-            expect(is(null, withoutElemNull)).toBe(true);
+            expect(validate(null, withElemNull)).toBe(true);
+            expect(validate(null, withoutElemNull)).toBe(true);
 
-            expect(is([1, 2], withElemNull)).toBe(true);
-            expect(is([1, 2], withoutElemNull)).toBe(true);
+            expect(validate([1, 2], withElemNull)).toBe(true);
+            expect(validate([1, 2], withoutElemNull)).toBe(true);
 
-            expect(is([1, null], withElemNull)).toBe(true);
-            expect(is([1, null], withoutElemNull)).toBe(false);
+            expect(validate([1, null], withElemNull)).toBe(true);
+            expect(validate([1, null], withoutElemNull)).toBe(false);
         });
 
         test('array(STRING | UNDEFINED): elements can be undefined', () => {
             let type = array(STRING | UNDEFINED);
-            expect(is(['a', undefined, 'b'], type)).toBe(true);
-            expect(is(['a', null, 'b'], type)).toBe(false);
+            expect(validate(['a', undefined, 'b'], type)).toBe(true);
+            expect(validate(['a', null, 'b'], type)).toBe(false);
         });
     });
 
     describe('validate: array with type union elements', () => {
         test('Array<string | number>', () => {
             let type = array(STRING | NUMBER);
-            expect(is([1, 'two', 3, 'four'], type)).toBe(true);
-            expect(is([1, 2, 3], type)).toBe(true);
-            expect(is(['a', 'b'], type)).toBe(true);
-            expect(is([1, true], type)).toBe(false);
+            expect(validate([1, 'two', 3, 'four'], type)).toBe(true);
+            expect(validate([1, 2, 3], type)).toBe(true);
+            expect(validate(['a', 'b'], type)).toBe(true);
+            expect(validate([1, true], type)).toBe(false);
         });
 
         test('Array<string | number | boolean>', () => {
             let type = array(STRING | NUMBER | BOOLEAN);
-            expect(is([1, 'two', true], type)).toBe(true);
-            expect(is([null], type)).toBe(false);
+            expect(validate([1, 'two', true], type)).toBe(true);
+            expect(validate([null], type)).toBe(false);
         });
 
         test('Array<string | number | null>', () => {
             let type = array(STRING | NUMBER | NULL);
-            expect(is([1, 'two', null], type)).toBe(true);
-            expect(is([true], type)).toBe(false);
+            expect(validate([1, 'two', null], type)).toBe(true);
+            expect(validate([true], type)).toBe(false);
         });
 
         test('Array<Date | string>', () => {
             let type = array(DATE | STRING);
-            expect(is([new Date(), 'hello'], type)).toBe(true);
-            expect(is([42], type)).toBe(false);
+            expect(validate([new Date(), 'hello'], type)).toBe(true);
+            expect(validate([42], type)).toBe(false);
         });
     });
 
@@ -166,64 +165,64 @@ describe('arrays.test.js', () => {
         test('Array<Object>', () => {
             let Point = object({ x: NUMBER, y: NUMBER });
             let type = array(Point);
-            expect(is([{ x: 1, y: 2 }, { x: 3, y: 4 }], type)).toBe(true);
-            expect(is([], type)).toBe(true);
-            expect(is([{ x: 1, y: '2' }], type)).toBe(false);
-            expect(is([null], type)).toBe(false);
+            expect(validate([{ x: 1, y: 2 }, { x: 3, y: 4 }], type)).toBe(true);
+            expect(validate([], type)).toBe(true);
+            expect(validate([{ x: 1, y: '2' }], type)).toBe(false);
+            expect(validate([null], type)).toBe(false);
         });
 
         test('Array<Object | null>', () => {
             let Point = object({ x: NUMBER, y: NUMBER });
             let type = array(Point | NULL);
-            expect(is([{ x: 1, y: 2 }, null, { x: 3, y: 4 }], type)).toBe(true);
-            expect(is([null, null], type)).toBe(true);
-            expect(is([{ x: 1, y: '2' }], type)).toBe(false);
+            expect(validate([{ x: 1, y: 2 }, null, { x: 3, y: 4 }], type)).toBe(true);
+            expect(validate([null, null], type)).toBe(true);
+            expect(validate([{ x: 1, y: '2' }], type)).toBe(false);
         });
 
         test('Array<Object> | null', () => {
             let Point = object({ x: NUMBER, y: NUMBER });
             let type = array(Point) | NULL;
-            expect(is(null, type)).toBe(true);
-            expect(is([{ x: 1, y: 2 }], type)).toBe(true);
-            expect(is([null], type)).toBe(false); // element null not allowed
+            expect(validate(null, type)).toBe(true);
+            expect(validate([{ x: 1, y: 2 }], type)).toBe(true);
+            expect(validate([null], type)).toBe(false); // element null not allowed
         });
     });
 
     describe('validate: nested arrays', () => {
         test('Array<Array<number>>', () => {
             let type = array(array(NUMBER));
-            expect(is([[1, 2], [3, 4]], type)).toBe(true);
-            expect(is([], type)).toBe(true);
-            expect(is([[]], type)).toBe(true);
-            expect(is([1, 2], type)).toBe(false);
-            expect(is([[1, '2']], type)).toBe(false);
+            expect(validate([[1, 2], [3, 4]], type)).toBe(true);
+            expect(validate([], type)).toBe(true);
+            expect(validate([[]], type)).toBe(true);
+            expect(validate([1, 2], type)).toBe(false);
+            expect(validate([[1, '2']], type)).toBe(false);
         });
 
         test('Array<Array<number>> | null', () => {
             let type = array(array(NUMBER)) | NULL;
-            expect(is(null, type)).toBe(true);
-            expect(is([[1, 2]], type)).toBe(true);
-            expect(is([null], type)).toBe(false);
+            expect(validate(null, type)).toBe(true);
+            expect(validate([[1, 2]], type)).toBe(true);
+            expect(validate([null], type)).toBe(false);
         });
 
         test('Array<Array<number> | null>', () => {
             let type = array(array(NUMBER) | NULL);
-            expect(is([[1, 2], null, [3]], type)).toBe(true);
-            expect(is(null, type)).toBe(false);
+            expect(validate([[1, 2], null, [3]], type)).toBe(true);
+            expect(validate(null, type)).toBe(false);
         });
 
         test('Array<Array<number | null> | null> | null (triple nullable)', () => {
             let type = array(array(NUMBER | NULL) | NULL) | NULL;
-            expect(is(null, type)).toBe(true);           // outer null
-            expect(is([null, [1, null]], type)).toBe(true); // inner array null + element null
-            expect(is([[1, 2], [3]], type)).toBe(true);
-            expect(is([[1, 'x']], type)).toBe(false);
+            expect(validate(null, type)).toBe(true);           // outer null
+            expect(validate([null, [1, null]], type)).toBe(true); // inner array null + element null
+            expect(validate([[1, 2], [3]], type)).toBe(true);
+            expect(validate([[1, 'x']], type)).toBe(false);
         });
 
         test('Array<Array<Array<string>>>', () => {
             let type = array(array(array(STRING)));
-            expect(is([[['a', 'b'], ['c']], [['d']]], type)).toBe(true);
-            expect(is([[['a', 1]]], type)).toBe(false);
+            expect(validate([[['a', 'b'], ['c']], [['d']]], type)).toBe(true);
+            expect(validate([[['a', 1]]], type)).toBe(false);
         });
     });
 
@@ -235,24 +234,24 @@ describe('arrays.test.js', () => {
 
         test('Array<Union>', () => {
             let type = array(ShapeUnion);
-            expect(is([
+            expect(validate([
                 { kind: 'circle', radius: 5 },
                 { kind: 'rect', w: 10, h: 20 }
             ], type)).toBe(true);
-            expect(is([], type)).toBe(true);
-            expect(is([{ kind: 'triangle' }], type)).toBe(false);
+            expect(validate([], type)).toBe(true);
+            expect(validate([{ kind: 'triangle' }], type)).toBe(false);
         });
 
         test('Array<Union> | null', () => {
             let type = array(ShapeUnion) | NULL;
-            expect(is(null, type)).toBe(true);
-            expect(is([{ kind: 'circle', radius: 5 }], type)).toBe(true);
+            expect(validate(null, type)).toBe(true);
+            expect(validate([{ kind: 'circle', radius: 5 }], type)).toBe(true);
         });
 
         test('Array<Union | null>', () => {
             let type = array(ShapeUnion | NULL);
-            expect(is([{ kind: 'circle', radius: 5 }, null], type)).toBe(true);
-            expect(is(null, type)).toBe(false);
+            expect(validate([{ kind: 'circle', radius: 5 }, null], type)).toBe(true);
+            expect(validate(null, type)).toBe(false);
         });
     });
 
@@ -328,42 +327,42 @@ describe('arrays.test.js', () => {
     describe('validate: arrays as object fields', () => {
         test('object with required array field', () => {
             let schema = object({ tags: array(STRING), name: STRING });
-            expect(is({ tags: ['a', 'b'], name: 'Alice' }, schema)).toBe(true);
-            expect(is({ tags: [], name: 'Alice' }, schema)).toBe(true);
-            expect(is({ tags: null, name: 'Alice' }, schema)).toBe(false);
-            expect(is({ name: 'Alice' }, schema)).toBe(false);
+            expect(validate({ tags: ['a', 'b'], name: 'Alice' }, schema)).toBe(true);
+            expect(validate({ tags: [], name: 'Alice' }, schema)).toBe(true);
+            expect(validate({ tags: null, name: 'Alice' }, schema)).toBe(false);
+            expect(validate({ name: 'Alice' }, schema)).toBe(false);
         });
 
         test('object with optional array field', () => {
             let schema = object({ tags: array(STRING) | UNDEFINED, name: STRING });
-            expect(is({ name: 'Alice' }, schema)).toBe(true);
-            expect(is({ tags: ['a'], name: 'Alice' }, schema)).toBe(true);
+            expect(validate({ name: 'Alice' }, schema)).toBe(true);
+            expect(validate({ tags: ['a'], name: 'Alice' }, schema)).toBe(true);
         });
 
         test('object with nullable array field', () => {
             let schema = object({ tags: array(STRING) | NULL, name: STRING });
-            expect(is({ tags: null, name: 'Alice' }, schema)).toBe(true);
-            expect(is({ tags: ['a'], name: 'Alice' }, schema)).toBe(true);
-            expect(is({ name: 'Alice' }, schema)).toBe(false);
+            expect(validate({ tags: null, name: 'Alice' }, schema)).toBe(true);
+            expect(validate({ tags: ['a'], name: 'Alice' }, schema)).toBe(true);
+            expect(validate({ name: 'Alice' }, schema)).toBe(false);
         });
 
         test('object with nullable optional array with nullable elements', () => {
             let schema = object({
                 data: array(NUMBER | NULL) | NULL | UNDEFINED
             });
-            expect(is({}, schema)).toBe(true);
-            expect(is({ data: null }, schema)).toBe(true);
-            expect(is({ data: [1, null, 3] }, schema)).toBe(true);
-            expect(is({ data: [1, 2, 3] }, schema)).toBe(true);
-            expect(is({ data: [1, 'two'] }, schema)).toBe(false);
+            expect(validate({}, schema)).toBe(true);
+            expect(validate({ data: null }, schema)).toBe(true);
+            expect(validate({ data: [1, null, 3] }, schema)).toBe(true);
+            expect(validate({ data: [1, 2, 3] }, schema)).toBe(true);
+            expect(validate({ data: [1, 'two'] }, schema)).toBe(false);
         });
 
         test('object with array of objects field', () => {
             let Item = object({ id: NUMBER, name: STRING });
             let schema = object({ items: array(Item) });
-            expect(is({ items: [{ id: 1, name: 'A' }, { id: 2, name: 'B' }] }, schema)).toBe(true);
-            expect(is({ items: [] }, schema)).toBe(true);
-            expect(is({ items: [{ id: 1, name: 42 }] }, schema)).toBe(false);
+            expect(validate({ items: [{ id: 1, name: 'A' }, { id: 2, name: 'B' }] }, schema)).toBe(true);
+            expect(validate({ items: [] }, schema)).toBe(true);
+            expect(validate({ items: [{ id: 1, name: 42 }] }, schema)).toBe(false);
         });
 
         test('parse object with array of dates field', () => {
@@ -380,46 +379,46 @@ describe('arrays.test.js', () => {
 
     describe('array: edge cases', () => {
         test('empty array always passes', () => {
-            expect(is([], array(NUMBER))).toBe(true);
-            expect(is([], array(STRING | NULL))).toBe(true);
-            expect(is([], array(array(NUMBER)))).toBe(true);
+            expect(validate([], array(NUMBER))).toBe(true);
+            expect(validate([], array(STRING | NULL))).toBe(true);
+            expect(validate([], array(array(NUMBER)))).toBe(true);
             expect(conform([], array(DATE))).toBe(true);
         });
 
         test('single element arrays', () => {
-            expect(is([42], array(NUMBER))).toBe(true);
-            expect(is(['x'], array(NUMBER))).toBe(false);
-            expect(is([null], array(NULL))).toBe(true);
-            expect(is([undefined], array(UNDEFINED))).toBe(true);
+            expect(validate([42], array(NUMBER))).toBe(true);
+            expect(validate(['x'], array(NUMBER))).toBe(false);
+            expect(validate([null], array(NULL))).toBe(true);
+            expect(validate([undefined], array(UNDEFINED))).toBe(true);
         });
 
         test('large arrays', () => {
             let big = Array.from({ length: 10000 }, (_, i) => i);
-            expect(is(big, array(NUMBER))).toBe(true);
+            expect(validate(big, array(NUMBER))).toBe(true);
             //@ts-ignore
             big[5000] = 'oops';
-            expect(is(big, array(NUMBER))).toBe(false);
+            expect(validate(big, array(NUMBER))).toBe(false);
         });
 
         test('non-array types rejected', () => {
             let type = array(NUMBER);
-            expect(is({}, type)).toBe(false);
-            expect(is('string', type)).toBe(false);
-            expect(is(42, type)).toBe(false);
-            expect(is(true, type)).toBe(false);
-            expect(is(new Set([1, 2]), type)).toBe(false);
+            expect(validate({}, type)).toBe(false);
+            expect(validate('string', type)).toBe(false);
+            expect(validate(42, type)).toBe(false);
+            expect(validate(true, type)).toBe(false);
+            expect(validate(new Set([1, 2]), type)).toBe(false);
         });
 
         test('array with all undefined elements', () => {
             let type = array(UNDEFINED);
-            expect(is([undefined, undefined], type)).toBe(true);
-            expect(is([null], type)).toBe(false);
+            expect(validate([undefined, undefined], type)).toBe(true);
+            expect(validate([null], type)).toBe(false);
         });
 
         test('array with all null elements', () => {
             let type = array(NULL);
-            expect(is([null, null, null], type)).toBe(true);
-            expect(is([null, 0], type)).toBe(false);
+            expect(validate([null, null, null], type)).toBe(true);
+            expect(validate([null, 0], type)).toBe(false);
         });
     });
 });

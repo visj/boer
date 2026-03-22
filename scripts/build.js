@@ -16,12 +16,8 @@ async function buildFormat(format, ext, isModule) {
     // ⚠️ NEW: create a fresh bundle per format
     const bundle = await rolldown({
         input: {
-            index: 'src/index.js',
-            catalog: 'src/catalog.js',
-            alloc: 'src/alloc.js',
-            ast: 'src/ast.js',
-            inspect: 'src/inspect.js',
-            schema: 'src/schema.js'
+            core: 'src/core.js',
+            index: 'src/index.js'
         },
     });
 
@@ -32,9 +28,6 @@ async function buildFormat(format, ext, isModule) {
         chunkFileNames: `[name]-[hash].${ext}`,
         entryFileNames: `[name].${ext}`
     });
-
-    // Load existing property map
-    let nameCache = {};
 
     for (const chunk of output) {
         // Handle both entry points and shared chunks
@@ -69,7 +62,7 @@ async function build() {
     // ✅ Build CJS (separate graph → correct imports)
     // await buildFormat('cjs', 'cjs', true);
 
-    const typesToCopy = ['index.d.ts', 'catalog.d.ts', 'ast.d.ts', 'inspect.d.ts', 'schema.d.ts'];
+    const typesToCopy = ['core.d.ts', 'index.d.ts'];
     typesToCopy.forEach(file => {
         const src = path.resolve('types', file);
         if (fs.existsSync(src)) {
