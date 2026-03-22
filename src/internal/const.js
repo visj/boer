@@ -13,41 +13,43 @@ const OPTIONAL = (1 << 29) >>> 0;
 const SCRATCH = (1 << 28) >>> 0;
 
 /**
- * Primitive type bits (bits 16-27)
+ * Primitive type bits (bits 15-27)
  *
  * Layer 1: Meta types
  *   27: ANY    - matches everything (JSON Schema true/{})
  *   26: NEVER  - matches nothing (JSON Schema false)
+ *   25: REST   - marks a tuple rest element on the SLAB
  *
  * Layer 2: JS value types
- *   25: FALSE    24: TRUE     (BOOLEAN = FALSE | TRUE)
- *   23: NUMBER   22: STRING   21: INTEGER   20: BIGINT
- *   19: ARRAY    18: OBJECT   17: DATE      16: URI
+ *   24: FALSE    23: TRUE     (BOOLEAN = FALSE | TRUE)
+ *   22: NUMBER   21: STRING   20: INTEGER   19: BIGINT
+ *   18: ARRAY    17: OBJECT   16: DATE      15: URI
  *
- * Bits 9-15: Reserved for future use
+ * Bits 9-14: Reserved for future use
  * Bit 8: CONTEXT (payload flag for sub-type enum in bits 0-7)
  * Bits 0-7: Payload data (when CONTEXT=1)
  */
 const ANY = (1 << 27) >>> 0;
 const NEVER = (1 << 26) >>> 0;
-const FALSE = (1 << 25) >>> 0;
-const TRUE = (1 << 24) >>> 0;
+const REST = (1 << 25) >>> 0;
+const FALSE = (1 << 24) >>> 0;
+const TRUE = (1 << 23) >>> 0;
 const BOOLEAN = (FALSE | TRUE) >>> 0;
-const NUMBER = (1 << 23) >>> 0;
-const STRING = (1 << 22) >>> 0;
-const INTEGER = (1 << 21) >>> 0;
-const BIGINT = (1 << 20) >>> 0;
-const ARRAY = (1 << 19) >>> 0;
-const OBJECT = (1 << 18) >>> 0;
-const DATE = (1 << 17) >>> 0;
-const URI = (1 << 16) >>> 0;
+const NUMBER = (1 << 22) >>> 0;
+const STRING = (1 << 21) >>> 0;
+const INTEGER = (1 << 20) >>> 0;
+const BIGINT = (1 << 19) >>> 0;
+const ARRAY = (1 << 18) >>> 0;
+const OBJECT = (1 << 17) >>> 0;
+const DATE = (1 << 16) >>> 0;
+const URI = (1 << 15) >>> 0;
 const CONTEXT = (1 << 8) >>> 0;
 
 /**
  * SIMPLE: all non-header type bits (used internally for masking kind headers)
  * VALUE: true value types only (no containers, no meta types)
  */
-const SIMPLE = (ANY | NEVER | FALSE | TRUE | NUMBER | STRING | INTEGER | BIGINT | ARRAY | OBJECT | DATE | URI);
+const SIMPLE = (ANY | NEVER | REST | FALSE | TRUE | NUMBER | STRING | INTEGER | BIGINT | ARRAY | OBJECT | DATE | URI);
 const VALUE = (FALSE | TRUE | NUMBER | STRING | INTEGER | BIGINT | DATE | URI);
 const PRIM_MASK = 0x0FFFFFFF;
 const KIND_MASK = 0x0FFFFFFF;
@@ -136,13 +138,6 @@ const FMT_RE_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]
 
 const FMT_MAP = { email: FMT_EMAIL, ipv4: FMT_IPV4, uuid: FMT_UUID, 'date-time': FMT_DATETIME };
 
-const STRIP = true;
-const PLAIN = true;
-const NOT_STRICT = 0;
-const STRICT_REJECT = 1;
-const STRICT_DELETE = 2;
-const STRICT_PROTO = 4;
-const STRICT_MODE_MASK = 0b11;
 
 const U8 = 1;
 const U16 = 2;
@@ -174,7 +169,7 @@ const hasOwnProperty = Object.prototype.hasOwnProperty;
 
 export {
     COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
-    ANY, NEVER, FALSE, TRUE, BOOLEAN,
+    ANY, NEVER, REST, FALSE, TRUE, BOOLEAN,
     NUMBER, STRING, INTEGER, BIGINT,
     ARRAY, OBJECT, DATE, URI,
     CONTEXT, SIMPLE, VALUE, PRIM_MASK, KIND_MASK,
@@ -190,8 +185,7 @@ export {
     popcnt16,
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME, FMT_MAP,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
-    STRIP, PLAIN, NOT_STRICT, STRICT_REJECT, STRICT_DELETE, STRICT_PROTO,
-    STRICT_MODE_MASK, U8, U16, U32, FAIL, codepointLen, toString, hasOwnProperty
+    U8, U16, U32, FAIL, codepointLen, toString, hasOwnProperty
 }
 
 // Backward-compatible aliases

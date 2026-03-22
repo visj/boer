@@ -2,11 +2,12 @@ import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, NUMBER, STRING, DATE
 } from 'uvd';
-import { catalog, allocators } from 'uvd/core';
+import { catalog, allocators, createConform } from 'uvd/core';
 
 const cat = catalog();
 const { object, array, union } = allocators(cat);
-const { validate, conform } = cat;
+const { validate } = cat;
+const conform = createConform(cat);
 
 describe('discriminated: schema builder', () => {
     test('returns a complex typedef (bit 31 set)', () => {

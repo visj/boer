@@ -1,8 +1,8 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    STRING, NUMBER, NULL, STRICT_REJECT
+    STRING, NUMBER, NULL,
 } from 'uvd';
-import { catalog, allocators, $allocators } from 'uvd/core';
+import { catalog, allocators, $allocators, createConform, createDiagnose } from 'uvd/core';
 
 describe('scratch: basic usage', () => {
     test('$object() creates a usable type', () => {
@@ -136,25 +136,25 @@ describe('scratch: lifecycle', () => {
     test('conform works with scratch types', () => {
         let cat = catalog();
         let { $object } = $allocators(cat);
-        let { conform } = cat;
+        let conform = createConform(cat);
         let schema = $object({ name: STRING, n: NUMBER });
         let obj = { name: 'Alice', n: 42 };
         expect(conform(obj, schema)).toBe(true);
     });
 
-    test('strict works with scratch types', () => {
+    test('additionalProperties false works with scratch types', () => {
         let cat = catalog();
         let { $object } = $allocators(cat);
         let { validate } = cat;
-        let schema = $object({ name: STRING });
-        expect(validate({ name: 'Alice' }, schema, STRICT_REJECT)).toBe(true);
-        expect(validate({ name: 'Alice', extra: true }, schema, STRICT_REJECT)).toBe(false);
+        let schema = $object({ name: STRING }, { additionalProperties: false });
+        expect(validate({ name: 'Alice' }, schema)).toBe(true);
+        expect(validate({ name: 'Alice', extra: true }, schema)).toBe(false);
     });
 
     test('diagnose works with scratch types', () => {
         let cat = catalog();
         let { $object } = $allocators(cat);
-        let { diagnose } = cat;
+        let diagnose = createDiagnose(cat);
         let schema = $object({ name: STRING, age: NUMBER });
         let errors = diagnose({ name: 42, age: 'wrong' }, schema);
         expect(errors.length).toBe(2);

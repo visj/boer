@@ -56,16 +56,16 @@ const TARGET_FILES = [
 // Skip test groups that use features not yet implemented
 const SKIP_GROUPS = new Set([
     // items.json — prefixItems not yet supported
-    "items and subitems",
-    "prefixItems with no additional items allowed",
-    "items does not look in applicators, valid case",
-    "prefixItems validation adjusts the starting index for items",
-    "items with heterogeneous array",
-    // uniqueItems.json — additionalItems not yet supported
-    "uniqueItems with an array of items and additionalItems=false",
-    "uniqueItems=false with an array of items and additionalItems=false",
-    // not.json — unevaluatedProperties not yet supported
-    "collect annotations inside a 'not', even if collection is disabled",
+    // "items and subitems",
+    // "prefixItems with no additional items allowed",
+    // "items does not look in applicators, valid case",
+    // "prefixItems validation adjusts the starting index for items",
+    // "items with heterogeneous array",
+    // // uniqueItems.json — additionalItems not yet supported
+    // "uniqueItems with an array of items and additionalItems=false",
+    // "uniqueItems=false with an array of items and additionalItems=false",
+    // // not.json — unevaluatedProperties not yet supported
+    // "collect annotations inside a 'not', even if collection is disabled",
 ]);
 
 for (const file of TARGET_FILES) {

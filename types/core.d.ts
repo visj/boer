@@ -217,10 +217,6 @@ export declare function nullable<T>(typedef: Complex<T, R>): Complex<T | null, R
 export declare function optional<T>(typedef: Value<T, R>): Value<T | undefined, R>;
 export declare function optional<T>(typedef: Complex<T, R>): Complex<T | undefined, R>;
 
-export const NOT_STRICT = 0;
-export const STRICT_REJECT = 1;
-export const STRICT_DELETE = 2;
-export const STRICT_PROTO = 4;
 
 export interface PathError {
     path: string;
@@ -233,13 +229,6 @@ export interface Dictionary {
 }
 
 export interface Catalog<R extends symbol> {
-    t: SchemaBuilder<R>;
-    v: SchemaBuilder<R>;
-
-    is<T>(data: any, typedef: Type<T, R>, strict?: number): data is T;
-    guard<T>(data: any, typedef: Type<T, R>, strict?: number): asserts data is T;
-    conform<T>(data: any, typedef: Type<T, R>, preserve?: boolean): data is T;
-    diagnose(data: any, typedef: Type<number, R>): any[];
     validate<T>(data: any, typedef: Type<T, R>): data is T;
 
     readonly __heap: {

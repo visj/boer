@@ -42,16 +42,17 @@ describe('validate: primitive builders — with validators', () => {
     });
 });
 
-describe('validate: is ignores validators', () => {
-    test('is passes structural type even if validator would fail', () => {
+describe('validate: enforces validators', () => {
+    test('validate rejects string that fails validator', () => {
         let td = string({ minLength: 5 });
-        expect(validate('hi', td)).toBe(true);
+        expect(validate('hi', td)).toBe(false);
         expect(validate('hello world', td)).toBe(true);
         expect(validate(42, td)).toBe(false);
     });
-    test('is passes number even if below minimum', () => {
+    test('validate rejects number below minimum', () => {
         let td = number({ minimum: 10 });
-        expect(validate(5, td)).toBe(true);
+        expect(validate(5, td)).toBe(false);
+        expect(validate(15, td)).toBe(true);
         expect(validate('not a number', td)).toBe(false);
     });
 });
@@ -161,10 +162,10 @@ describe('validate: array validators', () => {
         expect(validate([1, 2, 3], td)).toBe(true);
         expect(validate([1, 2, 2], td)).toBe(false);
     });
-    test('is ignores array validators', () => {
+    test('validate enforces array validators', () => {
         let td = array(STRING, { minItems: 5 });
-        expect(validate(['a'], td)).toBe(true);
-        expect(validate([], td)).toBe(true);
+        expect(validate(['a'], td)).toBe(false);
+        expect(validate([], td)).toBe(false);
     });
     test('array element type still checked', () => {
         let td = array(STRING, { minItems: 1 });
@@ -181,9 +182,9 @@ describe('validate: object validators', () => {
         let td = object({ name: STRING, age: NUMBER }, { maxProperties: 3 });
         expect(validate({ name: 'Alice', age: 30 }, td)).toBe(true);
     });
-    test('is ignores object validators', () => {
+    test('validate enforces object validators', () => {
         let td = object({ name: STRING }, { minProperties: 5 });
-        expect(validate({ name: 'Alice' }, td)).toBe(true);
+        expect(validate({ name: 'Alice' }, td)).toBe(false);
     });
 });
 
@@ -270,9 +271,9 @@ describe('validate: string format — email', () => {
         expect(validate('@missing.com', td)).toBe(false);
         expect(validate('user@', td)).toBe(false);
     });
-    test('is ignores format', () => {
+    test('validate enforces format', () => {
         let td = string({ format: 'email' });
-        expect(validate('not-an-email', td)).toBe(true);
+        expect(validate('not-an-email', td)).toBe(false);
     });
 });
 
@@ -364,10 +365,10 @@ describe('validate: array contains', () => {
         expect(validate([6, 7, 8], td)).toBe(false); // 3 matches > max 2
         expect(validate([1, 2, 3], td)).toBe(false); // 0 matches < min 1
     });
-    test('is ignores contains', () => {
+    test('validate enforces contains', () => {
         let gt10 = number({ minimum: 10 });
         let td = array(NUMBER, { contains: gt10 });
-        expect(validate([1, 2, 3], td)).toBe(true);
+        expect(validate([1, 2, 3], td)).toBe(false);
     });
 });
 
@@ -536,13 +537,14 @@ describe('validate: refine — complex types', () => {
     });
 });
 
-describe('validate: refine — is ignores callback', () => {
-    test('is passes even when refine would reject', () => {
+describe('validate: refine — enforces callback', () => {
+    test('validate rejects when refine callback returns false', () => {
         let td = refine(STRING, () => false);
-        expect(validate('anything', td)).toBe(true);
+        expect(validate('anything', td)).toBe(false);
     });
-    test('is still validates inner type', () => {
+    test('validate still validates inner type', () => {
         let td = refine(STRING, () => true);
+        expect(validate('hello', td)).toBe(true);
         expect(validate(42, td)).toBe(false);
     });
 });
@@ -602,9 +604,9 @@ describe('validate: additionalProperties: false', () => {
         let td = object({ name: STRING, age: optional(NUMBER) }, { additionalProperties: false });
         expect(validate({ name: 'Alice' }, td)).toBe(true);
     });
-    test('is ignores additionalProperties', () => {
+    test('validate enforces additionalProperties', () => {
         let td = object({ name: STRING }, { additionalProperties: false });
-        expect(validate({ name: 'Alice', extra: true }, td)).toBe(true);
+        expect(validate({ name: 'Alice', extra: true }, td)).toBe(false);
     });
     test('combined with other object validators', () => {
         let td = object({ name: STRING }, {

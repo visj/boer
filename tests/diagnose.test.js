@@ -3,11 +3,11 @@ import {
     UNDEFINED, NULL, BOOLEAN, NUMBER,
     STRING, BIGINT, DATE, URI
 } from 'uvd';
-import { catalog, allocators } from 'uvd/core';
+import { catalog, allocators, createDiagnose } from 'uvd/core';
 
 const cat = catalog();
 const { object, array, union } = allocators(cat);
-const { diagnose } = cat;
+const diagnose = createDiagnose(cat);
 
 describe('explain: primitives', () => {
     test('no errors for matching type', () => {

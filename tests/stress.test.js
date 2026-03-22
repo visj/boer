@@ -1,13 +1,13 @@
 import { describe, test, expect } from 'bun:test';
 import {
     BOOLEAN, NUMBER, STRING, DATE,
-    STRICT_DELETE
 } from 'uvd';
-import { catalog, allocators } from 'uvd/core';
+import { catalog, allocators, createConform } from 'uvd/core';
 
 const cat = catalog();
 const { object, array, union } = allocators(cat);
-const { validate, conform } = cat;
+const { validate } = cat;
+const conform = createConform(cat);
 
 describe('stress: SLAB growth beyond initial 4096', () => {
     test('register 300 objects with 8 fields each (4800 slab entries)', () => {
@@ -274,7 +274,7 @@ describe('stress: parse and strict on large objects', () => {
         expect(typeof obj['pf_2']).toBe('string');
     });
 
-    test('strict strip on 30-field object with 20 extras', () => {
+    test('additionalProperties false rejects 30-field object with 20 extras', () => {
         let def = {};
         let obj = {};
         for (let i = 0; i < 30; i++) {
@@ -284,15 +284,15 @@ describe('stress: parse and strict on large objects', () => {
         for (let i = 0; i < 20; i++) {
             obj['remove_' + i] = 'junk';
         }
-        let schema = object(def);
+        let schema = object(def, { additionalProperties: false });
         expect(Object.keys(obj).length).toBe(50);
-        expect(validate(obj, schema, STRICT_DELETE)).toBe(true);
-        expect(Object.keys(obj).length).toBe(30);
+        expect(validate(obj, schema)).toBe(false);
+
+        /** Exact match passes */
+        let exactObj = {};
         for (let i = 0; i < 30; i++) {
-            expect(obj['keep_' + i]).toBe(i);
+            exactObj['keep_' + i] = i;
         }
-        for (let i = 0; i < 20; i++) {
-            expect('remove_' + i in obj).toBe(false);
-        }
+        expect(validate(exactObj, schema)).toBe(true);
     });
 });

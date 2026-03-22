@@ -6,7 +6,7 @@ import {
     HAS_VALIDATOR, sortByKeyId,
 } from "./catalog.js";
 
-import { popcnt16, V_OBJ_PAT_PROP } from "./const.js";
+import { popcnt16, REST, V_OBJ_PAT_PROP, V_OBJ_NO_ADD } from "./const.js";
 
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
@@ -314,32 +314,40 @@ export function compile(cat, ast) {
                     }
                 }
 
-                let objId = registerObject(resolved, count, scratch, additionalType);
+                let objId = registerObject(resolved, count, scratch);
 
-                // Build validator
+                // Build validator — may need to inject additionalType and patternProperties
                 let [hasVal, valIdx] = compileValidator(nodeId);
 
-                // If patternProperties exist, we need to inject V_OBJ_PAT_PROP into validator
-                if (patPayloads !== null) {
+                /**
+                 * Rebuild the validator when we have extra sequential payloads
+                 * (patternProperties and/or additionalProperties type) that
+                 * aren't in the AST's popcount-based payload array.
+                 */
+                if (patPayloads !== null || additionalType !== 0 || (astVHeaders[nodeId] & V_OBJ_NO_ADD)) {
                     let vHeader = astVHeaders[nodeId];
                     let off = astVOffset[nodeId];
                     let pcount = popcnt16(vHeader & 0xFFFF);
-                    // Rebuild payloads with patternProperties appended
                     let nodePayloads = [];
                     for (let i = 0; i < pcount; i++) {
                         nodePayloads.push(vPayloads[off + i]);
                     }
-                    // V_OBJ_PAT_PROP payload: [count, reIdx0, type0, reIdx1, type1, ...]
-                    let regexCache = scratch ? heap.S_REGEX_CACHE : heap.REGEX_CACHE;
-                    nodePayloads.push(patPayloads.length / 2); // pattern count
-                    for (let i = 0; i < patPayloads.length; i += 2) {
-                        let re = new RegExp(patPayloads[i], "u");
-                        let reIdx = regexCache.length;
-                        regexCache.push(re);
-                        nodePayloads.push(reIdx);
-                        nodePayloads.push(patPayloads[i + 1]);
+                    if (patPayloads !== null) {
+                        // V_OBJ_PAT_PROP payload: [count, reIdx0, type0, reIdx1, type1, ...]
+                        let regexCache = scratch ? heap.S_REGEX_CACHE : heap.REGEX_CACHE;
+                        nodePayloads.push(patPayloads.length / 2);
+                        for (let i = 0; i < patPayloads.length; i += 2) {
+                            let re = new RegExp(patPayloads[i], "u");
+                            let reIdx = regexCache.length;
+                            regexCache.push(re);
+                            nodePayloads.push(reIdx);
+                            nodePayloads.push(patPayloads[i + 1]);
+                        }
+                        vHeader |= V_OBJ_PAT_PROP;
                     }
-                    vHeader |= V_OBJ_PAT_PROP;
+                    if (vHeader & V_OBJ_NO_ADD) {
+                        nodePayloads.push(additionalType);
+                    }
                     valIdx = allocValidator(vHeader, nodePayloads, scratch);
                     hasVal = true;
                 }
@@ -441,20 +449,17 @@ export function compile(cat, ast) {
             case N_TUPLE: {
                 let offset = astChild0[nodeId];
                 let count  = astChild1[nodeId];
-                let types = new Array(count);
+                /** Append restType | REST as extra slab element when present */
+                let hasRestElem = (astFlags[nodeId] & 1) !== 0;
+                let totalCount = hasRestElem ? count + 1 : count;
+                let types = new Array(totalCount);
                 for (let i = 0; i < count; i++) {
                     types[i] = astCompiled[astEdges[offset + i]];
                 }
-                let tupleId = allocOnSlab(types, scratch, 'tuple');
-
-                // Set rest type if present
-                let restType = 0;
-                if (astFlags[nodeId] & 1) {
-                    restType = astCompiled[astEdges[offset + count]] >>> 0;
+                if (hasRestElem) {
+                    types[count] = (astCompiled[astEdges[offset + count]] | REST) >>> 0;
                 }
-                // Write rest type to TUPLES slot 2
-                let tuplesArr = scratch ? heap.SCR_HEAP.TUPLES : HEAP.TUPLES;
-                tuplesArr[tupleId * 3 + 2] = restType;
+                let tupleId = allocOnSlab(types, scratch, 'tuple');
 
                 let [hasVal, valIdx] = compileValidator(nodeId);
                 let kindHeader = hasVal ? (K_TUPLE | HAS_VALIDATOR) : K_TUPLE;

@@ -391,14 +391,15 @@ function objectImpl(ctx, definition, scratch, opts) {
         let addProp = opts.additionalProperties;
         if (addProp === false) {
             vHeader |= V_OBJ_NO_ADD;
+            payloads.push(0);
         } else if (typeof addProp === 'number') {
             // addProp is a compiled type — validate additional keys against it
             vHeader |= V_OBJ_NO_ADD;
-            additionalType = addProp;
+            payloads.push(addProp);
         }
         valIdx = ctx.allocValidator(vHeader, payloads, scratch);
     }
-    let id = ctx.registerObject(resolved, count, scratch, additionalType);
+    let id = ctx.registerObject(resolved, count, scratch);
     let kindHeader = hasValidator ? (K_OBJECT | HAS_VALIDATOR) : K_OBJECT;
     let slots = hasValidator ? 3 : 2;
     let kindPtr = ctx.allocKind(kindHeader, id, scratch, slots);

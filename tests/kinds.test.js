@@ -3,12 +3,14 @@ import {
     BOOLEAN, NUMBER, STRING,
     BIGINT, DATE, URI
 } from 'uvd';
-import { catalog, allocators, $allocators } from 'uvd/core';
+import { catalog, allocators, $allocators, createConform, createDiagnose } from 'uvd/core';
 
 const cat = catalog();
 const { object, array, tuple, record, or, exclusive, intersect, not, when, string, nullable, optional } = allocators(cat);
 const { $object, $tuple, $record, $or, $exclusive, $intersect, $not, $when } = $allocators(cat);
-const { validate, conform, diagnose } = cat;
+const { validate } = cat;
+const conform = createConform(cat);
+const diagnose = createDiagnose(cat);
 
 describe('K_TUPLE', () => {
     test('accepts correct positional types', () => {
@@ -555,32 +557,34 @@ describe('3-argument overloads', () => {
     });
 });
 
-describe('is vs validate for new complex kinds', () => {
-    test('is ignores validators in or children', () => {
+describe('validate enforces validators in complex kinds', () => {
+    test('validate enforces validators in or children', () => {
         let s = string({ minLength: 5 });
         let orType = or(s, NUMBER);
-        // is ignores the minLength validator
-        expect(validate('ab', orType)).toBe(true);
-        // validate enforces it
+        // 'ab' fails minLength on string branch, not a number either
         expect(validate('ab', orType)).toBe(false);
+        // 'hello' passes minLength
+        expect(validate('hello', orType)).toBe(true);
+        // 42 matches NUMBER branch
+        expect(validate(42, orType)).toBe(true);
     });
 
-    test('is ignores validators in exclusive children', () => {
+    test('validate enforces validators in exclusive children', () => {
         let s = string({ minLength: 5 });
         let excl = exclusive(s, NUMBER);
-        // check: 'ab' is a string → matches s structurally, only 1 match
-        expect(validate('ab', excl)).toBe(true);
-        // validate: 'ab' fails minLength → 0 matches
+        // 'ab' fails minLength → 0 matches
         expect(validate('ab', excl)).toBe(false);
+        // 'hello' passes → 1 match
+        expect(validate('hello', excl)).toBe(true);
     });
 
-    test('is ignores validators in intersect children', () => {
+    test('validate enforces validators in intersect children', () => {
         let s1 = string({ minLength: 2 });
         let s2 = string({ maxLength: 10 });
         let inter = intersect(s1, s2);
-        // check: 'a' is a string → matches both structurally
-        expect(validate('a', inter)).toBe(true);
-        // validate: 'a' fails minLength
+        // 'a' fails minLength
         expect(validate('a', inter)).toBe(false);
+        // 'hello' passes both
+        expect(validate('hello', inter)).toBe(true);
     });
 });

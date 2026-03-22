@@ -858,12 +858,19 @@ export function parseJsonSchema(schema) {
             }
 
             // items alongside prefixItems → rest type
+            // JSON Schema: no `items` means any additional items are allowed (implicit ANY)
             if (hasItems) {
                 astFlags[tupleNodeId] |= 1; // bit 0 = has rest type child
                 let restSlot = astEdges.length;
                 astEdges.push(0);
                 let restChildId = allocNode();
                 pushFrame(items, restChildId, LINK_EDGE, restSlot);
+            } else {
+                astFlags[tupleNodeId] |= 1;
+                let anyRestId = allocNode();
+                astKinds[anyRestId] = N_PRIM;
+                astFlags[anyRestId] = (ANY | NULLABLE) >>> 0;
+                astEdges.push(anyRestId);
             }
 
             if (hasVHeader) writeValidators(tupleNodeId, vHeader, vPayloadArr);

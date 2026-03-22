@@ -4,12 +4,13 @@ import {
     STRING, BIGINT, DATE, URI,
 } from 'uvd';
 import {
-    catalog, allocators
+    catalog, allocators, createConform
 } from 'uvd/core';
 
 const cat = catalog();
 const { object, array, union } = allocators(cat);
-const { validate, conform } = cat;
+const { validate } = cat;
+const conform = createConform(cat);
 
 describe('arrays.test.js', () => {
 

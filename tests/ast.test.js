@@ -334,9 +334,6 @@ describe('ast: compile refine', () => {
         let root = b.refine(inner, (val) => val > 0);
         let result = compile(cat, b.build(root));
         expect(cat.validate(5, result.root)).toBe(true);
-        expect(cat.validate(-1, result.root)).toBe(true);
-        expect(cat.validate('hello', result.root)).toBe(false);
-        expect(cat.validate(5, result.root)).toBe(true);
         expect(cat.validate(-1, result.root)).toBe(false);
         expect(cat.validate('hello', result.root)).toBe(false);
     });

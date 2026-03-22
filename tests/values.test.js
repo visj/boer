@@ -3,11 +3,12 @@ import {
     UNDEFINED, NULL, BOOLEAN, NUMBER,
     STRING, BIGINT, DATE, URI, VALUE
 } from 'uvd';
-import { catalog, allocators } from 'uvd/core';
+import { catalog, allocators, createConform } from 'uvd/core';
 
 const cat = catalog();
 const { object } = allocators(cat);
-const { validate, conform } = cat;
+const { validate } = cat;
+const conform = createConform(cat);
 
 describe('validate: primitives', () => {
     test('STRING accepts strings only', () => {

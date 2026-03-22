@@ -1,12 +1,11 @@
 import { describe, test, expect } from 'bun:test';
 import {
     STRING, NUMBER, NULL, UNDEFINED,
-    STRICT_REJECT
 } from 'uvd';
-import { catalog, allocators, $allocators } from 'uvd/core';
+import { catalog, allocators, $allocators, createConform, createDiagnose } from 'uvd/core';
 
 describe('registry: isolation', () => {
-    test('registry() returns an object with is, guard, conform, diagnose, etc.', () => {
+    test('registry() returns an object with validate, etc.', () => {
         let r = catalog();
         let { object, array, union } = allocators(r);
         let { $object, $array, $union } = $allocators(r);
@@ -17,9 +16,8 @@ describe('registry: isolation', () => {
         expect(typeof $array).toBe('function');
         expect(typeof $union).toBe('function');
         expect(typeof r.validate).toBe('function');
-        expect(typeof r.guard).toBe('function');
-        expect(typeof r.conform).toBe('function');
-        expect(typeof r.diagnose).toBe('function');
+        expect(typeof createConform(r)).toBe('function');
+        expect(typeof createDiagnose(r)).toBe('function');
     });
 
     test('two registries have independent state', () => {
@@ -114,27 +112,29 @@ describe('registry: isolation', () => {
 
     test('registry conform works with rich types', () => {
         let r = catalog();
+        let conform = createConform(r);
         let { object } = allocators(r);
         let schema = object({ created: STRING | NUMBER });
         let obj = { created: 42 };
-        expect(r.conform(obj, schema)).toBe(true);
+        expect(conform(obj, schema)).toBe(true);
         expect(obj.created).toBe(42);
     });
 
-    test('registry strict works', () => {
+    test('registry additionalProperties false works', () => {
         let r = catalog();
         let { object } = allocators(r);
-        let schema = object({ name: STRING });
+        let schema = object({ name: STRING }, { additionalProperties: false });
 
-        expect(r.validate({ name: 'Alice' }, schema, STRICT_REJECT)).toBe(true);
-        expect(r.validate({ name: 'Alice', extra: true }, schema, STRICT_REJECT)).toBe(false);
+        expect(r.validate({ name: 'Alice' }, schema)).toBe(true);
+        expect(r.validate({ name: 'Alice', extra: true }, schema)).toBe(false);
     });
 
     test('registry diagnose works', () => {
         let r = catalog();
+        let diagnose = createDiagnose(r);
         let { object } = allocators(r);
         let schema = object({ name: STRING, age: NUMBER });
-        let errors = r.diagnose({ name: 42, age: 'wrong' }, schema);
+        let errors = diagnose({ name: 42, age: 'wrong' }, schema);
         expect(errors.length).toBe(2);
     });
 });

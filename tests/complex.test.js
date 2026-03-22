@@ -3,11 +3,13 @@ import {
     UNDEFINED, NULL, BOOLEAN, NUMBER,
     STRING, DATE, URI
 } from 'uvd';
-import { catalog, allocators } from 'uvd/core';
+import { catalog, allocators, createConform, createDiagnose } from 'uvd/core';
 
 const cat = catalog();
 const { object, array, union } = allocators(cat);
-const { validate, conform, diagnose } = cat;
+const { validate } = cat;
+const conform = createConform(cat);
+const diagnose = createDiagnose(cat);
 
 describe('object: inline nesting', () => {
     test('single level inline nesting', () => {

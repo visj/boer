@@ -2,12 +2,13 @@ import {
     VALUE, NULL, UNDEFINED, BOOLEAN,
     NUMBER, STRING, DATE, URI, BIGINT,
     ANY, NEVER, TRUE, FALSE, ARRAY, OBJECT,
-    STRICT_REJECT, STRICT_DELETE, STRICT_PROTO
 } from './internal/const.js';
 import {
     catalog
 } from "./internal/catalog.js";
 import { allocators, $allocators } from './internal/allocate.js';
+import { createConform } from './internal/transform.js';
+import { createDiagnose } from './internal/error.js';
 
 /** @type {uvd.Catalog<uvd.UVD>} */
 const uvd = catalog();
@@ -27,11 +28,9 @@ const {
     $or, $exclusive, $intersect, $not, $when,
 } = $allocators(uvd);
 
-export const is = uvd.is;
-export const guard = uvd.guard;
-export const conform = uvd.conform;
+export const conform = createConform(uvd);
 export const validate = uvd.validate;
-export const diagnose = uvd.diagnose;
+export const diagnose = createDiagnose(uvd);
 
 export {
     object, array, union,
@@ -52,5 +51,4 @@ export {
     VALUE, NULL, UNDEFINED, BOOLEAN,
     NUMBER, STRING, DATE, URI, BIGINT,
     ANY, NEVER, TRUE, FALSE, ARRAY, OBJECT,
-    STRICT_REJECT, STRICT_DELETE, STRICT_PROTO
 }
