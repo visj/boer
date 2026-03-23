@@ -23,6 +23,14 @@ import {
 } from './util.js';
 
 /**
+ * Pre-allocated typedef pointers for common bare complex types.
+ * These point directly into KINDS[0..2] and avoid any registry allocation.
+ */
+export const BARE_ARRAY  = (COMPLEX | 0) >>> 0;
+export const BARE_OBJECT = (COMPLEX | 1) >>> 0;
+export const BARE_RECORD = (COMPLEX | 2) >>> 0;
+
+/**
  * @template {symbol} R
  * @param {uvd.Config=} cfg 
  * @returns {uvd.Catalog<R>}
@@ -64,14 +72,6 @@ function catalog(cfg) {
     // Bare record: K_RECORD | K_ANY_INNER (1-slot entry)
     KINDS[2] = K_RECORD | K_ANY_INNER;
     HEAP.KIND_PTR = 3;
-
-    /**
-     * Pre-allocated typedef pointers for common bare complex types.
-     * These point directly into KINDS[0..2] and avoid any registry allocation.
-     */
-    let BARE_ARRAY  = (COMPLEX | 0) >>> 0;
-    let BARE_OBJECT = (COMPLEX | 1) >>> 0;
-    let BARE_RECORD = (COMPLEX | 2) >>> 0;
 
     let rewindPending = false;
 

@@ -6,6 +6,7 @@ import {
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
     K_CONDITIONAL,
     K_VALIDATOR, sortByKeyId,
+    BARE_ARRAY, BARE_OBJECT, BARE_RECORD
 } from "./catalog.js";
 
 import { popcnt16, REST, ANY, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED } from "./const.js";
@@ -183,7 +184,7 @@ export function compile(cat, ast) {
                 astCompiled[nodeId] = malloc(K_ARRAY | K_VALIDATOR, scratch,
                     (ANY | NULLABLE) >>> 0, null, 0, vp.vHeader, vp.nodePayloads);
             } else {
-                astCompiled[nodeId] = heap.BARE_ARRAY;
+                astCompiled[nodeId] = BARE_ARRAY;
             }
             astState[nodeId] = COMPILED;
             continue;
@@ -195,7 +196,7 @@ export function compile(cat, ast) {
                 astCompiled[nodeId] = malloc(K_OBJECT | K_VALIDATOR, scratch,
                     0, [], 0, vp.vHeader, vp.nodePayloads);
             } else {
-                astCompiled[nodeId] = heap.BARE_OBJECT;
+                astCompiled[nodeId] = BARE_OBJECT;
             }
             astState[nodeId] = COMPILED;
             continue;
