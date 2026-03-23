@@ -1,16 +1,16 @@
 // --- BIT LAYOUT ---
 // Bit 31:  COMPLEX   (0 = primitive typedef, 1 = complex typedef)
-// Bit 30:  NULLABLE  (typedef accepts null)
-// Bit 29:  OPTIONAL  (typedef accepts undefined)
-// Bit 28:  SCRATCH   (typedef lives in scratch storage)
+// Bit 30:  SCRATCH   (typedef lives in scratch storage)
+// Bit 29:  NULLABLE  (typedef accepts null)
+// Bit 28:  OPTIONAL  (typedef accepts undefined)
 // Bits 0-27:
 //   If COMPLEX=0: primitive type flags (layered bit mask)
 //   If COMPLEX=1: index into KIND table
 
 const COMPLEX = (1 << 31) >>> 0;
-const NULLABLE = (1 << 30) >>> 0;
-const OPTIONAL = (1 << 29) >>> 0;
-const SCRATCH = (1 << 28) >>> 0;
+const SCRATCH = 1 << 30;
+const NULLABLE = 1 << 29;
+const OPTIONAL = 1 << 28;
 
 /**
  * Primitive type bits (bits 15-27)
@@ -25,26 +25,26 @@ const SCRATCH = (1 << 28) >>> 0;
  *   22: NUMBER   21: STRING   20: INTEGER   19: BIGINT
  *   18: (reserved)  17: (reserved)  16: DATE  15: URI
  *
- * ARRAY and OBJECT are complex-only types (K_COLLECTION, K_OBJECT).
+ * ARRAY and OBJECT are complex-only types (K_ARRAY, K_OBJECT).
  * They are no longer primitive value bits.
  *
  * Bits 9-14: Reserved for future use
  * Bit 8: CONTEXT (payload flag for sub-type enum in bits 0-7)
  * Bits 0-7: Payload data (when CONTEXT=1)
  */
-const ANY = (1 << 27) >>> 0;
-const NEVER = (1 << 26) >>> 0;
-const REST = (1 << 25) >>> 0;
-const FALSE = (1 << 24) >>> 0;
-const TRUE = (1 << 23) >>> 0;
-const BOOLEAN = (FALSE | TRUE) >>> 0;
-const NUMBER = (1 << 22) >>> 0;
-const STRING = (1 << 21) >>> 0;
-const INTEGER = (1 << 20) >>> 0;
-const BIGINT = (1 << 19) >>> 0;
-const DATE = (1 << 16) >>> 0;
-const URI = (1 << 15) >>> 0;
-const CONTEXT = (1 << 8) >>> 0;
+const ANY = 1 << 27;
+const NEVER = 1 << 26;
+const REST = 1 << 25 >>> 0;
+const FALSE = 1 << 24;
+const TRUE = 1 << 23;
+const BOOLEAN = FALSE | TRUE;
+const NUMBER = 1 << 22;
+const STRING = 1 << 21;
+const INTEGER = 1 << 20;
+const BIGINT = 1 << 19;
+const DATE = 1 << 16;
+const URI = 1 << 15;
+const CONTEXT = 1 << 8;
 
 /**
  * SIMPLE: all non-header, non-container type bits (used for K_PRIMITIVE headers)
@@ -55,39 +55,47 @@ const VALUE = (FALSE | TRUE | NUMBER | STRING | INTEGER | BIGINT | DATE | URI);
 const PRIM_MASK = 0x0FFFFFFF;
 const KIND_MASK = 0x0FFFFFFF;
 
-// ── Complex KINDS enum (bits 0-3, values 0-7) ──
-// The KINDS vtable header stores the enum in the lower 4 bits,
-// followed by HAS_VALIDATOR, then contextual inner-type bit flags.
-const K_PRIMITIVE   = 0;
-const K_OBJECT      = 1;
-const K_COLLECTION  = 2;   // K_ARRAY, K_RECORD
-const K_COMPOSITION = 3;   // K_OR, K_EXCLUSIVE, K_INTERSECT
-const K_UNION       = 4;
-const K_TUPLE       = 5;
-const K_WRAPPER     = 6;   // K_REFINE, K_NOT
-const K_CONDITIONAL = 7;
+/**
+ * The KINDS type matches the bit layout of the `typedef`.
+ * The 2 uppermost bits contain global metadata. Since
+ * null and undefined actually belong in the primitive space,
+ * we cannot use any more bits, because then the null/undefined
+ * would be overridden in the fast K_PRIMITIVE case where we inline 
+ * primitive bits into the kinds header
+ * Bit 31:  K_VALIDATOR   
+ * Bit 30:  K_ANY_INNER
+ */
 
-const KIND_ENUM_MASK = 0xF;
-const HAS_VALIDATOR = 1 << 4;
-
-// ── Inner type bit flags (bits 5+, contextual per group) ──
-// K_COLLECTION inner flags
-const K_ARRAY  = 1 << 5;
-const K_RECORD = 1 << 6;
-// K_COMPOSITION inner flags
-const K_OR        = 1 << 5;
-const K_EXCLUSIVE = 1 << 6;
-const K_INTERSECT = 1 << 7;
-// K_WRAPPER inner flags
-const K_REFINE = 1 << 5;
-const K_NOT    = 1 << 6;
-
+/**
+ * When this bit is toggled, we have stored a pointer to the VALIDATORS
+ * registry in the KINDS vtable.
+ */
+const K_VALIDATOR = (1 << 31) >>> 0;
 /**
  * K_ANY_INNER: when set on a KINDS header, the inner type is ANY
  * and no registry entry exists. The KINDS slot is only 1 wide.
  * Used for bare `type: "array"`, `type: "object"`, `record(ANY)`, etc.
  */
-const K_ANY_INNER = 1 << 8;
+const K_ANY_INNER = 1 << 30;
+
+// ── Complex KINDS enum (bits 0-3, values 0-11) ──
+// The KINDS vtable header stores the enum in the lower 4 bits,
+// followed by HAS_VALIDATOR at bit 4 and K_ANY_INNER at bit 8.
+// Every kind has a unique value — no sub-groups or inner-type bit flags.
+const K_PRIMITIVE   = 0;
+const K_OBJECT      = 1;
+const K_ARRAY       = 2;
+const K_RECORD      = 3;
+const K_OR          = 4;
+const K_EXCLUSIVE   = 5;
+const K_INTERSECT   = 6;
+const K_UNION       = 7;
+const K_TUPLE       = 8;
+const K_REFINE      = 9;
+const K_NOT         = 10;
+const K_CONDITIONAL = 11;
+
+const KIND_ENUM_MASK = 0xF;
 
 // --- Validator bit flags (globally unique, unified layout) ---
 //
@@ -98,36 +106,38 @@ const K_ANY_INNER = 1 << 8;
 //
 
 // String payload flags
-const V_STR_MIN_LEN = 1;
-const V_STR_MAX_LEN = 1 << 1;
-const V_STR_PATTERN = 1 << 2;
-const V_STR_FORMAT = 1 << 3;
+const V_MIN_LENGTH = 1;
+const V_MAX_LENGTH = 1 << 1;
+const V_PATTERN = 1 << 2;
+const V_FORMAT = 1 << 3;
 // Number payload flags
-const V_NUM_MIN = 1 << 4;
-const V_NUM_MAX = 1 << 5;
-const V_NUM_MULTIPLE = 1 << 6;
+const V_MINIMUM = 1 << 4;
+const V_MAXIMUM = 1 << 5;
+const V_MULTIPLE_OF = 1 << 6;
 // Array payload flags
-const V_ARR_MIN = 1 << 7;
-const V_ARR_MAX = 1 << 8;
-const V_ARR_CONTAINS = 1 << 9;
-const V_ARR_MIN_CT = 1 << 10;
-const V_ARR_MAX_CT = 1 << 11;
+const V_MIN_ITEMS = 1 << 7;
+const V_MAX_ITEMS = 1 << 8;
+const V_CONTAINS = 1 << 9;
+const V_MIN_CONTAINS = 1 << 10;
+const V_MAX_CONTAINS = 1 << 11;
 // Object payload flags
-const V_OBJ_MIN = 1 << 12;
-const V_OBJ_MAX = 1 << 13;
+const V_MIN_PROPERTIES = 1 << 12;
+const V_MAX_PROPERTIES = 1 << 13;
+const V_UNEVALUATED_ITEMS = 1 << 14;
+const V_UNEVALUATED_PROPERTIES = 1 << 15;
 // Object variable-length payload flags (sequential p++ only, NOT popcount-compatible).
 // These are only used by K_OBJECT (catalog API), never by K_PRIMITIVE (JSON Schema).
 // Payloads must be written and read in ascending bit order after the single-payload flags.
-const V_OBJ_PAT_PROP = 1 << 14;
-const V_OBJ_PROP_NAM = 1 << 15;
+const V_DEPENDENT_REQUIRED = 1 << 16;
+const V_PATTERN_PROPERTIES = 1 << 17;
+const V_PROPERTY_NAMES = 1 << 18;
+const V_DEPENDENT_SCHEMAS = 1 << 19;
 
 // Boolean modifier flags (no payload)
-const V_NUM_EX_MIN = 1 << 16;
-const V_NUM_EX_MAX = 1 << 17;
-const V_ARR_UNIQUE = 1 << 18;
-const V_OBJ_NO_ADD = 1 << 19;
-const V_OBJ_DEP_REQ = 1 << 20;
-// Bits 21–31 reserved
+const V_EXCLUSIVE_MINIMUM = 1 << 28;
+const V_EXCLUSIVE_MAXIMUM = 1 << 29;
+const V_UNIQUE_ITEMS = 1 << 30;
+const V_ADDITIONAL_PROPERTIES = (1 << 31) >>> 0;
 
 /**
  * SWAR popcount for lower 16 bits. Returns the number of set bits in x & 0xFFFF.
@@ -155,11 +165,6 @@ const FMT_RE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 const FMT_RE_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 const FMT_MAP = { email: FMT_EMAIL, ipv4: FMT_IPV4, uuid: FMT_UUID, 'date-time': FMT_DATETIME };
-
-
-const U8 = 1;
-const U16 = 2;
-const U32 = 3;
 
 /** @const @type {symbol} */
 const FAIL = Symbol('FAIL');
@@ -191,20 +196,20 @@ export {
     NUMBER, STRING, INTEGER, BIGINT,
     DATE, URI,
     CONTEXT, SIMPLE, VALUE, PRIM_MASK, KIND_MASK,
-    K_PRIMITIVE, K_OBJECT, K_COLLECTION, K_COMPOSITION,
-    K_UNION, K_TUPLE, K_WRAPPER, K_CONDITIONAL,
-    K_ARRAY, K_RECORD, K_OR, K_EXCLUSIVE, K_INTERSECT,
-    K_REFINE, K_NOT, K_ANY_INNER,
-    KIND_ENUM_MASK, HAS_VALIDATOR,
-    V_STR_MIN_LEN, V_STR_MAX_LEN, V_STR_PATTERN, V_STR_FORMAT,
-    V_NUM_MIN, V_NUM_MAX, V_NUM_MULTIPLE, V_NUM_EX_MIN, V_NUM_EX_MAX,
-    V_ARR_MIN, V_ARR_MAX, V_ARR_CONTAINS, V_ARR_MIN_CT, V_ARR_MAX_CT,
-    V_ARR_UNIQUE, V_OBJ_MIN, V_OBJ_MAX, V_OBJ_PAT_PROP, V_OBJ_PROP_NAM,
-    V_OBJ_NO_ADD, V_OBJ_DEP_REQ,
+    K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
+    K_OR, K_EXCLUSIVE, K_INTERSECT,
+    K_UNION, K_TUPLE, K_REFINE, K_NOT,
+    K_CONDITIONAL, K_ANY_INNER,
+    KIND_ENUM_MASK, K_VALIDATOR,
+    V_MIN_LENGTH, V_MAX_LENGTH, V_PATTERN, V_FORMAT,
+    V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
+    V_MIN_ITEMS, V_MAX_ITEMS, V_CONTAINS, V_MIN_CONTAINS, V_MAX_CONTAINS,
+    V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
+    V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED,
     popcnt16,
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME, FMT_MAP,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
-    U8, U16, U32, FAIL, codepointLen, toString, hasOwnProperty
+    FAIL, codepointLen, toString, hasOwnProperty
 }
 
 // Backward-compatible aliases

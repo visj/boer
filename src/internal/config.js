@@ -1,5 +1,4 @@
 /// <reference path="../../global.d.ts" />
-import { U16 } from "./const.js";
 import { assertIsNumber, ERR_CONFIG_FIELD_MUST_BE_NUMBER } from "./error.js";
 
 const DEFAULT_HEAP = { slab: 16384, objects: 4096, arrays: 256, unions: 128, tuples: 128, matches: 256, kinds: 2048, validators: 512 };

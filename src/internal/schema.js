@@ -1,10 +1,11 @@
 /// <reference path="../../global.d.ts" />
 import {
     ANY, NEVER, STRING, NUMBER, INTEGER, BOOLEAN, NULLABLE, OPTIONAL,
-    V_STR_MIN_LEN, V_STR_MAX_LEN,
-    V_NUM_MIN, V_NUM_MAX, V_NUM_MULTIPLE, V_NUM_EX_MIN, V_NUM_EX_MAX,
-    V_ARR_MIN, V_ARR_MAX, V_ARR_UNIQUE,
-    V_OBJ_MIN, V_OBJ_MAX, V_OBJ_PAT_PROP, V_OBJ_NO_ADD,
+    V_MIN_LENGTH, V_MAX_LENGTH,
+    V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
+    V_MIN_ITEMS, V_MAX_ITEMS, V_UNIQUE_ITEMS,
+    V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES,
+    hasOwnProperty
 } from "./const.js";
 
 /**
@@ -70,8 +71,6 @@ const SENTINEL = 0xFFFFFFFF;
 const INITIAL_CAPACITY = 256;
 const MAX_DEPTH = 512;
 
-const hop = Object.prototype.hasOwnProperty;
-
 // ────────────────────────────────────────────────────────────────────────────
 // collectValidators(schema)
 // ────────────────────────────────────────────────────────────────────────────
@@ -107,14 +106,14 @@ function collectValidators(schema) {
     // V_STR_MIN_LEN (bit 0)
     let minLength = schema.minLength;
     if (minLength !== void 0) {
-        vHeader |= V_STR_MIN_LEN;
+        vHeader |= V_MIN_LENGTH;
         payloads.push(+minLength);
     }
 
     // V_STR_MAX_LEN (bit 1)
     let maxLength = schema.maxLength;
     if (maxLength !== void 0) {
-        vHeader |= V_STR_MAX_LEN;
+        vHeader |= V_MAX_LENGTH;
         payloads.push(+maxLength);
     }
 
@@ -126,17 +125,17 @@ function collectValidators(schema) {
     let exMin = schema.exclusiveMinimum;
     if (min !== void 0 && exMin !== void 0) {
         if (+exMin >= +min) {
-            vHeader |= V_NUM_MIN | V_NUM_EX_MIN;
+            vHeader |= V_MINIMUM | V_EXCLUSIVE_MINIMUM;
             payloads.push(+exMin);
         } else {
-            vHeader |= V_NUM_MIN;
+            vHeader |= V_MINIMUM;
             payloads.push(+min);
         }
     } else if (min !== void 0) {
-        vHeader |= V_NUM_MIN;
+        vHeader |= V_MINIMUM;
         payloads.push(+min);
     } else if (exMin !== void 0) {
-        vHeader |= V_NUM_MIN | V_NUM_EX_MIN;
+        vHeader |= V_MINIMUM | V_EXCLUSIVE_MINIMUM;
         payloads.push(+exMin);
     }
 
@@ -145,38 +144,38 @@ function collectValidators(schema) {
     let exMax = schema.exclusiveMaximum;
     if (max !== void 0 && exMax !== void 0) {
         if (+exMax <= +max) {
-            vHeader |= V_NUM_MAX | V_NUM_EX_MAX;
+            vHeader |= V_MAXIMUM | V_EXCLUSIVE_MAXIMUM;
             payloads.push(+exMax);
         } else {
-            vHeader |= V_NUM_MAX;
+            vHeader |= V_MAXIMUM;
             payloads.push(+max);
         }
     } else if (max !== void 0) {
-        vHeader |= V_NUM_MAX;
+        vHeader |= V_MAXIMUM;
         payloads.push(+max);
     } else if (exMax !== void 0) {
-        vHeader |= V_NUM_MAX | V_NUM_EX_MAX;
+        vHeader |= V_MAXIMUM | V_EXCLUSIVE_MAXIMUM;
         payloads.push(+exMax);
     }
 
     // V_NUM_MULTIPLE (bit 6)
     let multipleOf = schema.multipleOf;
     if (multipleOf !== void 0) {
-        vHeader |= V_NUM_MULTIPLE;
+        vHeader |= V_MULTIPLE_OF;
         payloads.push(+multipleOf);
     }
 
     // V_ARR_MIN (bit 7)
     let minItems = schema.minItems;
     if (minItems !== void 0) {
-        vHeader |= V_ARR_MIN;
+        vHeader |= V_MIN_ITEMS;
         payloads.push(+minItems);
     }
 
     // V_ARR_MAX (bit 8)
     let maxItems = schema.maxItems;
     if (maxItems !== void 0) {
-        vHeader |= V_ARR_MAX;
+        vHeader |= V_MAX_ITEMS;
         payloads.push(+maxItems);
     }
 
@@ -185,14 +184,14 @@ function collectValidators(schema) {
     // V_OBJ_MIN (bit 12)
     let minProperties = schema.minProperties;
     if (minProperties !== void 0) {
-        vHeader |= V_OBJ_MIN;
+        vHeader |= V_MIN_PROPERTIES;
         payloads.push(+minProperties);
     }
 
     // V_OBJ_MAX (bit 13)
     let maxProperties = schema.maxProperties;
     if (maxProperties !== void 0) {
-        vHeader |= V_OBJ_MAX;
+        vHeader |= V_MAX_PROPERTIES;
         payloads.push(+maxProperties);
     }
 
@@ -200,7 +199,7 @@ function collectValidators(schema) {
 
     // V_ARR_UNIQUE (bit 18)
     if (schema.uniqueItems === true) {
-        vHeader |= V_ARR_UNIQUE;
+        vHeader |= V_UNIQUE_ITEMS;
     }
 
     // --- Callbacks (no bit-flag equivalent) ---
@@ -751,7 +750,7 @@ export function parseJsonSchema(schema) {
             if (required) {
                 for (let i = 0; i < required.length; i++) {
                     let r = required[i];
-                    if (!hop.call(propObj, r)) {
+                    if (!hasOwnProperty.call(propObj, r)) {
                         propKeys.push(r);
                     }
                 }
@@ -783,7 +782,7 @@ export function parseJsonSchema(schema) {
 
             for (let i = 0; i < propKeys.length; i++) {
                 let key = propKeys[i];
-                let childSchema = hop.call(propObj, key) ? propObj[key] : true;
+                let childSchema = hasOwnProperty.call(propObj, key) ? propObj[key] : true;
                 let childId = allocNode();
 
                 let nameIdx = propNames.length;
@@ -802,10 +801,10 @@ export function parseJsonSchema(schema) {
             let objVHeader = vHeader;
             if (hasAdditionalProps && additionalProps !== true) {
                 if (additionalProps === false) {
-                    objVHeader |= V_OBJ_NO_ADD;
+                    objVHeader |= V_ADDITIONAL_PROPERTIES;
                 } else {
                     // Schema → compile it, store as extra edge after properties
-                    objVHeader |= V_OBJ_NO_ADD;
+                    objVHeader |= V_ADDITIONAL_PROPERTIES;
                     astFlags[objNodeId] |= 1; // bit 0 = has additionalProperties child
                     let addChildId = allocNode();
                     let addSlot = astEdges.length;

@@ -2,7 +2,10 @@ import { describe, test, expect } from 'bun:test';
 import {
     STRING, NUMBER, NULL,
 } from 'uvd';
-import { catalog, allocators, $allocators, createConform, createDiagnose } from 'uvd/core';
+import { 
+    SCRATCH, catalog, allocators, $allocators,
+    createConform, createDiagnose
+} from 'uvd/core';
 
 describe('scratch: basic usage', () => {
     test('$object() creates a usable type', () => {
@@ -42,10 +45,10 @@ describe('scratch: basic usage', () => {
         let { object } = allocators(cat);
         let { $object } = $allocators(cat);
         let perm = object({ x: NUMBER });
-        let vol = $object({ x: NUMBER });
+        let scr = $object({ x: NUMBER });
         // Bit 28 = SCRATCH
-        expect((perm >>> 28) & 1).toBe(0);
-        expect((vol >>> 28) & 1).toBe(1);
+        expect((perm & SCRATCH) === 0).toBe(true);
+        expect((scr & SCRATCH) === SCRATCH).toBe(true);
     });
 });
 

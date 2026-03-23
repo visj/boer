@@ -4,11 +4,11 @@ import {
     NUMBER, STRING, INTEGER, BIGINT,
     DATE, URI,
     SIMPLE, PRIM_MASK, KIND_MASK,
-    K_PRIMITIVE, K_OBJECT, K_COLLECTION, K_COMPOSITION,
-    K_UNION, K_TUPLE, K_WRAPPER, K_CONDITIONAL,
-    K_ARRAY, K_RECORD, K_OR, K_EXCLUSIVE, K_INTERSECT,
-    K_REFINE, K_NOT,
-    KIND_ENUM_MASK, HAS_VALIDATOR,
+    K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
+    K_OR, K_EXCLUSIVE, K_INTERSECT,
+    K_UNION, K_TUPLE, K_REFINE, K_NOT,
+    K_CONDITIONAL,
+    KIND_ENUM_MASK, K_VALIDATOR,
     FAIL, toString
 } from './const.js';
 
@@ -252,36 +252,43 @@ function describeType(type, kinds) {
         let ptr = type & KIND_MASK;
         let header = kinds[ptr];
         let ct = header & KIND_ENUM_MASK;
-        if (ct === K_PRIMITIVE) {
-            describePrimBits(header & SIMPLE, parts);
-        } else if (ct === K_OBJECT) {
-            parts.push('Object');
-        } else if (ct === K_COLLECTION) {
-            if (header & K_ARRAY) {
+        switch (ct) {
+            case K_PRIMITIVE:
+                describePrimBits(header & SIMPLE, parts);
+                break;
+            case K_OBJECT:
+                parts.push('Object');
+                break;
+            case K_ARRAY:
                 parts.push('Array');
-            } else if (header & K_RECORD) {
+                break;
+            case K_RECORD:
                 parts.push('Record');
-            }
-        } else if (ct === K_COMPOSITION) {
-            if (header & K_OR) {
+                break;
+            case K_OR:
                 parts.push('Or');
-            } else if (header & K_EXCLUSIVE) {
+                break;
+            case K_EXCLUSIVE:
                 parts.push('Exclusive');
-            } else if (header & K_INTERSECT) {
+                break;
+            case K_INTERSECT:
                 parts.push('Intersect');
-            }
-        } else if (ct === K_UNION) {
-            parts.push('Union');
-        } else if (ct === K_TUPLE) {
-            parts.push('Tuple');
-        } else if (ct === K_WRAPPER) {
-            if (header & K_REFINE) {
+                break;
+            case K_UNION:
+                parts.push('Union');
+                break;
+            case K_TUPLE:
+                parts.push('Tuple');
+                break;
+            case K_REFINE:
                 parts.push('Refined');
-            } else if (header & K_NOT) {
+                break;
+            case K_NOT:
                 parts.push('Not');
-            }
-        } else if (ct === K_CONDITIONAL) {
-            parts.push('Conditional');
+                break;
+            case K_CONDITIONAL:
+                parts.push('Conditional');
+                break;
         }
     } else {
         describePrimBits(type & PRIM_MASK, parts);

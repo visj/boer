@@ -3,16 +3,16 @@ import { config, heap } from './config.js';
 import {
     COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
     ANY, NEVER, REST, SIMPLE, PRIM_MASK, KIND_MASK,
-    K_PRIMITIVE, K_OBJECT, K_COLLECTION, K_COMPOSITION,
-    K_UNION, K_TUPLE, K_WRAPPER, K_CONDITIONAL,
-    K_ARRAY, K_RECORD, K_OR, K_EXCLUSIVE, K_INTERSECT,
-    K_REFINE, K_NOT, K_ANY_INNER,
-    KIND_ENUM_MASK, HAS_VALIDATOR,
-    V_STR_MIN_LEN, V_STR_MAX_LEN, V_STR_PATTERN, V_STR_FORMAT,
-    V_NUM_MIN, V_NUM_MAX, V_NUM_MULTIPLE, V_NUM_EX_MIN, V_NUM_EX_MAX,
-    V_ARR_MIN, V_ARR_MAX, V_ARR_CONTAINS, V_ARR_MIN_CT, V_ARR_MAX_CT,
-    V_ARR_UNIQUE, V_OBJ_MIN, V_OBJ_MAX, V_OBJ_PAT_PROP, V_OBJ_PROP_NAM,
-    V_OBJ_NO_ADD, V_OBJ_DEP_REQ,
+    K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
+    K_OR, K_EXCLUSIVE, K_INTERSECT,
+    K_UNION, K_TUPLE, K_REFINE, K_NOT,
+    K_CONDITIONAL, K_ANY_INNER,
+    KIND_ENUM_MASK, K_VALIDATOR,
+    V_MIN_LENGTH, V_MAX_LENGTH, V_PATTERN, V_FORMAT,
+    V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
+    V_MIN_ITEMS, V_MAX_ITEMS, V_CONTAINS, V_MIN_CONTAINS, V_MAX_CONTAINS,
+    V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
+    V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED,
     popcnt16,
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
@@ -65,12 +65,12 @@ function catalog(cfg) {
     let KEY_INDEX = new Map();
 
     // --- PRE-ALLOCATED COMPLEX TYPE CONSTANTS ---
-    // Bare array: K_COLLECTION | K_ARRAY | K_ANY_INNER (1-slot entry)
-    KINDS[0] = K_COLLECTION | K_ARRAY | K_ANY_INNER;
+    // Bare array: K_ARRAY | K_ANY_INNER (1-slot entry)
+    KINDS[0] = K_ARRAY | K_ANY_INNER;
     // Bare object: K_OBJECT | K_ANY_INNER (1-slot entry)
     KINDS[1] = K_OBJECT | K_ANY_INNER;
-    // Bare record: K_COLLECTION | K_RECORD | K_ANY_INNER (1-slot entry)
-    KINDS[2] = K_COLLECTION | K_RECORD | K_ANY_INNER;
+    // Bare record: K_RECORD | K_ANY_INNER (1-slot entry)
+    KINDS[2] = K_RECORD | K_ANY_INNER;
     HEAP.KIND_PTR = 3;
 
     /**
@@ -287,27 +287,27 @@ function catalog(cfg) {
         let vHeader = vals[valIdx] | 0;
         let base = valIdx + 1;
         if (typeof value === 'string') {
-            if (vHeader & V_STR_MIN_LEN) {
-                let p = base + popcnt16(vHeader & (V_STR_MIN_LEN - 1));
+            if (vHeader & V_MIN_LENGTH) {
+                let p = base + popcnt16(vHeader & (V_MIN_LENGTH - 1));
                 if (codepointLen(value) < vals[p]) {
                     return false;
                 }
             }
-            if (vHeader & V_STR_MAX_LEN) {
-                let p = base + popcnt16(vHeader & (V_STR_MAX_LEN - 1));
+            if (vHeader & V_MAX_LENGTH) {
+                let p = base + popcnt16(vHeader & (V_MAX_LENGTH - 1));
                 if (codepointLen(value) > vals[p]) {
                     return false;
                 }
             }
-            if (vHeader & V_STR_PATTERN) {
-                let p = base + popcnt16(vHeader & (V_STR_PATTERN - 1));
+            if (vHeader & V_PATTERN) {
+                let p = base + popcnt16(vHeader & (V_PATTERN - 1));
                 let regexCache = scratch ? S_REGEX_CACHE : REGEX_CACHE;
                 if (!regexCache[vals[p] | 0].test(value)) {
                     return false;
                 }
             }
-            if (vHeader & V_STR_FORMAT) {
-                let p = base + popcnt16(vHeader & (V_STR_FORMAT - 1));
+            if (vHeader & V_FORMAT) {
+                let p = base + popcnt16(vHeader & (V_FORMAT - 1));
                 let fmt = vals[p] | 0;
                 let re = fmt === FMT_EMAIL ? FMT_RE_EMAIL :
                     fmt === FMT_IPV4 ? FMT_RE_IPV4 :
@@ -318,20 +318,20 @@ function catalog(cfg) {
                 }
             }
         } else if (typeof value === 'number') {
-            if (vHeader & V_NUM_MIN) {
-                let p = base + popcnt16(vHeader & (V_NUM_MIN - 1));
-                if ((vHeader & V_NUM_EX_MIN) ? value <= vals[p] : value < vals[p]) {
+            if (vHeader & V_MINIMUM) {
+                let p = base + popcnt16(vHeader & (V_MINIMUM - 1));
+                if ((vHeader & V_EXCLUSIVE_MINIMUM) ? value <= vals[p] : value < vals[p]) {
                     return false;
                 }
             }
-            if (vHeader & V_NUM_MAX) {
-                let p = base + popcnt16(vHeader & (V_NUM_MAX - 1));
-                if ((vHeader & V_NUM_EX_MAX) ? value >= vals[p] : value > vals[p]) {
+            if (vHeader & V_MAXIMUM) {
+                let p = base + popcnt16(vHeader & (V_MAXIMUM - 1));
+                if ((vHeader & V_EXCLUSIVE_MAXIMUM) ? value >= vals[p] : value > vals[p]) {
                     return false;
                 }
             }
-            if (vHeader & V_NUM_MULTIPLE) {
-                let p = base + popcnt16(vHeader & (V_NUM_MULTIPLE - 1));
+            if (vHeader & V_MULTIPLE_OF) {
+                let p = base + popcnt16(vHeader & (V_MULTIPLE_OF - 1));
                 let quotient = value / vals[p];
                 let isMultiple = Math.abs(Math.round(quotient) - quotient) < 1e-8;
                 if (!isMultiple) {
@@ -352,29 +352,29 @@ function catalog(cfg) {
         let vals = scratch ? S_VALIDATORS : VALIDATORS;
         let vHeader = vals[valIdx] | 0;
         let base = valIdx + 1;
-        if (vHeader & V_ARR_MIN) {
-            let p = base + popcnt16(vHeader & (V_ARR_MIN - 1));
+        if (vHeader & V_MIN_ITEMS) {
+            let p = base + popcnt16(vHeader & (V_MIN_ITEMS - 1));
             if (data.length < vals[p]) {
                 return false;
             }
         }
-        if (vHeader & V_ARR_MAX) {
-            let p = base + popcnt16(vHeader & (V_ARR_MAX - 1));
+        if (vHeader & V_MAX_ITEMS) {
+            let p = base + popcnt16(vHeader & (V_MAX_ITEMS - 1));
             if (data.length > vals[p]) {
                 return false;
             }
         }
-        if (vHeader & V_ARR_UNIQUE) {
+        if (vHeader & V_UNIQUE_ITEMS) {
             let set = new Set(data);
             if (set.size !== data.length) {
                 return false;
             }
         }
-        if (vHeader & V_ARR_CONTAINS) {
-            let cp = base + popcnt16(vHeader & (V_ARR_CONTAINS - 1));
+        if (vHeader & V_CONTAINS) {
+            let cp = base + popcnt16(vHeader & (V_CONTAINS - 1));
             let containsType = vals[cp] >>> 0;
-            let minC = (vHeader & V_ARR_MIN_CT) ? vals[base + popcnt16(vHeader & (V_ARR_MIN_CT - 1))] : 1;
-            let maxC = (vHeader & V_ARR_MAX_CT) ? vals[base + popcnt16(vHeader & (V_ARR_MAX_CT - 1))] : Infinity;
+            let minC = (vHeader & V_MIN_CONTAINS) ? vals[base + popcnt16(vHeader & (V_MIN_CONTAINS - 1))] : 1;
+            let maxC = (vHeader & V_MAX_CONTAINS) ? vals[base + popcnt16(vHeader & (V_MAX_CONTAINS - 1))] : Infinity;
             let matchCount = 0;
             let length = data.length;
             for (let i = 0; i < length; i++) {
@@ -406,17 +406,17 @@ function catalog(cfg) {
         let p = valIdx + 1;
         let keys = Object.keys(data);
         let keyCount = keys.length;
-        if (vHeader & V_OBJ_MIN) {
+        if (vHeader & V_MIN_PROPERTIES) {
             if (keyCount < vals[p++]) {
                 return false;
             }
         }
-        if (vHeader & V_OBJ_MAX) {
+        if (vHeader & V_MAX_PROPERTIES) {
             if (keyCount > vals[p++]) {
                 return false;
             }
         }
-        if (vHeader & V_OBJ_PAT_PROP) {
+        if (vHeader & V_PATTERN_PROPERTIES) {
             let patternCount = vals[p++] | 0;
             for (let pi = 0; pi < patternCount; pi++) {
                 let reIdx = vals[p++] | 0;
@@ -431,7 +431,7 @@ function catalog(cfg) {
                 }
             }
         }
-        if (vHeader & V_OBJ_PROP_NAM) {
+        if (vHeader & V_PROPERTY_NAMES) {
             let nameSchema = vals[p++] >>> 0;
             for (let ki = 0; ki < keyCount; ki++) {
                 if (!_validate(keys[ki], nameSchema)) {
@@ -439,7 +439,7 @@ function catalog(cfg) {
                 }
             }
         }
-        if (vHeader & V_OBJ_DEP_REQ) {
+        if (vHeader & V_DEPENDENT_REQUIRED) {
             let triggerCount = vals[p++] | 0;
             for (let ti = 0; ti < triggerCount; ti++) {
                 let triggerKeyId = vals[p++] | 0;
@@ -458,7 +458,7 @@ function catalog(cfg) {
                 }
             }
         }
-        if (vHeader & V_OBJ_NO_ADD) {
+        if (vHeader & V_ADDITIONAL_PROPERTIES) {
             let addType = vals[p++] >>> 0;
             let objects = scratch ? S_OBJECTS : OBJECTS;
             let slab = scratch ? S_SLAB : SLAB;
@@ -487,12 +487,12 @@ function catalog(cfg) {
                 if (!declared) {
                     // Check if matched by patternProperties
                     let patternMatched = false;
-                    if (vHeader & V_OBJ_PAT_PROP) {
+                    if (vHeader & V_PATTERN_PROPERTIES) {
                         // Scan pattern entries — they were already validated above,
                         // but we need to know if this key matched any pattern
                         let pp = valIdx + 1;
-                        if (vHeader & V_OBJ_MIN) pp++;
-                        if (vHeader & V_OBJ_MAX) pp++;
+                        if (vHeader & V_MIN_PROPERTIES) pp++;
+                        if (vHeader & V_MAX_PROPERTIES) pp++;
                         let patternCount = vals[pp++] | 0;
                         for (let pi = 0; pi < patternCount; pi++) {
                             let reIdx = vals[pp++] | 0;
@@ -557,13 +557,10 @@ function catalog(cfg) {
 
             /** Fast path: K_ANY_INNER means no registry entry, just a type check */
             if (header & K_ANY_INNER) {
-                if (ct === K_COLLECTION) {
-                    if (header & K_ARRAY) {
-                        return Array.isArray(data);
-                    }
-                    return typeof data === 'object' && data !== null && !Array.isArray(data);
+                if (ct === K_ARRAY) {
+                    return Array.isArray(data);
                 }
-                if (ct === K_OBJECT) {
+                if (ct === K_RECORD || ct === K_OBJECT) {
                     return typeof data === 'object' && data !== null && !Array.isArray(data);
                 }
                 return false;
@@ -571,49 +568,49 @@ function catalog(cfg) {
 
             let ri = kinds[ptr + 1];
 
-            if (ct === K_PRIMITIVE) {
-                let primBits = header & SIMPLE;
-                if (!_isValue(data, primBits)) {
-                    return false;
-                }
-                if (header & HAS_VALIDATOR) {
-                    return runPrimValidator(data, primBits, ri, scratch);
-                }
-                return true;
-            }
-            if (ct === K_OBJECT) {
-                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-                    return false;
-                }
-                let objects = scratch ? S_OBJECTS : OBJECTS;
-                let slab = scratch ? S_SLAB : SLAB;
-                let offset = objects[ri * 2];
-                let length = objects[ri * 2 + 1];
-                for (let i = 0; i < length; i++) {
-                    let key = KEY_INDEX.get(slab[offset + (i * 2)]);
-                    if (key === void 0) {
+            switch (ct) {
+                case K_PRIMITIVE: {
+                    let primBits = header & SIMPLE;
+                    if (!_isValue(data, primBits)) {
                         return false;
                     }
-                    let type = slab[offset + (i * 2) + 1];
-                    let val = data[key];
+                    if (header & K_VALIDATOR) {
+                        return runPrimValidator(data, primBits, ri, scratch);
+                    }
+                    return true;
+                }
+                case K_OBJECT: {
+                    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                        return false;
+                    }
+                    let objects = scratch ? S_OBJECTS : OBJECTS;
+                    let slab = scratch ? S_SLAB : SLAB;
+                    let offset = objects[ri * 2];
+                    let length = objects[ri * 2 + 1];
+                    for (let i = 0; i < length; i++) {
+                        let key = KEY_INDEX.get(slab[offset + (i * 2)]);
+                        if (key === void 0) {
+                            return false;
+                        }
+                        let type = slab[offset + (i * 2) + 1];
+                        let val = data[key];
 
-                    /** Only pay the 'hasOwnProperty' tax if it looks like a prototype leak */
-                    if (val !== void 0 && (typeof val === 'function' || key === '__proto__')) {
-                        if (!hasOwnProperty.call(data, key)) {
-                            val = void 0;
+                        /** Only pay the 'hasOwnProperty' tax if it looks like a prototype leak */
+                        if (val !== void 0 && (typeof val === 'function' || key === '__proto__')) {
+                            if (!hasOwnProperty.call(data, key)) {
+                                val = void 0;
+                            }
+                        }
+                        if (!_validateSlot(val, type)) {
+                            return false;
                         }
                     }
-                    if (!_validateSlot(val, type)) {
-                        return false;
+                    if (header & K_VALIDATOR) {
+                        return runObjectValidator(data, kinds[ptr + 2], scratch, ri);
                     }
+                    return true;
                 }
-                if (header & HAS_VALIDATOR) {
-                    return runObjectValidator(data, kinds[ptr + 2], scratch, ri);
-                }
-                return true;
-            }
-            if (ct === K_COLLECTION) {
-                if (header & K_ARRAY) {
+                case K_ARRAY: {
                     if (!Array.isArray(data)) {
                         return false;
                     }
@@ -625,30 +622,29 @@ function catalog(cfg) {
                             return false;
                         }
                     }
-                    if (header & HAS_VALIDATOR) {
+                    if (header & K_VALIDATOR) {
                         return runArrayValidator(data, kinds[ptr + 2], scratch);
                     }
                     return true;
                 }
-                /** K_RECORD */
-                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-                    return false;
-                }
-                let valueType = ri;
-                let dataKeys = Object.keys(data);
-                for (let i = 0; i < dataKeys.length; i++) {
-                    if (!_validateSlot(data[dataKeys[i]], valueType)) {
+                case K_RECORD: {
+                    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                         return false;
                     }
+                    let valueType = ri;
+                    let dataKeys = Object.keys(data);
+                    for (let i = 0; i < dataKeys.length; i++) {
+                        if (!_validateSlot(data[dataKeys[i]], valueType)) {
+                            return false;
+                        }
+                    }
+                    return true;
                 }
-                return true;
-            }
-            if (ct === K_COMPOSITION) {
-                let matches = scratch ? S_MATCHES : MATCHES;
-                let slab = scratch ? S_SLAB : SLAB;
-                let offset = matches[ri * 2];
-                let count = matches[ri * 2 + 1];
-                if (header & K_OR) {
+                case K_OR: {
+                    let matches = scratch ? S_MATCHES : MATCHES;
+                    let slab = scratch ? S_SLAB : SLAB;
+                    let offset = matches[ri * 2];
+                    let count = matches[ri * 2 + 1];
                     for (let i = 0; i < count; i++) {
                         if (_validate(data, slab[offset + i])) {
                             return true;
@@ -656,7 +652,11 @@ function catalog(cfg) {
                     }
                     return false;
                 }
-                if (header & K_EXCLUSIVE) {
+                case K_EXCLUSIVE: {
+                    let matches = scratch ? S_MATCHES : MATCHES;
+                    let slab = scratch ? S_SLAB : SLAB;
+                    let offset = matches[ri * 2];
+                    let count = matches[ri * 2 + 1];
                     let matchCount = 0;
                     for (let i = 0; i < count; i++) {
                         if (_validate(data, slab[offset + i])) {
@@ -668,93 +668,99 @@ function catalog(cfg) {
                     }
                     return matchCount === 1;
                 }
-                /** K_INTERSECT */
-                for (let i = 0; i < count; i++) {
-                    if (!_validate(data, slab[offset + i])) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-            if (ct === K_UNION) {
-                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-                    return false;
-                }
-                let unions = scratch ? S_UNIONS : UNIONS;
-                let slab = scratch ? S_SLAB : SLAB;
-                let discKey = KEY_INDEX.get(unions[ri * 3 + 2]);
-                if (discKey === void 0) {
-                    return false;
-                }
-                let valueId = KEY_DICT.get(data[discKey]);
-                let offset = unions[ri * 3];
-                let length = unions[ri * 3 + 1];
-                for (let i = 0; i < length; i++) {
-                    if (slab[offset + i * 2] === valueId) {
-                        return _validate(data, slab[offset + i * 2 + 1]);
-                    }
-                }
-                return false;
-            }
-            if (ct === K_TUPLE) {
-                if (!Array.isArray(data)) {
-                    return false;
-                }
-                let tuples = scratch ? S_TUPLES : TUPLES;
-                let slab = scratch ? S_SLAB : SLAB;
-                let offset = tuples[ri * 2];
-                let count = tuples[ri * 2 + 1];
-                let hasRest = count > 0 && (slab[offset + count - 1] & REST) !== 0;
-                let fixedCount = hasRest ? count - 1 : count;
-                if (data.length < fixedCount) {
-                    return false;
-                }
-                if (!hasRest && data.length > fixedCount) {
-                    return false;
-                }
-                for (let i = 0; i < fixedCount; i++) {
-                    if (!_validateSlot(data[i], slab[offset + i])) {
-                        return false;
-                    }
-                }
-                if (hasRest) {
-                    let restType = (slab[offset + count - 1] & ~REST) >>> 0;
-                    for (let i = fixedCount; i < data.length; i++) {
-                        if (!_validateSlot(data[i], restType)) {
+                case K_INTERSECT: {
+                    let matches = scratch ? S_MATCHES : MATCHES;
+                    let slab = scratch ? S_SLAB : SLAB;
+                    let offset = matches[ri * 2];
+                    let count = matches[ri * 2 + 1];
+                    for (let i = 0; i < count; i++) {
+                        if (!_validate(data, slab[offset + i])) {
                             return false;
                         }
                     }
+                    return true;
                 }
-                if (header & HAS_VALIDATOR) {
-                    return runArrayValidator(data, kinds[ptr + 2], scratch);
+                case K_UNION: {
+                    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                        return false;
+                    }
+                    let unions = scratch ? S_UNIONS : UNIONS;
+                    let slab = scratch ? S_SLAB : SLAB;
+                    let discKey = KEY_INDEX.get(unions[ri * 3 + 2]);
+                    if (discKey === void 0) {
+                        return false;
+                    }
+                    let valueId = KEY_DICT.get(data[discKey]);
+                    let offset = unions[ri * 3];
+                    let length = unions[ri * 3 + 1];
+                    for (let i = 0; i < length; i++) {
+                        if (slab[offset + i * 2] === valueId) {
+                            return _validate(data, slab[offset + i * 2 + 1]);
+                        }
+                    }
+                    return false;
                 }
-                return true;
-            }
-            if (ct === K_WRAPPER) {
-                if (header & K_REFINE) {
+                case K_TUPLE: {
+                    if (!Array.isArray(data)) {
+                        return false;
+                    }
+                    let tuples = scratch ? S_TUPLES : TUPLES;
+                    let slab = scratch ? S_SLAB : SLAB;
+                    let offset = tuples[ri * 2];
+                    let count = tuples[ri * 2 + 1];
+                    let hasRest = count > 0 && (slab[offset + count - 1] & REST) !== 0;
+                    let fixedCount = hasRest ? count - 1 : count;
+                    if (data.length < fixedCount) {
+                        return false;
+                    }
+                    if (!hasRest && data.length > fixedCount) {
+                        return false;
+                    }
+                    for (let i = 0; i < fixedCount; i++) {
+                        if (!_validateSlot(data[i], slab[offset + i])) {
+                            return false;
+                        }
+                    }
+                    if (hasRest) {
+                        let restType = (slab[offset + count - 1] & ~REST) >>> 0;
+                        for (let i = fixedCount; i < data.length; i++) {
+                            if (!_validateSlot(data[i], restType)) {
+                                return false;
+                            }
+                        }
+                    }
+                    if (header & K_VALIDATOR) {
+                        return runArrayValidator(data, kinds[ptr + 2], scratch);
+                    }
+                    return true;
+                }
+                case K_REFINE: {
                     if (!_validate(data, ri)) {
                         return false;
                     }
                     let callbacks = scratch ? S_CALLBACKS : CALLBACKS;
                     return !!callbacks[kinds[ptr + 2]](data);
                 }
-                /** K_NOT */
-                return !_validate(data, ri);
-            }
-            if (ct === K_CONDITIONAL) {
-                let matches = scratch ? S_MATCHES : MATCHES;
-                let slab = scratch ? S_SLAB : SLAB;
-                let offset = matches[ri * 2];
-                let ifType = slab[offset];
-                let thenType = slab[offset + 1];
-                let elseType = slab[offset + 2];
-                if (_validate(data, ifType)) {
-                    return thenType === 0 ? true : _validate(data, thenType);
-                } else {
-                    return elseType === 0 ? true : _validate(data, elseType);
+                case K_NOT: {
+                    return !_validate(data, ri);
+                }
+                case K_CONDITIONAL: {
+                    let matches = scratch ? S_MATCHES : MATCHES;
+                    let slab = scratch ? S_SLAB : SLAB;
+                    let offset = matches[ri * 2];
+                    let ifType = slab[offset];
+                    let thenType = slab[offset + 1];
+                    let elseType = slab[offset + 2];
+                    if (_validate(data, ifType)) {
+                        return thenType === 0 ? true : _validate(data, thenType);
+                    } else {
+                        return elseType === 0 ? true : _validate(data, elseType);
+                    }
+                }
+                default: {
+                    return false;
                 }
             }
-            return false;
         }
         let valueMask = typedef & PRIM_MASK;
         if (valueMask === 0) {
@@ -928,11 +934,11 @@ function catalog(cfg) {
 export {
     catalog, sortByKeyId,
     COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
-    K_PRIMITIVE, K_OBJECT, K_COLLECTION, K_COMPOSITION,
-    K_UNION, K_TUPLE, K_WRAPPER, K_CONDITIONAL,
-    K_ARRAY, K_RECORD, K_OR, K_EXCLUSIVE, K_INTERSECT,
-    K_REFINE, K_NOT, K_ANY_INNER,
-    HAS_VALIDATOR,
+    K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
+    K_OR, K_EXCLUSIVE, K_INTERSECT,
+    K_UNION, K_TUPLE, K_REFINE, K_NOT,
+    K_CONDITIONAL, K_ANY_INNER,
+    K_VALIDATOR as HAS_VALIDATOR,
 };
 
 export * from './const.js';

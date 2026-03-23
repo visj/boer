@@ -3,16 +3,16 @@ import {
     COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
     STRING, NUMBER, BOOLEAN, BIGINT, DATE, URI, INTEGER,
     PRIM_MASK,
-    K_PRIMITIVE, K_OBJECT, K_COLLECTION, K_COMPOSITION,
-    K_UNION, K_TUPLE, K_WRAPPER, K_CONDITIONAL,
-    K_ARRAY, K_RECORD, K_OR, K_EXCLUSIVE,
-    K_INTERSECT, K_REFINE, K_NOT, K_ANY_INNER,
-    HAS_VALIDATOR,
-    V_STR_MIN_LEN, V_STR_MAX_LEN, V_STR_PATTERN, V_STR_FORMAT,
-    V_NUM_MIN, V_NUM_MAX, V_NUM_MULTIPLE, V_NUM_EX_MIN, V_NUM_EX_MAX,
-    V_ARR_MIN, V_ARR_MAX, V_ARR_CONTAINS, V_ARR_MIN_CT, V_ARR_MAX_CT,
-    V_ARR_UNIQUE, V_OBJ_MIN, V_OBJ_MAX, V_OBJ_PAT_PROP, V_OBJ_PROP_NAM,
-    V_OBJ_NO_ADD, V_OBJ_DEP_REQ,
+    K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
+    K_OR, K_EXCLUSIVE, K_INTERSECT,
+    K_UNION, K_TUPLE, K_REFINE, K_NOT,
+    K_CONDITIONAL, K_ANY_INNER,
+    K_VALIDATOR,
+    V_MIN_LENGTH, V_MAX_LENGTH, V_PATTERN, V_FORMAT,
+    V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
+    V_MIN_ITEMS, V_MAX_ITEMS, V_CONTAINS, V_MIN_CONTAINS, V_MAX_CONTAINS,
+    V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
+    V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED,
     FMT_MAP,
 } from './const.js';
 import {
@@ -59,17 +59,17 @@ function buildValidatorPayload(ctx, primConst, opts, scratch) {
     /** @type {!Array<number>} */
     let payloads = [];
     if (primConst & STRING) {
-        const strOpts = /** @type {uvd.cat.StringValidators} */(opts);
+        const strOpts = /** @type {uvd.StringValidators} */(opts);
         if (strOpts.minLength !== void 0) {
-            vHeader |= V_STR_MIN_LEN;
+            vHeader |= V_MIN_LENGTH;
             payloads.push(strOpts.minLength);
         }
         if (strOpts.maxLength !== void 0) {
-            vHeader |= V_STR_MAX_LEN;
+            vHeader |= V_MAX_LENGTH;
             payloads.push(strOpts.maxLength);
         }
         if (strOpts.pattern !== void 0) {
-            vHeader |= V_STR_PATTERN;
+            vHeader |= V_PATTERN;
             let cache = scratch ? ctx.S_REGEX_CACHE : ctx.REGEX_CACHE;
             let idx = cache.push(strOpts.pattern instanceof RegExp ? strOpts.pattern : new RegExp(strOpts.pattern, "u")) - 1;
             payloads.push(idx);
@@ -79,47 +79,47 @@ function buildValidatorPayload(ctx, primConst, opts, scratch) {
             if (fmt === void 0) {
                 throw new Error('Unknown string format: ' + strOpts.format);
             }
-            vHeader |= V_STR_FORMAT;
+            vHeader |= V_FORMAT;
             payloads.push(fmt);
         }
     } else if (primConst & (NUMBER | INTEGER)) {
-        const nbrOpts = /** @type {!uvd.cat.NumberValidators} */(opts);
+        const nbrOpts = /** @type {!uvd.NumberValidators} */(opts);
         let min = nbrOpts.minimum;
         let exMin = nbrOpts.exclusiveMinimum;
         if (min !== void 0 && exMin !== void 0) {
             if (exMin >= min) {
-                vHeader |= V_NUM_MIN | V_NUM_EX_MIN;
+                vHeader |= V_MINIMUM | V_EXCLUSIVE_MINIMUM;
                 payloads.push(exMin);
             } else {
-                vHeader |= V_NUM_MIN;
+                vHeader |= V_MINIMUM;
                 payloads.push(min);
             }
         } else if (min !== void 0) {
-            vHeader |= V_NUM_MIN;
+            vHeader |= V_MINIMUM;
             payloads.push(min);
         } else if (exMin !== void 0) {
-            vHeader |= V_NUM_MIN | V_NUM_EX_MIN;
+            vHeader |= V_MINIMUM | V_EXCLUSIVE_MINIMUM;
             payloads.push(exMin);
         }
         let max = nbrOpts.maximum;
         let exMax = nbrOpts.exclusiveMaximum;
         if (max !== void 0 && exMax !== void 0) {
             if (exMax <= max) {
-                vHeader |= V_NUM_MAX | V_NUM_EX_MAX;
+                vHeader |= V_MAXIMUM | V_EXCLUSIVE_MAXIMUM;
                 payloads.push(exMax);
             } else {
-                vHeader |= V_NUM_MAX;
+                vHeader |= V_MAXIMUM;
                 payloads.push(max);
             }
         } else if (max !== void 0) {
-            vHeader |= V_NUM_MAX;
+            vHeader |= V_MAXIMUM;
             payloads.push(max);
         } else if (exMax !== void 0) {
-            vHeader |= V_NUM_MAX | V_NUM_EX_MAX;
+            vHeader |= V_MAXIMUM | V_EXCLUSIVE_MAXIMUM;
             payloads.push(exMax);
         }
         if (nbrOpts.multipleOf !== void 0) {
-            vHeader |= V_NUM_MULTIPLE;
+            vHeader |= V_MULTIPLE_OF;
             payloads.push(nbrOpts.multipleOf);
         }
     }
@@ -141,7 +141,7 @@ function valueImpl(ctx, primConst, scratch, opts) {
     }
     let { vHeader, payloads } = buildValidatorPayload(ctx, primConst, opts, scratch);
     let valIdx = ctx.allocValidator(vHeader, payloads, scratch);
-    let kindHeader = K_PRIMITIVE | HAS_VALIDATOR | primConst;
+    let kindHeader = K_PRIMITIVE | K_VALIDATOR | primConst;
     let ptr = ctx.allocKind(kindHeader, valIdx, scratch, 2);
     return (COMPLEX | (scratch ? SCRATCH : 0) | ptr) >>> 0;
 }
@@ -157,7 +157,7 @@ function refineImpl(ctx, typedef, fn, scratch) {
     assertIsNumber(typedef, 0);
     let callbacks = scratch ? ctx.S_CALLBACKS : ctx.CALLBACKS;
     let callbackIdx = callbacks.push(fn) - 1;
-    let kindPtr = ctx.allocKind(K_WRAPPER | K_REFINE, typedef >>> 0, scratch, 3);
+    let kindPtr = ctx.allocKind(K_REFINE, typedef >>> 0, scratch, 3);
     let HEAP = scratch ? ctx.SCR_HEAP : ctx.HEAP;
     let kinds = HEAP.KINDS;
     kinds[kindPtr + 2] = callbackIdx;
@@ -194,7 +194,7 @@ function tupleArrayImpl(ctx, types, scratch) {
  */
 function recordImpl(ctx, valueType, scratch) {
     assertIsNumber(valueType, 0);
-    let kindPtr = ctx.allocKind(K_COLLECTION | K_RECORD, valueType >>> 0, scratch, 2);
+    let kindPtr = ctx.allocKind(K_RECORD, valueType >>> 0, scratch, 2);
     return (COMPLEX | (scratch ? SCRATCH : 0) | kindPtr) >>> 0;
 }
 
@@ -230,7 +230,7 @@ function orImpl(ctx, types, scratch) {
         return merged >>> 0;
     }
     let id = ctx.allocOnSlab(types, scratch, 'match');
-    let kindPtr = ctx.allocKind(K_COMPOSITION | K_OR, id, scratch, 2);
+    let kindPtr = ctx.allocKind(K_OR, id, scratch, 2);
     flags |= kindPtr;
     for (; j < length; j++) {
         const type = /** @type {number} */(types[j]);
@@ -252,7 +252,7 @@ function orImpl(ctx, types, scratch) {
  */
 function exclusiveImpl(ctx, types, scratch) {
     let id = ctx.allocOnSlab(types, scratch, 'match');
-    let kindPtr = ctx.allocKind(K_COMPOSITION | K_EXCLUSIVE, id, scratch, 2);
+    let kindPtr = ctx.allocKind(K_EXCLUSIVE, id, scratch, 2);
     return (COMPLEX | (scratch ? SCRATCH : 0) | kindPtr) >>> 0;
 }
 
@@ -264,7 +264,7 @@ function exclusiveImpl(ctx, types, scratch) {
  */
 function intersectImpl(ctx, types, scratch) {
     let id = ctx.allocOnSlab(types, scratch, 'match');
-    let kindPtr = ctx.allocKind(K_COMPOSITION | K_INTERSECT, id, scratch, 2);
+    let kindPtr = ctx.allocKind(K_INTERSECT, id, scratch, 2);
     return (COMPLEX | (scratch ? SCRATCH : 0) | kindPtr) >>> 0;
 }
 
@@ -276,13 +276,13 @@ function intersectImpl(ctx, types, scratch) {
  */
 function notImpl(ctx, typedef, scratch) {
     assertIsNumber(typedef, 0);
-    let kindPtr = ctx.allocKind(K_WRAPPER | K_NOT, typedef >>> 0, scratch, 2);
+    let kindPtr = ctx.allocKind(K_NOT, typedef >>> 0, scratch, 2);
     return (COMPLEX | (scratch ? SCRATCH : 0) | kindPtr) >>> 0;
 }
 
 /**
  * @param {*} ctx
- * @param {!Object} config
+ * @param {!uvd.WhenValidators} config
  * @param {boolean} scratch
  * @returns {number}
  */
@@ -300,8 +300,9 @@ function whenImpl(ctx, config, scratch) {
 }
 
 /**
+ * @template {symbol} R
  * @param {*} ctx
- * @param {!Object} definition
+ * @param {uvd.Schema<R>} definition
  * @param {boolean} scratch
  * @param {uvd.ObjectValidators=} opts
  * @returns {number}
@@ -325,7 +326,7 @@ function objectImpl(ctx, definition, scratch, opts) {
                 }
             }
         } else if (isObject(type)) {
-            type = objectImpl(ctx, /** @type {uvd.cat.Schema} */(type), scratch);
+            type = objectImpl(ctx, /** @type {uvd.Schema<R>} */(type), scratch);
         } else {
             throw new Error('Invalid type for key ' + key);
         }
@@ -342,19 +343,19 @@ function objectImpl(ctx, definition, scratch, opts) {
         const minProperties = opts.minProperties;
         if (minProperties !== void 0) {
             assertIsNumber(minProperties, 0);
-            vHeader |= V_OBJ_MIN;
+            vHeader |= V_MIN_PROPERTIES;
             payloads.push(minProperties);
         }
         const maxProperties = opts.maxProperties;
         if (maxProperties !== void 0) {
             assertIsNumber(maxProperties, 0);
-            vHeader |= V_OBJ_MAX;
+            vHeader |= V_MAX_PROPERTIES;
             payloads.push(maxProperties);
         }
         const patternProperties = opts.patternProperties;
         if (patternProperties !== void 0) {
             assertIsObject(patternProperties, 0);
-            vHeader |= V_OBJ_PAT_PROP;
+            vHeader |= V_PATTERN_PROPERTIES;
             let patterns = Object.keys(patternProperties);
             let cache = scratch ? ctx.S_REGEX_CACHE : ctx.REGEX_CACHE;
             payloads.push(patterns.length);
@@ -371,11 +372,11 @@ function objectImpl(ctx, definition, scratch, opts) {
         const propertyNames = opts.propertyNames;
         if (propertyNames !== void 0) {
             assertIsNumber(propertyNames, 0);
-            vHeader |= V_OBJ_PROP_NAM;
+            vHeader |= V_PROPERTY_NAMES;
             payloads.push(propertyNames >>> 0);
         }
         if (opts.dependentRequired !== void 0) {
-            vHeader |= V_OBJ_DEP_REQ;
+            vHeader |= V_DEPENDENT_REQUIRED;
             let triggers = Object.keys(opts.dependentRequired);
             payloads.push(triggers.length);
             for (let i = 0; i < triggers.length; i++) {
@@ -390,17 +391,17 @@ function objectImpl(ctx, definition, scratch, opts) {
         }
         let addProp = opts.additionalProperties;
         if (addProp === false) {
-            vHeader |= V_OBJ_NO_ADD;
+            vHeader |= V_ADDITIONAL_PROPERTIES;
             payloads.push(0);
         } else if (typeof addProp === 'number') {
             // addProp is a compiled type — validate additional keys against it
-            vHeader |= V_OBJ_NO_ADD;
+            vHeader |= V_ADDITIONAL_PROPERTIES;
             payloads.push(addProp);
         }
         valIdx = ctx.allocValidator(vHeader, payloads, scratch);
     }
     let id = ctx.registerObject(resolved, count, scratch);
-    let kindHeader = hasValidator ? (K_OBJECT | HAS_VALIDATOR) : K_OBJECT;
+    let kindHeader = hasValidator ? (K_OBJECT | K_VALIDATOR) : K_OBJECT;
     let slots = hasValidator ? 3 : 2;
     let kindPtr = ctx.allocKind(kindHeader, id, scratch, slots);
     if (hasValidator) {
@@ -427,32 +428,32 @@ function arrayImpl(ctx, elemType, scratch, opts) {
         /** @type {!Array<number>} */
         let payloads = [];
         if (opts.minItems !== void 0) {
-            vHeader |= V_ARR_MIN;
+            vHeader |= V_MIN_ITEMS;
             payloads.push(opts.minItems);
         }
         if (opts.maxItems !== void 0) {
-            vHeader |= V_ARR_MAX;
+            vHeader |= V_MAX_ITEMS;
             payloads.push(opts.maxItems);
         }
         if (opts.uniqueItems) {
-            vHeader |= V_ARR_UNIQUE;
+            vHeader |= V_UNIQUE_ITEMS;
         }
         if (opts.contains !== void 0) {
-            vHeader |= V_ARR_CONTAINS;
+            vHeader |= V_CONTAINS;
             payloads.push(opts.contains >>> 0);
         }
         if (opts.minContains !== void 0) {
-            vHeader |= V_ARR_MIN_CT;
+            vHeader |= V_MIN_CONTAINS;
             payloads.push(opts.minContains);
         }
         if (opts.maxContains !== void 0) {
-            vHeader |= V_ARR_MAX_CT;
+            vHeader |= V_MAX_CONTAINS;
             payloads.push(opts.maxContains);
         }
         valIdx = ctx.allocValidator(vHeader, payloads, scratch);
     }
     let index = ctx.registerArray(elemType, scratch);
-    let kindHeader = hasVal ? (K_COLLECTION | K_ARRAY | HAS_VALIDATOR) : (K_COLLECTION | K_ARRAY);
+    let kindHeader = hasVal ? (K_ARRAY | K_VALIDATOR) : K_ARRAY;
     let slots = hasVal ? 3 : 2;
     let kindPtr = ctx.allocKind(kindHeader, index, scratch, slots);
     if (hasVal) {
