@@ -13,7 +13,6 @@ import {
     V_MIN_ITEMS, V_MAX_ITEMS, V_CONTAINS, V_MIN_CONTAINS, V_MAX_CONTAINS,
     V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
     V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED,
-    FMT_MAP,
 } from './const.js';
 import {
     assertIsNumber, assertIsObject,
@@ -23,6 +22,7 @@ import {
     nullable, optional, isNumber, isObject,
     sortByKeyId,
 } from './util.js';
+import { packValidators, PAYLOAD_QUEUE } from './validator.js';
 
 // --- Helper functions ---
 
@@ -47,83 +47,26 @@ function normalizeTypeArgs(first, second, third) {
     return [first];
 }
 
+const STR_MASK = V_MIN_LENGTH | V_MAX_LENGTH | V_PATTERN | V_FORMAT;
+const NUM_MASK = V_MINIMUM | V_MAXIMUM | V_MULTIPLE_OF | V_EXCLUSIVE_MINIMUM | V_EXCLUSIVE_MAXIMUM;
+const ARR_MASK = V_MIN_ITEMS | V_MAX_ITEMS | V_CONTAINS | V_MIN_CONTAINS | V_MAX_CONTAINS | V_UNIQUE_ITEMS;
+const OBJ_MASK = V_MIN_PROPERTIES | V_MAX_PROPERTIES | V_PATTERN_PROPERTIES
+    | V_PROPERTY_NAMES | V_DEPENDENT_REQUIRED | V_ADDITIONAL_PROPERTIES;
+
 /**
- * @param {*} ctx
- * @param {number} primConst
- * @param {!uvd.Validators} opts
- * @param {boolean} scratch
- * @returns {{vHeader: number, payloads: !Array<number>}}
+ * Migrates RegExp objects from PAYLOAD_QUEUE.REGEX into a cache array and
+ * replaces the -1 placeholders in `result` with the resulting cache indices.
+ * Consumes PAYLOAD_QUEUE.REGEX entries in order.
+ * @param {!Array<number>} result — [vHeader, ...payloads] from packValidators
+ * @param {!Array<RegExp>} cache — the regex cache to push into (REGEX_CACHE or S_REGEX_CACHE)
  */
-function buildValidatorPayload(ctx, primConst, opts, scratch) {
-    let vHeader = 0;
-    /** @type {!Array<number>} */
-    let payloads = [];
-    if (primConst & STRING) {
-        const strOpts = /** @type {uvd.StringValidators} */(opts);
-        if (strOpts.minLength !== void 0) {
-            vHeader |= V_MIN_LENGTH;
-            payloads.push(strOpts.minLength);
-        }
-        if (strOpts.maxLength !== void 0) {
-            vHeader |= V_MAX_LENGTH;
-            payloads.push(strOpts.maxLength);
-        }
-        if (strOpts.pattern !== void 0) {
-            vHeader |= V_PATTERN;
-            let cache = scratch ? ctx.S_REGEX_CACHE : ctx.REGEX_CACHE;
-            let idx = cache.push(strOpts.pattern instanceof RegExp ? strOpts.pattern : new RegExp(strOpts.pattern, "u")) - 1;
-            payloads.push(idx);
-        }
-        if (strOpts.format !== void 0) {
-            let fmt = FMT_MAP[strOpts.format];
-            if (fmt === void 0) {
-                throw new Error('Unknown string format: ' + strOpts.format);
-            }
-            vHeader |= V_FORMAT;
-            payloads.push(fmt);
-        }
-    } else if (primConst & (NUMBER | INTEGER)) {
-        const nbrOpts = /** @type {!uvd.NumberValidators} */(opts);
-        let min = nbrOpts.minimum;
-        let exMin = nbrOpts.exclusiveMinimum;
-        if (min !== void 0 && exMin !== void 0) {
-            if (exMin >= min) {
-                vHeader |= V_MINIMUM | V_EXCLUSIVE_MINIMUM;
-                payloads.push(exMin);
-            } else {
-                vHeader |= V_MINIMUM;
-                payloads.push(min);
-            }
-        } else if (min !== void 0) {
-            vHeader |= V_MINIMUM;
-            payloads.push(min);
-        } else if (exMin !== void 0) {
-            vHeader |= V_MINIMUM | V_EXCLUSIVE_MINIMUM;
-            payloads.push(exMin);
-        }
-        let max = nbrOpts.maximum;
-        let exMax = nbrOpts.exclusiveMaximum;
-        if (max !== void 0 && exMax !== void 0) {
-            if (exMax <= max) {
-                vHeader |= V_MAXIMUM | V_EXCLUSIVE_MAXIMUM;
-                payloads.push(exMax);
-            } else {
-                vHeader |= V_MAXIMUM;
-                payloads.push(max);
-            }
-        } else if (max !== void 0) {
-            vHeader |= V_MAXIMUM;
-            payloads.push(max);
-        } else if (exMax !== void 0) {
-            vHeader |= V_MAXIMUM | V_EXCLUSIVE_MAXIMUM;
-            payloads.push(exMax);
-        }
-        if (nbrOpts.multipleOf !== void 0) {
-            vHeader |= V_MULTIPLE_OF;
-            payloads.push(nbrOpts.multipleOf);
+function migrateRegex(result, cache) {
+    let ri = 0;
+    for (let i = 1; i < result.length; i++) {
+        if (result[i] === -1) {
+            result[i] = cache.push(PAYLOAD_QUEUE.REGEX[ri++]) - 1;
         }
     }
-    return { vHeader, payloads };
 }
 
 // --- Impl functions ---
@@ -139,7 +82,12 @@ function valueImpl(ctx, primConst, scratch, opts) {
     if (opts === void 0) {
         return primConst;
     }
-    let { vHeader, payloads } = buildValidatorPayload(ctx, primConst, opts, scratch);
+    let mask = (primConst & STRING) ? STR_MASK : NUM_MASK;
+    let result = packValidators(opts, mask, null);
+    let cache = scratch ? ctx.S_REGEX_CACHE : ctx.REGEX_CACHE;
+    migrateRegex(result, cache);
+    let vHeader = result[0];
+    let payloads = result.slice(1);
     let valIdx = ctx.allocValidator(vHeader, payloads, scratch);
     let kindHeader = K_PRIMITIVE | K_VALIDATOR | primConst;
     let ptr = ctx.allocKind(kindHeader, valIdx, scratch, 2);
@@ -337,67 +285,11 @@ function objectImpl(ctx, definition, scratch, opts) {
     let valIdx = 0;
     const hasValidator = opts !== void 0;
     if (hasValidator) {
-        let vHeader = 0;
-        /** @type {!Array<number>} */
-        let payloads = [];
-        const minProperties = opts.minProperties;
-        if (minProperties !== void 0) {
-            assertIsNumber(minProperties, 0);
-            vHeader |= V_MIN_PROPERTIES;
-            payloads.push(minProperties);
-        }
-        const maxProperties = opts.maxProperties;
-        if (maxProperties !== void 0) {
-            assertIsNumber(maxProperties, 0);
-            vHeader |= V_MAX_PROPERTIES;
-            payloads.push(maxProperties);
-        }
-        const patternProperties = opts.patternProperties;
-        if (patternProperties !== void 0) {
-            assertIsObject(patternProperties, 0);
-            vHeader |= V_PATTERN_PROPERTIES;
-            let patterns = Object.keys(patternProperties);
-            let cache = scratch ? ctx.S_REGEX_CACHE : ctx.REGEX_CACHE;
-            payloads.push(patterns.length);
-            for (let i = 0; i < patterns.length; i++) {
-                const pattern = patterns[i];
-                const match = patternProperties[pattern];
-                assertIsNumber(match, 0);
-                let re = new RegExp(patterns[i], "u");
-                let idx = cache.push(re) - 1;
-                payloads.push(idx);
-                payloads.push(match >>> 0);
-            }
-        }
-        const propertyNames = opts.propertyNames;
-        if (propertyNames !== void 0) {
-            assertIsNumber(propertyNames, 0);
-            vHeader |= V_PROPERTY_NAMES;
-            payloads.push(propertyNames >>> 0);
-        }
-        if (opts.dependentRequired !== void 0) {
-            vHeader |= V_DEPENDENT_REQUIRED;
-            let triggers = Object.keys(opts.dependentRequired);
-            payloads.push(triggers.length);
-            for (let i = 0; i < triggers.length; i++) {
-                let triggerKeyId = ctx.lookup(triggers[i]);
-                let deps = opts.dependentRequired[triggers[i]];
-                payloads.push(triggerKeyId);
-                payloads.push(deps.length);
-                for (let j = 0; j < deps.length; j++) {
-                    payloads.push(ctx.lookup(deps[j]));
-                }
-            }
-        }
-        let addProp = opts.additionalProperties;
-        if (addProp === false) {
-            vHeader |= V_ADDITIONAL_PROPERTIES;
-            payloads.push(0);
-        } else if (typeof addProp === 'number') {
-            // addProp is a compiled type — validate additional keys against it
-            vHeader |= V_ADDITIONAL_PROPERTIES;
-            payloads.push(addProp);
-        }
+        let result = packValidators(opts, OBJ_MASK, ctx.lookup);
+        let cache = scratch ? ctx.S_REGEX_CACHE : ctx.REGEX_CACHE;
+        migrateRegex(result, cache);
+        let vHeader = result[0];
+        let payloads = result.slice(1);
         valIdx = ctx.allocValidator(vHeader, payloads, scratch);
     }
     let id = ctx.registerObject(resolved, count, scratch);
@@ -424,32 +316,9 @@ function arrayImpl(ctx, elemType, scratch, opts) {
     const hasVal = opts !== void 0;
     let valIdx = 0;
     if (hasVal) {
-        let vHeader = 0;
-        /** @type {!Array<number>} */
-        let payloads = [];
-        if (opts.minItems !== void 0) {
-            vHeader |= V_MIN_ITEMS;
-            payloads.push(opts.minItems);
-        }
-        if (opts.maxItems !== void 0) {
-            vHeader |= V_MAX_ITEMS;
-            payloads.push(opts.maxItems);
-        }
-        if (opts.uniqueItems) {
-            vHeader |= V_UNIQUE_ITEMS;
-        }
-        if (opts.contains !== void 0) {
-            vHeader |= V_CONTAINS;
-            payloads.push(opts.contains >>> 0);
-        }
-        if (opts.minContains !== void 0) {
-            vHeader |= V_MIN_CONTAINS;
-            payloads.push(opts.minContains);
-        }
-        if (opts.maxContains !== void 0) {
-            vHeader |= V_MAX_CONTAINS;
-            payloads.push(opts.maxContains);
-        }
+        let result = packValidators(opts, ARR_MASK, null);
+        let vHeader = result[0];
+        let payloads = result.slice(1);
         valIdx = ctx.allocValidator(vHeader, payloads, scratch);
     }
     let index = ctx.registerArray(elemType, scratch);

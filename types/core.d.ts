@@ -293,12 +293,6 @@ export function catalog<R extends symbol>(): Catalog<R>;
 
 // Internal stuff
 
-export declare const U8 = 1;
-export declare const U16 = 2;
-export declare const U32 = 3;
-
-export type u_number = typeof U8 | typeof U16 | typeof U32;
-
 export interface Heap {
     PTR: number;
     SLAB_LEN: number;

@@ -1,12 +1,14 @@
 /// <reference path="../../global.d.ts" />
 import {
     ANY, NEVER, STRING, NUMBER, INTEGER, BOOLEAN, NULLABLE, OPTIONAL,
-    V_MIN_LENGTH, V_MAX_LENGTH,
+    V_MIN_LENGTH, V_MAX_LENGTH, V_PATTERN, V_FORMAT,
     V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
-    V_MIN_ITEMS, V_MAX_ITEMS, V_UNIQUE_ITEMS,
-    V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES,
+    V_MIN_ITEMS, V_MAX_ITEMS, V_MIN_CONTAINS, V_MAX_CONTAINS, V_UNIQUE_ITEMS,
+    V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_DEPENDENT_REQUIRED,
+    V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES,
     hasOwnProperty
 } from "./const.js";
+import { packValidators, PAYLOAD_QUEUE } from "./validator.js";
 
 /**
  * @typedef {import("json-schema-typed").JSONSchema} JSONSchema
@@ -15,6 +17,21 @@ import {
 /**
  * @typedef {Extract<JSONSchema, object>} Schema
  */
+
+/**
+ * Validator flags that packValidators can resolve purely from the schema
+ * object without needing compiled child type ids. Excludes:
+ *   V_CONTAINS, V_UNEVALUATED_ITEMS, V_UNEVALUATED_PROPERTIES — child schema
+ *   V_PATTERN_PROPERTIES, V_PROPERTY_NAMES, V_ADDITIONAL_PROPERTIES — child schemas
+ *   V_DEPENDENT_SCHEMAS — child schemas
+ */
+// V_FORMAT is intentionally excluded: per JSON Schema spec, format is an
+// annotation only by default and must not affect validation unless explicitly
+// opted in. Unknown format values would also throw if included.
+const SCHEMA_PURE_MASK = V_MIN_LENGTH | V_MAX_LENGTH | V_PATTERN
+    | V_MINIMUM | V_MAXIMUM | V_MULTIPLE_OF | V_EXCLUSIVE_MINIMUM | V_EXCLUSIVE_MAXIMUM
+    | V_MIN_ITEMS | V_MAX_ITEMS | V_MIN_CONTAINS | V_MAX_CONTAINS | V_UNIQUE_ITEMS
+    | V_MIN_PROPERTIES | V_MAX_PROPERTIES | V_DEPENDENT_REQUIRED;
 
 // ────────────────────────────────────────────────────────────────────────────
 // AST Node Kinds
@@ -71,170 +88,6 @@ const SENTINEL = 0xFFFFFFFF;
 const INITIAL_CAPACITY = 256;
 const MAX_DEPTH = 512;
 
-// ────────────────────────────────────────────────────────────────────────────
-// collectValidators(schema)
-// ────────────────────────────────────────────────────────────────────────────
-// Scans a JSON Schema object for numeric/string/array/object constraint
-// keywords and encodes them as:
-//
-//   vHeader   — a bitmask of V_* flags (from const.js). Payload flags occupy
-//               bits 0–15; boolean modifier flags occupy bits 16–31.
-//   payloads  — one Float64 per set payload flag, pushed in ascending bit
-//               order so that popcnt16(vHeader & (FLAG - 1)) gives the
-//               offset of any flag's value.
-//   callbacks — closures for validators that can't be expressed as a single
-//               numeric payload (enum, const, pattern).
-//
-// Type coercion: payload values are cast to +value so that a schema like
-// { "minLength": "3" } is silently coerced to 3 rather than crashing at
-// validation time.
-// ────────────────────────────────────────────────────────────────────────────
-
-/**
- * @param {Schema} schema — a raw JSON Schema object
- * @returns {{ vHeader: number, payloads: number[], callbacks: Array<(d: any) => boolean> }}
- */
-function collectValidators(schema) {
-    let vHeader = 0;
-    /** @type {number[]} */
-    let payloads = [];
-    /** @type {Array<(d: any) => boolean>} */
-    let callbacks = [];
-
-    // --- Payload flags (must be pushed in ascending bit order) ---
-
-    // V_STR_MIN_LEN (bit 0)
-    let minLength = schema.minLength;
-    if (minLength !== void 0) {
-        vHeader |= V_MIN_LENGTH;
-        payloads.push(+minLength);
-    }
-
-    // V_STR_MAX_LEN (bit 1)
-    let maxLength = schema.maxLength;
-    if (maxLength !== void 0) {
-        vHeader |= V_MAX_LENGTH;
-        payloads.push(+maxLength);
-    }
-
-    // V_STR_PATTERN (bit 2) — callback (regex needs object storage)
-    // V_STR_FORMAT  (bit 3) — callback (reserved for later)
-
-    // V_NUM_MIN (bit 4) + V_NUM_EX_MIN (bit 16) modifier
-    let min = schema.minimum;
-    let exMin = schema.exclusiveMinimum;
-    if (min !== void 0 && exMin !== void 0) {
-        if (+exMin >= +min) {
-            vHeader |= V_MINIMUM | V_EXCLUSIVE_MINIMUM;
-            payloads.push(+exMin);
-        } else {
-            vHeader |= V_MINIMUM;
-            payloads.push(+min);
-        }
-    } else if (min !== void 0) {
-        vHeader |= V_MINIMUM;
-        payloads.push(+min);
-    } else if (exMin !== void 0) {
-        vHeader |= V_MINIMUM | V_EXCLUSIVE_MINIMUM;
-        payloads.push(+exMin);
-    }
-
-    // V_NUM_MAX (bit 5) + V_NUM_EX_MAX (bit 17) modifier
-    let max = schema.maximum;
-    let exMax = schema.exclusiveMaximum;
-    if (max !== void 0 && exMax !== void 0) {
-        if (+exMax <= +max) {
-            vHeader |= V_MAXIMUM | V_EXCLUSIVE_MAXIMUM;
-            payloads.push(+exMax);
-        } else {
-            vHeader |= V_MAXIMUM;
-            payloads.push(+max);
-        }
-    } else if (max !== void 0) {
-        vHeader |= V_MAXIMUM;
-        payloads.push(+max);
-    } else if (exMax !== void 0) {
-        vHeader |= V_MAXIMUM | V_EXCLUSIVE_MAXIMUM;
-        payloads.push(+exMax);
-    }
-
-    // V_NUM_MULTIPLE (bit 6)
-    let multipleOf = schema.multipleOf;
-    if (multipleOf !== void 0) {
-        vHeader |= V_MULTIPLE_OF;
-        payloads.push(+multipleOf);
-    }
-
-    // V_ARR_MIN (bit 7)
-    let minItems = schema.minItems;
-    if (minItems !== void 0) {
-        vHeader |= V_MIN_ITEMS;
-        payloads.push(+minItems);
-    }
-
-    // V_ARR_MAX (bit 8)
-    let maxItems = schema.maxItems;
-    if (maxItems !== void 0) {
-        vHeader |= V_MAX_ITEMS;
-        payloads.push(+maxItems);
-    }
-
-    // V_ARR_CONTAINS (bit 9), V_ARR_MIN_CT (bit 10), V_ARR_MAX_CT (bit 11) — reserved
-
-    // V_OBJ_MIN (bit 12)
-    let minProperties = schema.minProperties;
-    if (minProperties !== void 0) {
-        vHeader |= V_MIN_PROPERTIES;
-        payloads.push(+minProperties);
-    }
-
-    // V_OBJ_MAX (bit 13)
-    let maxProperties = schema.maxProperties;
-    if (maxProperties !== void 0) {
-        vHeader |= V_MAX_PROPERTIES;
-        payloads.push(+maxProperties);
-    }
-
-    // --- Boolean flags (no payload) ---
-
-    // V_ARR_UNIQUE (bit 18)
-    if (schema.uniqueItems === true) {
-        vHeader |= V_UNIQUE_ITEMS;
-    }
-
-    // --- Callbacks (no bit-flag equivalent) ---
-
-    let pattern = schema.pattern;
-    if (pattern !== void 0) {
-        let re = new RegExp(pattern, "u");
-        callbacks.push(/** @param {*} d */(d) => typeof d !== 'string' || re.test(d));
-    }
-
-    let enumValues = schema.enum;
-    if (enumValues !== void 0) {
-        callbacks.push(/** @param {*} d */(d) => {
-            for (let i = 0; i < enumValues.length; i++) {
-                if (d === enumValues[i]) return true;
-                if (typeof d === 'object' && d !== null &&
-                    JSON.stringify(d) === JSON.stringify(enumValues[i])) return true;
-            }
-            return false;
-        });
-    }
-
-    let constVal = schema.const;
-    if (constVal !== void 0) {
-        callbacks.push(/** @param {*} d */(d) => {
-            if (d === constVal) return true;
-            if (typeof d === 'object' && d !== null) {
-                return JSON.stringify(d) === JSON.stringify(constVal);
-            }
-            return false;
-        });
-    }
-
-    return { vHeader, payloads, callbacks };
-}
 
 // Maps a JSON Schema type string ("string", "number", etc.) to the
 // corresponding primitive bitmask from const.js.
@@ -352,11 +205,36 @@ export function parseJsonSchema(schema) {
     /** @type {string[]} */
     let propNames = [];
 
-    // ── Callbacks for enum/const/pattern validators ──
+    // ── Callbacks for enum/const validators ──
     /** @type {Array<(data: any) => boolean>} */
     let callbacks = [];
     /** @type {Array<RegExp>} */
     let regexes = [];
+
+    /**
+     * Maps string keys to temporary indices in propNames[]. Used by
+     * packValidators (via virtualLookup) for V_DEPENDENT_REQUIRED so that
+     * dependency strings get temporary IDs here that the ast.js compiler
+     * later re-maps to real catalog keyIds via lookup(propNames[idx]).
+     * @type {Map<string, number>}
+     */
+    let propNameIndex = new Map();
+
+    /**
+     * Assigns a temporary index (propNames[] position) to a string key.
+     * Re-uses an existing entry if the key was already registered.
+     * @param {string} key
+     * @returns {number}
+     */
+    function virtualLookup(key) {
+        let idx = propNameIndex.get(key);
+        if (idx === void 0) {
+            idx = propNames.length;
+            propNames.push(key);
+            propNameIndex.set(key, idx);
+        }
+        return idx;
+    }
 
     // ── $ref resolution ──
     /** @type {Map<number, string>} */
@@ -539,7 +417,45 @@ export function parseJsonSchema(schema) {
 
         // ── Type + validators + structural keywords ──
 
-        let { vHeader, payloads: vPayloadArr, callbacks: cbs } = collectValidators(sch);
+        let result = packValidators(sch, SCHEMA_PURE_MASK, virtualLookup);
+        let vHeader = result[0];
+        /** @type {number[]} */
+        let vPayloadArr = [];
+        let ri = 0;
+        for (let i = 1; i < result.length; i++) {
+            if (result[i] === -1) {
+                vPayloadArr.push(regexes.length);
+                regexes.push(/** @type {RegExp} */(PAYLOAD_QUEUE.REGEX[ri++]));
+            } else {
+                vPayloadArr.push(result[i]);
+            }
+        }
+
+        // enum/const require closures and cannot be expressed as numeric payloads.
+        /** @type {Array<(d: any) => boolean>} */
+        let cbs = [];
+        let enumValues = sch.enum;
+        if (enumValues !== void 0) {
+            cbs.push(/** @param {*} d */(d) => {
+                for (let i = 0; i < enumValues.length; i++) {
+                    if (d === enumValues[i]) return true;
+                    if (typeof d === 'object' && d !== null &&
+                        JSON.stringify(d) === JSON.stringify(enumValues[i])) return true;
+                }
+                return false;
+            });
+        }
+        let constVal = sch.const;
+        if (constVal !== void 0) {
+            cbs.push(/** @param {*} d */(d) => {
+                if (d === constVal) return true;
+                if (typeof d === 'object' && d !== null) {
+                    return JSON.stringify(d) === JSON.stringify(constVal);
+                }
+                return false;
+            });
+        }
+
         let typeVal = sch.type;
         const hasType = typeVal !== void 0;
         const hasVHeader = vHeader !== 0;
@@ -583,6 +499,7 @@ export function parseJsonSchema(schema) {
                     'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
                     'minItems', 'maxItems', 'uniqueItems',
                     'minProperties', 'maxProperties', 'pattern',
+                    'format', 'dependentRequired', 'minContains', 'maxContains',
                     'enum', 'const']) {
                     if (sch[key] !== void 0) siblingSchema[key] = sch[key];
                 }

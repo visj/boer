@@ -8,7 +8,7 @@ import {
     K_VALIDATOR, sortByKeyId,
 } from "./catalog.js";
 
-import { popcnt16, REST, ANY, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES } from "./const.js";
+import { popcnt16, REST, ANY, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED } from "./const.js";
 
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
@@ -89,7 +89,7 @@ export function compile(cat, ast) {
     let {
         astKinds, astFlags, astChild0, astChild1,
         astVHeaders, astVOffset, vPayloads,
-        astEdges, propNames, callbacks,
+        astEdges, propNames, callbacks, regexes,
         rootId, defIds, defNames, nodeCount,
     } = ast;
 
@@ -114,21 +114,40 @@ export function compile(cat, ast) {
     // ── Helper: build validator payloads from the FlatAst slab ──
 
     /**
-     * Reads a node's validator header + payloads and allocates them on the
-     * catalog's validator heap. Returns [hasValidator, validatorIndex].
+     * Reads a node's fixed-slot validator payloads (bits 0–15) and allocates
+     * them on the catalog's validator heap.
+     *
+     * Returns -1 if the node has no validators; otherwise returns the
+     * allocValidator index (always >= 0, since it writes into a Uint32Array).
+     *
+     * V_PATTERN payload is an index into ast.regexes[]; this function
+     * converts it to a real REGEX_CACHE index before calling allocValidator.
+     *
+     * NOTE: sequential high-bit payloads (V_DEPENDENT_REQUIRED, etc.) are NOT
+     * handled here — the N_OBJECT second-visit rebuild block reads them directly
+     * from vPayloads when needed.
+     *
      * @param {number} nodeId
-     * @returns {[boolean, number]}
+     * @returns {number} -1 | validatorIndex
      */
     function compileValidator(nodeId) {
         let vHeader = astVHeaders[nodeId];
-        if (vHeader === 0) return [false, 0];
+        if (vHeader === 0) return -1;
         let off   = astVOffset[nodeId];
         let count = popcnt16(vHeader & 0xFFFF);
+        let regexCache = heap.REGEX_CACHE;
+        let patternSlot = (vHeader & V_PATTERN) ? popcnt16(vHeader & (V_PATTERN - 1)) : -1;
         let nodePayloads = new Array(count);
         for (let i = 0; i < count; i++) {
-            nodePayloads[i] = vPayloads[off + i];
+            let raw = vPayloads[off + i];
+            if (i === patternSlot) {
+                // raw is an index into ast.regexes[]; push to REGEX_CACHE
+                nodePayloads[i] = regexCache.push(regexes[raw]) - 1;
+            } else {
+                nodePayloads[i] = raw;
+            }
         }
-        return [true, allocValidator(vHeader, nodePayloads, scratch)];
+        return allocValidator(vHeader, nodePayloads, scratch);
     }
 
     // ── Main compilation loop ──
@@ -142,9 +161,8 @@ export function compile(cat, ast) {
 
         // ── Primitives: compile immediately (leaf node) ──
         if (kind === N_PRIM) {
-            let vHeader = astVHeaders[nodeId];
-            let [hasVal, valIdx] = compileValidator(nodeId);
-            if (hasVal) {
+            let valIdx = compileValidator(nodeId);
+            if (valIdx !== -1) {
                 let primBits = astFlags[nodeId];
                 let kindHeader = K_PRIMITIVE | K_VALIDATOR | primBits;
                 let kindPtr = allocKind(kindHeader, valIdx, scratch, 2);
@@ -163,8 +181,8 @@ export function compile(cat, ast) {
          * KINDS constants. Otherwise, allocate a proper entry with the validator.
          */
         if (kind === N_BARE_ARRAY) {
-            let [hasVal, valIdx] = compileValidator(nodeId);
-            if (hasVal) {
+            let valIdx = compileValidator(nodeId);
+            if (valIdx !== -1) {
                 let anyIndex = registerArray((ANY | NULLABLE) >>> 0, scratch);
                 let kindHeader = K_ARRAY | K_VALIDATOR;
                 let kindPtr = allocKind(kindHeader, anyIndex, scratch, 3);
@@ -177,8 +195,8 @@ export function compile(cat, ast) {
             continue;
         }
         if (kind === N_BARE_OBJECT) {
-            let [hasVal, valIdx] = compileValidator(nodeId);
-            if (hasVal) {
+            let valIdx = compileValidator(nodeId);
+            if (valIdx !== -1) {
                 let objId = registerObject([], 0, scratch);
                 let kindHeader = K_OBJECT | K_VALIDATOR;
                 let kindPtr = allocKind(kindHeader, objId, scratch, 3);
@@ -355,15 +373,13 @@ export function compile(cat, ast) {
 
                 let objId = registerObject(resolved, count, scratch);
 
-                // Build validator — may need to inject additionalType and patternProperties
-                let [hasVal, valIdx] = compileValidator(nodeId);
+                // Build validator — may need to inject additional sequential payloads
+                // (patternProperties, additionalProperties type, dependentRequired remapping).
+                let valIdx = compileValidator(nodeId);
 
-                /**
-                 * Rebuild the validator when we have extra sequential payloads
-                 * (patternProperties and/or additionalProperties type) that
-                 * aren't in the AST's popcount-based payload array.
-                 */
-                if (patPayloads !== null || additionalType !== 0 || (astVHeaders[nodeId] & V_ADDITIONAL_PROPERTIES)) {
+                if (patPayloads !== null || additionalType !== 0
+                    || (astVHeaders[nodeId] & V_ADDITIONAL_PROPERTIES)
+                    || (astVHeaders[nodeId] & V_DEPENDENT_REQUIRED)) {
                     let vHeader = astVHeaders[nodeId];
                     let off = astVOffset[nodeId];
                     let pcount = popcnt16(vHeader & 0xFFFF);
@@ -371,12 +387,30 @@ export function compile(cat, ast) {
                     for (let i = 0; i < pcount; i++) {
                         nodePayloads.push(vPayloads[off + i]);
                     }
+
+                    // Re-map V_DEPENDENT_REQUIRED: virtual propNames indices → real keyIds.
+                    // The sequential payload written by packValidators(virtualLookup) used
+                    // temporary propNames[] indices; here we convert them to catalog keyIds.
+                    let p = off + pcount;
+                    if (vHeader & V_DEPENDENT_REQUIRED) {
+                        let numTriggers = vPayloads[p++];
+                        nodePayloads.push(numTriggers);
+                        for (let ti = 0; ti < numTriggers; ti++) {
+                            nodePayloads.push(lookup(propNames[vPayloads[p++]]));
+                            let depLen = vPayloads[p++];
+                            nodePayloads.push(depLen);
+                            for (let di = 0; di < depLen; di++) {
+                                nodePayloads.push(lookup(propNames[vPayloads[p++]]));
+                            }
+                        }
+                    }
+
                     if (patPayloads !== null) {
-                        // V_OBJ_PAT_PROP payload: [count, reIdx0, type0, reIdx1, type1, ...]
-                        let regexCache = scratch ? heap.S_REGEX_CACHE : heap.REGEX_CACHE;
+                        // V_PATTERN_PROPERTIES payload: [count, reIdx0, type0, reIdx1, type1, ...]
+                        let regexCache = heap.REGEX_CACHE;
                         nodePayloads.push(patPayloads.length / 2);
                         for (let i = 0; i < patPayloads.length; i += 2) {
-                            let re = new RegExp(patPayloads[i], "u");
+                            let re = new RegExp(patPayloads[i], 'u');
                             let reIdx = regexCache.length;
                             regexCache.push(re);
                             nodePayloads.push(reIdx);
@@ -388,9 +422,9 @@ export function compile(cat, ast) {
                         nodePayloads.push(additionalType);
                     }
                     valIdx = allocValidator(vHeader, nodePayloads, scratch);
-                    hasVal = true;
                 }
 
+                let hasVal = valIdx !== -1;
                 let kindHeader = hasVal ? (K_OBJECT | K_VALIDATOR) : K_OBJECT;
                 let slots = hasVal ? 3 : 2;
                 let kindPtr = allocKind(kindHeader, objId, scratch, slots);
@@ -402,7 +436,8 @@ export function compile(cat, ast) {
             case N_ARRAY: {
                 let elemType = astCompiled[astChild0[nodeId]];
                 let arrId = registerArray(elemType, scratch);
-                let [hasVal, valIdx] = compileValidator(nodeId);
+                let valIdx = compileValidator(nodeId);
+                let hasVal = valIdx !== -1;
                 let kindHeader = hasVal ? (K_ARRAY | K_VALIDATOR) : K_ARRAY;
                 let slots = hasVal ? 3 : 2;
                 let kindPtr = allocKind(kindHeader, arrId, scratch, slots);
@@ -500,7 +535,8 @@ export function compile(cat, ast) {
                 }
                 let tupleId = allocOnSlab(types, scratch, 'tuple');
 
-                let [hasVal, valIdx] = compileValidator(nodeId);
+                let valIdx = compileValidator(nodeId);
+                let hasVal = valIdx !== -1;
                 let kindHeader = hasVal ? (K_TUPLE | K_VALIDATOR) : K_TUPLE;
                 let slots = hasVal ? 3 : 2;
                 let kindPtr = allocKind(kindHeader, tupleId, scratch, slots);
