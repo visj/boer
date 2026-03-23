@@ -11,6 +11,14 @@ import {
 } from './const.js';
 
 /**
+ * @typedef {import("json-schema-typed").JSONSchema} JSONSchema
+ */
+
+/**
+ * @typedef {Extract<JSONSchema, object>} Schema
+ */
+
+/**
  * Out-of-band storage for RegExp objects that cannot be placed into the
  * numeric payload array. packValidators pushes to this queue and writes a
  * -1 placeholder in its output array. The caller migrates the RegExps into
@@ -39,7 +47,7 @@ export const PAYLOAD_QUEUE = {
  * PAYLOAD_QUEUE.REGEX. The caller replaces each -1 by consuming the queue in
  * order.
  *
- * @param {!Object} opts — schema or DSL options object
+ * @param {!Schema} opts — schema or DSL options object
  * @param {number} mask  — bitmask of V_* flags to consider
  * @param {((key: string) => number)|null} lookup — maps string keys to IDs;
  *   required for V_DEPENDENT_REQUIRED and V_PATTERN_PROPERTIES type ids are
@@ -72,8 +80,7 @@ export function packValidators(opts, mask, lookup) {
     }
     if ((mask & V_PATTERN) && opts.pattern !== void 0) {
         vHeader |= V_PATTERN;
-        PAYLOAD_QUEUE.REGEX[PAYLOAD_QUEUE.REGEX_LEN++] =
-            opts.pattern instanceof RegExp ? opts.pattern : new RegExp(opts.pattern, 'u');
+        PAYLOAD_QUEUE.REGEX[PAYLOAD_QUEUE.REGEX_LEN++] = typeof opts.pattern === 'string' ? new RegExp(opts.pattern, 'u') : opts.pattern;
         out.push(-1);
     }
     if ((mask & V_FORMAT) && opts.format !== void 0) {
