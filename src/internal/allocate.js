@@ -88,10 +88,9 @@ function valueImpl(ctx, primConst, scratch, opts) {
     migrateRegex(result, cache);
     let vHeader = result[0];
     let payloads = result.slice(1);
+    /** K_PRIMITIVE stores the validator index as inline (KINDS slot 1), no SLAB entry. */
     let valIdx = ctx.allocValidator(vHeader, payloads, scratch);
-    let kindHeader = K_PRIMITIVE | K_VALIDATOR | primConst;
-    let ptr = ctx.allocKind(kindHeader, valIdx, scratch, 2);
-    return (COMPLEX | (scratch ? SCRATCH : 0) | ptr) >>> 0;
+    return ctx.malloc(K_PRIMITIVE | K_VALIDATOR | primConst, scratch, valIdx, null, 0, 0, null);
 }
 
 /**
@@ -105,21 +104,18 @@ function refineImpl(ctx, typedef, fn, scratch) {
     assertIsNumber(typedef, 0);
     let callbacks = scratch ? ctx.S_CALLBACKS : ctx.CALLBACKS;
     let callbackIdx = callbacks.push(fn) - 1;
-    let kindPtr = ctx.allocKind(K_REFINE, typedef >>> 0, scratch, 3);
-    let HEAP = scratch ? ctx.SCR_HEAP : ctx.HEAP;
-    let kinds = HEAP.KINDS;
-    kinds[kindPtr + 2] = callbackIdx;
-    let flags = COMPLEX | kindPtr;
-    if (scratch) {
-        flags |= SCRATCH;
-    }
+    /** Store [innerType, callbackIdx] on SLAB; KINDS slot 1 = SHAPES index. */
+    let slabData = new Uint32Array(2);
+    slabData[0] = typedef >>> 0;
+    slabData[1] = callbackIdx;
+    let result = ctx.malloc(K_REFINE, scratch, 0, slabData, 2, 0, null);
     if (typedef & NULLABLE) {
-        flags |= NULLABLE;
+        result |= NULLABLE;
     }
     if (typedef & OPTIONAL) {
-        flags |= OPTIONAL;
+        result |= OPTIONAL;
     }
-    return flags >>> 0;
+    return result >>> 0;
 }
 
 /**
@@ -129,9 +125,7 @@ function refineImpl(ctx, typedef, fn, scratch) {
  * @returns {number}
  */
 function tupleArrayImpl(ctx, types, scratch) {
-    let id = ctx.allocOnSlab(types, scratch, 'tuple');
-    let kindPtr = ctx.allocKind(K_TUPLE, id, scratch, 2);
-    return (COMPLEX | (scratch ? SCRATCH : 0) | kindPtr) >>> 0;
+    return ctx.malloc(K_TUPLE, scratch, 0, types, types.length, 0, null);
 }
 
 /**
@@ -142,8 +136,7 @@ function tupleArrayImpl(ctx, types, scratch) {
  */
 function recordImpl(ctx, valueType, scratch) {
     assertIsNumber(valueType, 0);
-    let kindPtr = ctx.allocKind(K_RECORD, valueType >>> 0, scratch, 2);
-    return (COMPLEX | (scratch ? SCRATCH : 0) | kindPtr) >>> 0;
+    return ctx.malloc(K_RECORD, scratch, valueType >>> 0, null, 0, 0, null);
 }
 
 /**
@@ -158,15 +151,15 @@ function orImpl(ctx, types, scratch) {
     let allPrimitive = true;
     let merged = 0;
     let j = 0;
-    let flags = COMPLEX | (scratch ? SCRATCH : 0)
+    let nullableOptional = 0;
     let length = types.length;
     for (let i = 0; i < length; i++, j++) {
         const type = /** @type {number} */(types[i]);
         if (type & NULLABLE) {
-            flags |= NULLABLE;
+            nullableOptional |= NULLABLE;
         }
         if (type & OPTIONAL) {
-            flags |= OPTIONAL;
+            nullableOptional |= OPTIONAL;
         }
         if (type & COMPLEX) {
             allPrimitive = false;
@@ -177,19 +170,17 @@ function orImpl(ctx, types, scratch) {
     if (allPrimitive) {
         return merged >>> 0;
     }
-    let id = ctx.allocOnSlab(types, scratch, 'match');
-    let kindPtr = ctx.allocKind(K_OR, id, scratch, 2);
-    flags |= kindPtr;
+    let result = ctx.malloc(K_OR, scratch, 0, types, types.length, 0, null);
     for (; j < length; j++) {
         const type = /** @type {number} */(types[j]);
         if (type & NULLABLE) {
-            flags |= NULLABLE;
+            nullableOptional |= NULLABLE;
         }
         if (type & OPTIONAL) {
-            flags |= OPTIONAL;
+            nullableOptional |= OPTIONAL;
         }
     }
-    return flags >>> 0;
+    return (result | nullableOptional) >>> 0;
 }
 
 /**
@@ -199,9 +190,7 @@ function orImpl(ctx, types, scratch) {
  * @returns {number}
  */
 function exclusiveImpl(ctx, types, scratch) {
-    let id = ctx.allocOnSlab(types, scratch, 'match');
-    let kindPtr = ctx.allocKind(K_EXCLUSIVE, id, scratch, 2);
-    return (COMPLEX | (scratch ? SCRATCH : 0) | kindPtr) >>> 0;
+    return ctx.malloc(K_EXCLUSIVE, scratch, 0, types, types.length, 0, null);
 }
 
 /**
@@ -211,9 +200,7 @@ function exclusiveImpl(ctx, types, scratch) {
  * @returns {number}
  */
 function intersectImpl(ctx, types, scratch) {
-    let id = ctx.allocOnSlab(types, scratch, 'match');
-    let kindPtr = ctx.allocKind(K_INTERSECT, id, scratch, 2);
-    return (COMPLEX | (scratch ? SCRATCH : 0) | kindPtr) >>> 0;
+    return ctx.malloc(K_INTERSECT, scratch, 0, types, types.length, 0, null);
 }
 
 /**
@@ -224,8 +211,7 @@ function intersectImpl(ctx, types, scratch) {
  */
 function notImpl(ctx, typedef, scratch) {
     assertIsNumber(typedef, 0);
-    let kindPtr = ctx.allocKind(K_NOT, typedef >>> 0, scratch, 2);
-    return (COMPLEX | (scratch ? SCRATCH : 0) | kindPtr) >>> 0;
+    return ctx.malloc(K_NOT, scratch, typedef >>> 0, null, 0, 0, null);
 }
 
 /**
@@ -242,9 +228,7 @@ function whenImpl(ctx, config, scratch) {
         config.then !== void 0 ? config.then >>> 0 : 0,
         config.else !== void 0 ? config.else >>> 0 : 0
     ];
-    let id = ctx.allocOnSlab(types, scratch, 'match');
-    let kindPtr = ctx.allocKind(K_CONDITIONAL, id, scratch, 2);
-    return (COMPLEX | (scratch ? SCRATCH : 0) | kindPtr) >>> 0;
+    return ctx.malloc(K_CONDITIONAL, scratch, 0, types, types.length, 0, null);
 }
 
 /**
@@ -282,26 +266,18 @@ function objectImpl(ctx, definition, scratch, opts) {
         resolved[j + 1] = /** @type {number} */(type) >>> 0;
     }
     sortByKeyId(resolved);
-    let valIdx = 0;
     const hasValidator = opts !== void 0;
+    let vHeader = 0;
+    let payloads = null;
     if (hasValidator) {
         let result = packValidators(opts, OBJ_MASK, ctx.lookup);
         let cache = scratch ? ctx.S_REGEX_CACHE : ctx.REGEX_CACHE;
         migrateRegex(result, cache);
-        let vHeader = result[0];
-        let payloads = result.slice(1);
-        valIdx = ctx.allocValidator(vHeader, payloads, scratch);
+        vHeader = result[0];
+        payloads = result.slice(1);
     }
-    let id = ctx.registerObject(resolved, count, scratch);
     let kindHeader = hasValidator ? (K_OBJECT | K_VALIDATOR) : K_OBJECT;
-    let slots = hasValidator ? 3 : 2;
-    let kindPtr = ctx.allocKind(kindHeader, id, scratch, slots);
-    if (hasValidator) {
-        let HEAP = scratch ? ctx.SCR_HEAP : ctx.HEAP;
-        let kinds = HEAP.KINDS;
-        kinds[kindPtr + 2] = valIdx;
-    }
-    return (COMPLEX | (scratch ? SCRATCH : 0) | kindPtr) >>> 0;
+    return ctx.malloc(kindHeader, scratch, 0, resolved, count, vHeader, payloads);
 }
 
 /**
@@ -314,23 +290,16 @@ function objectImpl(ctx, definition, scratch, opts) {
 function arrayImpl(ctx, elemType, scratch, opts) {
     assertIsNumber(elemType, ERR_ARRAY_ELEMENT_MUST_BE_NUMBER);
     const hasVal = opts !== void 0;
-    let valIdx = 0;
+    let vHeader = 0;
+    let payloads = null;
     if (hasVal) {
         let result = packValidators(opts, ARR_MASK, null);
-        let vHeader = result[0];
-        let payloads = result.slice(1);
-        valIdx = ctx.allocValidator(vHeader, payloads, scratch);
+        vHeader = result[0];
+        payloads = result.slice(1);
     }
-    let index = ctx.registerArray(elemType, scratch);
+    /** K_ARRAY stores elemType as inline (KINDS slot 1); no SLAB or SHAPES entry. */
     let kindHeader = hasVal ? (K_ARRAY | K_VALIDATOR) : K_ARRAY;
-    let slots = hasVal ? 3 : 2;
-    let kindPtr = ctx.allocKind(kindHeader, index, scratch, slots);
-    if (hasVal) {
-        let HEAP = scratch ? ctx.SCR_HEAP : ctx.HEAP;
-        let kinds = HEAP.KINDS;
-        kinds[kindPtr + 2] = valIdx;
-    }
-    return (COMPLEX | (scratch ? SCRATCH : 0) | kindPtr) >>> 0;
+    return ctx.malloc(kindHeader, scratch, elemType >>> 0, null, 0, vHeader, payloads);
 }
 
 /**
@@ -363,9 +332,13 @@ function unionImpl(ctx, discriminator, variants, scratch) {
     }
 
     let discKeyId = ctx.lookup(discriminator);
-    let id = ctx.registerUnion(resolved, count, discKeyId, scratch);
-    let kindId = ctx.allocKind(K_UNION, id, scratch, 2);
-    return (COMPLEX | (scratch ? SCRATCH : 0) | kindId) >>> 0;
+    /** Prepend discKeyId as the first SLAB entry; variants follow as [keyId, type] pairs. */
+    let slabData = new Uint32Array(1 + count * 2);
+    slabData[0] = discKeyId;
+    for (let i = 0; i < count * 2; i++) {
+        slabData[1 + i] = resolved[i];
+    }
+    return ctx.malloc(K_UNION, scratch, 0, slabData, count, 0, null);
 }
 
 // --- Allocator factories ---

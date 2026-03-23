@@ -13,27 +13,83 @@ const SUITE_DIR = path.resolve(import.meta.dir, "suite/tests/draft2020-12");
 
 // ── THE TODO LIST ──
 // Keys are file names. 
-// A value of `null` skips the entire file.
-// Otherwise, it maps "Group Descriptions" to a Set of specific failing test descriptions.
-const SKIP_TESTS = {
-    // ── Massive Unimplemented Features (Tier 3) ──
-    "anchor.json": null,
-    "ref.json": null,
-    "refRemote.json": null,
-    "dynamicRef.json": null,
-    "unevaluatedItems.json": null,
-    "unevaluatedProperties.json": null,
-    "defs.json": null,
-    "dependentRequired.json": null,
-    "dependentSchemas.json": null,
-    "vocabulary.json": null,
-
-    // ── The Fast Fixes / Edge Cases (Knock these out one by one) ──
+// It maps "Group Descriptions" to a Set of specific failing test descriptions.
+const TODO_TESTS = {
+    // ── EASY: Basic Validators & Edge Cases ──
     "const.json": {
         "const with object": new Set([
             "same object with different property order is valid"
         ])
     },
+    "enum.json": {
+        "heterogeneous enum validation": new Set(["something else is invalid"]),
+        "empty enum": new Set(["null is invalid"])
+    },
+    "items.json": {
+        "items and subitems": new Set(["fewer items is valid"]),
+        "prefixItems with no additional items allowed": new Set([
+            "empty array",
+            "fewer number of items present (1)",
+            "fewer number of items present (2)"
+        ])
+    },
+    "prefixItems.json": {
+        "a schema given for prefixItems": new Set([
+            "incomplete array of items",
+            "empty array"
+        ]),
+        "prefixItems with boolean schemas": new Set([
+            "array with one item is valid",
+            "empty array is valid"
+        ])
+    },
+    "maxItems.json": {
+        "maxItems validation": new Set(["too long is invalid"]),
+        "maxItems validation with a decimal": new Set(["too long is invalid"])
+    },
+    "minItems.json": {
+        "minItems validation": new Set(["too short is invalid"]),
+        "minItems validation with a decimal": new Set(["too short is invalid"])
+    },
+    "maxProperties.json": {
+        "maxProperties validation": new Set(["too long is invalid"]),
+        "maxProperties validation with a decimal": new Set(["too long is invalid"]),
+        "maxProperties = 0 means the object is empty": new Set(["one property is invalid"])
+    },
+    "minProperties.json": {
+        "minProperties validation": new Set(["too short is invalid"]),
+        "minProperties validation with a decimal": new Set(["too short is invalid"])
+    },
+    "propertyNames.json": {
+        "propertyNames validation": new Set(["some property names invalid"]),
+        "propertyNames validation with pattern": new Set(["non-matching property name is invalid"]),
+        "propertyNames with boolean schema false": new Set(["object with any properties is invalid"]),
+        "propertyNames with const": new Set(["object with any other property is invalid"]),
+        "propertyNames with enum": new Set(["object with any other property is invalid"])
+    },
+    "properties.json": {
+        "properties, patternProperties, additionalProperties interaction": new Set([
+            "patternProperty invalidates property",
+            "patternProperty invalidates nonproperty"
+        ])
+    },
+    "uniqueItems.json": {
+        "uniqueItems validation": new Set([
+            "non-unique array of integers is invalid",
+            "non-unique array of more than two integers is invalid",
+            "numbers are unique if mathematically unequal",
+            "non-unique array of strings is invalid",
+            "non-unique array of objects is invalid",
+            "property order of array of objects is ignored",
+            "non-unique array of nested objects is invalid",
+            "non-unique array of arrays is invalid",
+            "non-unique array of more than two arrays is invalid",
+            "non-unique heterogeneous types are invalid",
+            "objects are non-unique despite key order"
+        ])
+    },
+
+    // ── MEDIUM: The 'Contains' Group ──
     "contains.json": {
         "contains keyword validation": new Set([
             "array without items matching schema is invalid",
@@ -56,18 +112,6 @@ const SKIP_TESTS = {
             "empty array is invalid"
         ])
     },
-    "enum.json": {
-        "heterogeneous enum validation": new Set(["something else is invalid"]),
-        "empty enum": new Set(["null is invalid"])
-    },
-    "items.json": {
-        "items and subitems": new Set(["fewer items is valid"]),
-        "prefixItems with no additional items allowed": new Set([
-            "empty array",
-            "fewer number of items present (1)",
-            "fewer number of items present (2)"
-        ])
-    },
     "maxContains.json": {
         "maxContains with contains": new Set([
             "empty data",
@@ -86,7 +130,10 @@ const SKIP_TESTS = {
         ])
     },
     "minContains.json": {
-        "minContains=1 with contains": new Set(["empty data", "no elements match"]),
+        "minContains=1 with contains": new Set([
+            "empty data",
+            "no elements match"
+        ]),
         "minContains=2 with contains": new Set([
             "empty data",
             "all elements match, invalid minContains",
@@ -106,68 +153,163 @@ const SKIP_TESTS = {
             "invalid maxContains",
             "invalid maxContains and minContains"
         ]),
-        "minContains = 0 with maxContains": new Set(["too many"])
+        "minContains = 0 with maxContains": new Set([
+            "too many"
+        ])
     },
-    "maxItems.json": {
-        "maxItems validation": new Set(["too long is invalid"]),
-        "maxItems validation with a decimal": new Set(["too long is invalid"])
+
+    // ── HARD: Tier 3 Dynamic Tracking & External Linking ──
+    "dependentRequired.json": {
+        "single dependency": new Set(["missing dependency"]),
+        "multiple dependents required": new Set(["missing dependency", "missing other dependency", "missing both dependencies"]),
+        "dependencies with escaped characters": new Set(["CRLF missing dependent", "quoted quotes missing dependent"])
     },
-    "maxProperties.json": {
-        "maxProperties validation": new Set(["too long is invalid"]),
-        "maxProperties validation with a decimal": new Set(["too long is invalid"]),
-        "maxProperties = 0 means the object is empty": new Set(["one property is invalid"])
+    "dependentSchemas.json": {
+        "single dependency": new Set(["wrong type", "wrong type other", "wrong type both"]),
+        "boolean subschemas": new Set(["object with property having schema false is invalid", "object with both properties is invalid"]),
+        "dependencies with escaped characters": new Set(["quoted quote", "quoted tab invalid under dependent schema", "quoted quote invalid under dependent schema"]),
+        "dependent subschema incompatible with root": new Set(["matches root", "matches both"])
     },
-    "minItems.json": {
-        "minItems validation": new Set(["too short is invalid"]),
-        "minItems validation with a decimal": new Set(["too short is invalid"])
+    "defs.json": {
+        "validate definition against metaschema": new Set(["valid definition schema", "invalid definition schema"])
     },
-    "minProperties.json": {
-        "minProperties validation": new Set(["too short is invalid"]),
-        "minProperties validation with a decimal": new Set(["too short is invalid"])
+    "vocabulary.json": {
+        "schema that uses custom metaschema with with no validation vocabulary": new Set(["no validation: invalid number, but it still validates"])
+    },
+    "anchor.json": {
+        "Location-independent identifier": new Set(["match", "mismatch"]),
+        "Location-independent identifier with absolute URI": new Set(["match", "mismatch"]),
+        "Location-independent identifier with base URI change in subschema": new Set(["match", "mismatch"]),
+        "same $anchor with different base uri": new Set(["$ref resolves to /$defs/A/allOf/1", "$ref does not resolve to /$defs/A/allOf/0"])
+    },
+    "ref.json": {
+        "root pointer ref": new Set(["match", "recursive match", "mismatch", "recursive mismatch"]),
+        "relative pointer ref to object": new Set(["match", "mismatch"]),
+        "relative pointer ref to array": new Set(["match array", "mismatch array"]),
+        "escaped pointer ref": new Set(["slash invalid", "tilde invalid", "percent invalid", "slash valid", "tilde valid", "percent valid"]),
+        "ref applies alongside sibling keywords": new Set(["ref valid, maxItems invalid"]),
+        "remote ref, containing refs itself": new Set(["remote ref valid", "remote ref invalid"]),
+        "Recursive references between schemas": new Set(["valid tree", "invalid tree"]),
+        "refs with quote": new Set(["object with numbers is valid", "object with strings is invalid"]),
+        "ref creates new scope when adjacent to keywords": new Set(["referenced subschema doesn't see annotations from properties"]),
+        "refs with relative uris and defs": new Set(["invalid on inner field", "invalid on outer field", "valid on both fields"]),
+        "relative refs with absolute uris and defs": new Set(["invalid on inner field", "invalid on outer field", "valid on both fields"]),
+        "$id must be resolved against nearest parent, not just immediate parent": new Set(["number is valid", "non-number is invalid"]),
+        "order of evaluation: $id and $ref": new Set(["data is valid against first definition", "data is invalid against first definition"]),
+        "order of evaluation: $id and $anchor and $ref": new Set(["data is valid against first definition", "data is invalid against first definition"]),
+        "order of evaluation: $id and $ref on nested schema": new Set(["data is valid against nested sibling", "data is invalid against nested sibling"]),
+        "simple URN base URI with $ref via the URN": new Set(["valid under the URN IDed schema", "invalid under the URN IDed schema"]),
+        "URN base URI with URN and JSON pointer ref": new Set(["a string is valid", "a non-string is invalid"]),
+        "URN base URI with URN and anchor ref": new Set(["a string is valid", "a non-string is invalid"]),
+        "URN ref with nested pointer ref": new Set(["a string is valid", "a non-string is invalid"]),
+        "ref to if": new Set(["a non-integer is invalid due to the $ref", "an integer is valid"]),
+        "ref to then": new Set(["a non-integer is invalid due to the $ref", "an integer is valid"]),
+        "ref to else": new Set(["a non-integer is invalid due to the $ref", "an integer is valid"]),
+        "ref with absolute-path-reference": new Set(["a string is valid", "an integer is invalid"]),
+        "empty tokens in $ref json-pointer": new Set(["number is valid", "non-number is invalid"])
+    },
+    "refRemote.json": {
+        "remote ref": new Set(["remote ref valid", "remote ref invalid"]),
+        "fragment within remote ref": new Set(["remote fragment valid", "remote fragment invalid"]),
+        "anchor within remote ref": new Set(["remote anchor valid", "remote anchor invalid"]),
+        "ref within remote ref": new Set(["ref within ref valid", "ref within ref invalid"]),
+        "base URI change": new Set(["base URI change ref valid", "base URI change ref invalid"]),
+        "base URI change - change folder": new Set(["number is valid", "string is invalid"]),
+        "base URI change - change folder in subschema": new Set(["number is valid", "string is invalid"]),
+        "root ref in remote ref": new Set(["string is valid", "null is valid", "object is invalid"]),
+        "remote ref with ref to defs": new Set(["invalid", "valid"]),
+        "Location-independent identifier in remote ref": new Set(["integer is valid", "string is invalid"]),
+        "retrieved nested refs resolve relative to their URI not $id": new Set(["number is invalid", "string is valid"]),
+        "remote HTTP ref with different $id": new Set(["number is invalid", "string is valid"]),
+        "remote HTTP ref with different URN $id": new Set(["number is invalid", "string is valid"]),
+        "remote HTTP ref with nested absolute ref": new Set(["number is invalid", "string is valid"]),
+        "$ref to $ref finds detached $anchor": new Set(["number is valid", "non-number is invalid"])
+    },
+    "dynamicRef.json": {
+        "A $dynamicRef to a $dynamicAnchor in the same schema resource behaves like a normal $ref to an $anchor": new Set(["An array containing non-strings is invalid"]),
+        "A $dynamicRef to an $anchor in the same schema resource behaves like a normal $ref to an $anchor": new Set(["An array containing non-strings is invalid"]),
+        "A $ref to a $dynamicAnchor in the same schema resource behaves like a normal $ref to an $anchor": new Set(["An array of strings is valid", "An array containing non-strings is invalid"]),
+        "A $dynamicRef resolves to the first $dynamicAnchor still in scope that is encountered when the schema is evaluated": new Set(["An array of strings is valid", "An array containing non-strings is invalid"]),
+        "A $dynamicRef without anchor in fragment behaves identical to $ref": new Set(["An array of strings is invalid", "An array of numbers is valid"]),
+        "A $dynamicRef with intermediate scopes that don't include a matching $dynamicAnchor does not affect dynamic scope resolution": new Set(["An array of strings is valid", "An array containing non-strings is invalid"]),
+        "An $anchor with the same name as a $dynamicAnchor is not used for dynamic scope resolution": new Set(["Any array is valid"]),
+        "A $dynamicRef without a matching $dynamicAnchor in the same schema resource behaves like a normal $ref to $anchor": new Set(["Any array is valid"]),
+        "A $dynamicRef with a non-matching $dynamicAnchor in the same schema resource behaves like a normal $ref to $anchor": new Set(["Any array is valid"]),
+        "A $dynamicRef that initially resolves to a schema with a matching $dynamicAnchor resolves to the first $dynamicAnchor in the dynamic scope": new Set(["The recursive part is valid against the root", "The recursive part is not valid against the root"]),
+        "A $dynamicRef that initially resolves to a schema without a matching $dynamicAnchor behaves like a normal $ref to $anchor": new Set(["The recursive part doesn't need to validate against the root"]),
+        "multiple dynamic paths to the $dynamicRef keyword": new Set(["number list with number values", "number list with string values", "string list with number values", "string list with string values"]),
+        "after leaving a dynamic scope, it is not used by a $dynamicRef": new Set(["string matches /$defs/thingy, but the $dynamicRef does not stop here", "first_scope is not in dynamic scope for the $dynamicRef", "/then/$defs/thingy is the final stop for the $dynamicRef"]),
+        "strict-tree schema, guards against misspelled properties": new Set(["instance with misspelled field", "instance with correct field"]),
+        "tests for implementation dynamic anchor and reference link": new Set(["incorrect parent schema", "incorrect extended schema", "correct extended schema"]),
+        "$ref and $dynamicAnchor are independent of order - $defs first": new Set(["incorrect parent schema", "incorrect extended schema", "correct extended schema"]),
+        "$ref and $dynamicAnchor are independent of order - $ref first": new Set(["incorrect parent schema", "incorrect extended schema", "correct extended schema"]),
+        "$ref to $dynamicRef finds detached $dynamicAnchor": new Set(["number is valid", "non-number is invalid"]),
+        "$dynamicRef points to a boolean schema": new Set(["follow $dynamicRef to a false schema"]),
+        "$dynamicRef skips over intermediate resources - direct reference": new Set(["integer property passes", "string property fails"]),
+        "$dynamicRef avoids the root of each schema, but scopes are still registered": new Set(["data is sufficient for schema at second#/$defs/length", "data is not sufficient for schema at second#/$defs/length"])
+    },
+    "unevaluatedItems.json": {
+        "unevaluatedItems false": new Set(["with unevaluated items"]),
+        "unevaluatedItems as schema": new Set(["with invalid unevaluated items"]),
+        "unevaluatedItems with tuple": new Set(["with unevaluated items"]),
+        "unevaluatedItems with nested tuple": new Set(["with unevaluated items"]),
+        "unevaluatedItems with nested items": new Set(["with invalid additional item"]),
+        "unevaluatedItems with anyOf": new Set(["when one schema matches and has unevaluated items", "when two schemas match and has unevaluated items"]),
+        "unevaluatedItems with oneOf": new Set(["with unevaluated items"]),
+        "unevaluatedItems with not": new Set(["with unevaluated items"]),
+        "unevaluatedItems with if/then/else": new Set(["when if matches and it has unevaluated items", "when if doesn't match and it has unevaluated items"]),
+        "unevaluatedItems with boolean schemas": new Set(["with unevaluated items"]),
+        "unevaluatedItems with $ref": new Set(["with unevaluated items"]),
+        "unevaluatedItems before $ref": new Set(["with unevaluated items"]),
+        "unevaluatedItems with $dynamicRef": new Set(["with no unevaluated items", "with unevaluated items"]),
+        "unevaluatedItems can't see inside cousins": new Set(["always fails"]),
+        "item is evaluated in an uncle schema to unevaluatedItems": new Set(["no extra items", "uncle keyword evaluation is not significant"]),
+        "unevaluatedItems depends on adjacent contains": new Set(["contains fails, second item is not evaluated", "contains passes, second item is not evaluated"]),
+        "unevaluatedItems depends on multiple nested contains": new Set(["7 not evaluated, fails unevaluatedItems"]),
+        "unevaluatedItems and contains interact to control item dependency relationship": new Set(["only b's are invalid", "only c's are invalid", "only b's and c's are invalid", "only a's and c's are invalid"]),
+        "unevaluatedItems with minContains = 0": new Set(["no items evaluated by contains", "some but not all items evaluated by contains"]),
+        "unevaluatedItems can see annotations from if without then and else": new Set(["invalid in case if is evaluated"]),
+        "Evaluated items collection needs to consider instance location": new Set(["with an unevaluated item that exists at another location"])
+    },
+    "unevaluatedProperties.json": {
+        "unevaluatedProperties schema": new Set(["with invalid unevaluated properties"]),
+        "unevaluatedProperties false": new Set(["with unevaluated properties"]),
+        "unevaluatedProperties with adjacent properties": new Set(["with unevaluated properties"]),
+        "unevaluatedProperties with adjacent patternProperties": new Set(["with unevaluated properties"]),
+        "unevaluatedProperties with nested properties": new Set(["with additional properties"]),
+        "unevaluatedProperties with nested patternProperties": new Set(["with additional properties"]),
+        "unevaluatedProperties with anyOf": new Set(["when one matches and has unevaluated properties", "when two match and has unevaluated properties"]),
+        "unevaluatedProperties with oneOf": new Set(["with unevaluated properties"]),
+        "unevaluatedProperties with not": new Set(["with unevaluated properties"]),
+        "unevaluatedProperties with if/then/else": new Set(["when if is true and has unevaluated properties", "when if is false and has unevaluated properties"]),
+        "unevaluatedProperties with if/then/else, then not defined": new Set(["when if is true and has unevaluated properties", "when if is false and has unevaluated properties"]),
+        "unevaluatedProperties with if/then/else, else not defined": new Set(["when if is true and has unevaluated properties", "when if is false and has no unevaluated properties", "when if is false and has unevaluated properties"]),
+        "unevaluatedProperties with dependentSchemas": new Set(["with unevaluated properties"]),
+        "unevaluatedProperties with boolean schemas": new Set(["with unevaluated properties"]),
+        "unevaluatedProperties with $ref": new Set(["with unevaluated properties"]),
+        "unevaluatedProperties before $ref": new Set(["with unevaluated properties"]),
+        "unevaluatedProperties with $dynamicRef": new Set(["with no unevaluated properties", "with unevaluated properties"]),
+        "unevaluatedProperties can't see inside cousins": new Set(["always fails"]),
+        "unevaluatedProperties can't see inside cousins (reverse order)": new Set(["always fails"]),
+        "nested unevaluatedProperties, outer true, inner false, properties outside": new Set(["with no nested unevaluated properties", "with nested unevaluated properties"]),
+        "nested unevaluatedProperties, outer true, inner false, properties inside": new Set(["with nested unevaluated properties"]),
+        "cousin unevaluatedProperties, true and false, true with properties": new Set(["with no nested unevaluated properties", "with nested unevaluated properties"]),
+        "cousin unevaluatedProperties, true and false, false with properties": new Set(["with nested unevaluated properties"]),
+        "property is evaluated in an uncle schema to unevaluatedProperties": new Set(["uncle keyword evaluation is not significant"]),
+        "in-place applicator siblings, allOf has unevaluated": new Set(["base case: both properties present", "in place applicator siblings, foo is missing"]),
+        "in-place applicator siblings, anyOf has unevaluated": new Set(["base case: both properties present", "in place applicator siblings, bar is missing"]),
+        "unevaluatedProperties + single cyclic ref": new Set(["Empty is valid", "Single is valid", "Unevaluated on 1st level is invalid", "Nested is valid", "Unevaluated on 2nd level is invalid", "Deep nested is valid", "Unevaluated on 3rd level is invalid"]),
+        "dynamic evalation inside nested refs": new Set(["xx + foo is invalid"]),
+        "unevaluatedProperties not affected by propertyNames": new Set(["string property is invalid"]),
+        "unevaluatedProperties can see annotations from if without then and else": new Set(["invalid in case if is evaluated"]),
+        "dependentSchemas with unevaluatedProperties": new Set(["unevaluatedProperties doesn't consider dependentSchemas", "unevaluatedProperties doesn't see bar when foo2 is absent"]),
+        "Evaluated properties collection needs to consider instance location": new Set(["with an unevaluated property that exists at another location"])
     },
     "not.json": {
         "collect annotations inside a 'not', even if collection is disabled": new Set([
             "unevaluated property"
         ])
     },
-    "prefixItems.json": {
-        "a schema given for prefixItems": new Set([
-            "incomplete array of items",
-            "empty array"
-        ]),
-        "prefixItems with boolean schemas": new Set([
-            "array with one item is valid",
-            "empty array is valid"
-        ])
-    },
-    "properties.json": {
-        "properties, patternProperties, additionalProperties interaction": new Set([
-            "patternProperty invalidates property",
-            "patternProperty invalidates nonproperty"
-        ])
-    },
-    "propertyNames.json": {
-        "propertyNames validation": new Set(["some property names invalid"]),
-        "propertyNames validation with pattern": new Set(["non-matching property name is invalid"]),
-        "propertyNames with boolean schema false": new Set(["object with any properties is invalid"]),
-        "propertyNames with const": new Set(["object with any other property is invalid"]),
-        "propertyNames with enum": new Set(["object with any other property is invalid"])
-    },
-    "uniqueItems.json": {
-        "uniqueItems validation": new Set([
-            "non-unique array of integers is invalid",
-            "non-unique array of more than two integers is invalid",
-            "numbers are unique if mathematically unequal",
-            "non-unique array of strings is invalid",
-            "non-unique array of objects is invalid",
-            "property order of array of objects is ignored",
-            "non-unique array of nested objects is invalid",
-            "non-unique array of arrays is invalid",
-            "non-unique array of more than two arrays is invalid",
-            "non-unique heterogeneous types are invalid",
-            "objects are non-unique despite key order"
-        ])
-    }
 };
 
 const ALL_FILES = fs.readdirSync(SUITE_DIR).filter(file => file.endsWith('.json'));
@@ -181,7 +323,7 @@ for (const file of ALL_FILES) {
     }
 
     const testGroups = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    const fileSkips = SKIP_TESTS[file];
+    const fileSkips = TODO_TESTS[file];
     const skipWholeFile = fileSkips === null;
 
     describe(`JSON Schema: ${file}`, () => {
@@ -190,7 +332,7 @@ for (const file of ALL_FILES) {
             describe(group.description, () => {
                 let compiledRoot;
                 let compileError = null;
-                
+
                 // 1. We attempt to compile the schema ONCE per group
                 try {
                     const ast = parseJsonSchema(group.schema);
@@ -219,7 +361,7 @@ for (const file of ALL_FILES) {
                                 `Schema: ${JSON.stringify(group.schema)}`
                             );
                         }
-                        
+
                         // 3. The Max Squeeze Check
                         const isValid = validate(testCase.data, compiledRoot);
                         expect(isValid).toBe(testCase.valid);

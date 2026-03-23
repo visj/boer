@@ -34,11 +34,7 @@ function catalog(cfg) {
 
     // Primary heap store
     let SLAB = HEAP.SLAB;
-    let OBJECTS = HEAP.OBJECTS;
-    let ARRAYS = HEAP.ARRAYS;
-    let UNIONS = HEAP.UNIONS;
-    let TUPLES = HEAP.TUPLES;
-    let MATCHES = HEAP.MATCHES;
+    let SHAPES = HEAP.SHAPES;
     let KINDS = HEAP.KINDS;
     let VALIDATORS = HEAP.VALIDATORS;
     let REGEX_CACHE = HEAP.REGEX_CACHE;
@@ -46,11 +42,7 @@ function catalog(cfg) {
 
     // Scratch heap store
     let S_SLAB = SCR_HEAP.SLAB;
-    let S_OBJECTS = SCR_HEAP.OBJECTS;
-    let S_ARRAYS = SCR_HEAP.ARRAYS;
-    let S_UNIONS = SCR_HEAP.UNIONS;
-    let S_TUPLES = SCR_HEAP.TUPLES;
-    let S_MATCHES = SCR_HEAP.MATCHES;
+    let S_SHAPES = SCR_HEAP.SHAPES;
     let S_KINDS = SCR_HEAP.KINDS;
     let S_VALIDATORS = SCR_HEAP.VALIDATORS;
     let S_REGEX_CACHE = SCR_HEAP.REGEX_CACHE;
@@ -88,11 +80,7 @@ function catalog(cfg) {
      */
     function rewindScratch() {
         SCR_HEAP.PTR = 0;
-        SCR_HEAP.OBJ_COUNT = 0;
-        SCR_HEAP.ARR_COUNT = 0;
-        SCR_HEAP.TUP_COUNT = 0;
-        SCR_HEAP.MAT_COUNT = 0;
-        SCR_HEAP.UNION_COUNT = 0;
+        SCR_HEAP.SHAPE_COUNT = 0;
         SCR_HEAP.KIND_PTR = 0;
         SCR_HEAP.VAL_PTR = 0;
         S_REGEX_CACHE.length = 0;
@@ -115,30 +103,52 @@ function catalog(cfg) {
     }
 
     /**
+     * Internal allocator for the Permanent Heap. Writes slabData to SLAB,
+     * registers a SHAPES entry, optionally writes a validator, then writes
+     * a KINDS entry. Returns a permanent COMPLEX typedef pointer.
+     *
      * @param {number} header
-     * @param {number} registryIndex
-     * @param {boolean} scratch
-     * @param {number} slots
+     * @param {number} inline - stored as KINDS[ptr+1] when slabData is null
+     * @param {Array<number>|Uint32Array|null} slabData
+     * @param {number} shapeLen - semantic length stored in SHAPES slot 1
+     * @param {number} vHeader
+     * @param {Array<number>|null} vPayloads
      * @returns {number}
      */
-    /**
-     * Allocates a KINDS vtable entry. When slots === 1 (K_ANY_INNER), only the
-     * header is written and no registry index is stored.
-     */
-    function allocKind(header, registryIndex, scratch, slots) {
-        if (scratch) {
-            let ptr = SCR_HEAP.KIND_PTR;
-            if (ptr + slots > SCR_HEAP.KIND_LEN) {
-                let buffer = new Uint32Array(SCR_HEAP.KIND_LEN *= 2);
-                buffer.set(S_KINDS);
-                SCR_HEAP.KINDS = S_KINDS = buffer;
+    function _malloc(header, inline, slabData, shapeLen, vHeader, vPayloads) {
+        let ri = inline;
+        if (slabData !== null) {
+            let count = slabData.length;
+            if (HEAP.PTR + count > HEAP.SLAB_LEN) {
+                let buffer = new Uint32Array(HEAP.SLAB_LEN *= 2);
+                buffer.set(SLAB);
+                HEAP.SLAB = SLAB = buffer;
             }
-            S_KINDS[ptr] = header;
-            if (slots > 1) {
-                S_KINDS[ptr + 1] = registryIndex;
+            let offset = HEAP.PTR;
+            HEAP.SLAB.set(slabData, offset);
+            HEAP.PTR += count;
+            ri = HEAP.SHAPE_COUNT++;
+            if ((ri + 1) * 2 > HEAP.SHAPE_LEN) {
+                let buffer = new Uint32Array(HEAP.SHAPE_LEN *= 2);
+                buffer.set(SHAPES);
+                HEAP.SHAPES = SHAPES = buffer;
             }
-            SCR_HEAP.KIND_PTR += slots;
-            return ptr;
+            HEAP.SHAPES[ri * 2] = offset;
+            HEAP.SHAPES[ri * 2 + 1] = shapeLen;
+        }
+        let valIdx = 0, slots = 2;
+        if (vHeader !== 0 && vPayloads !== null) {
+            slots = 3;
+            let vCount = vPayloads.length;
+            if (HEAP.VAL_PTR + vCount + 1 > HEAP.VAL_LEN) {
+                let buffer = new Float64Array(HEAP.VAL_LEN *= 2);
+                buffer.set(VALIDATORS);
+                HEAP.VALIDATORS = VALIDATORS = buffer;
+            }
+            valIdx = HEAP.VAL_PTR;
+            HEAP.VALIDATORS[valIdx] = vHeader;
+            HEAP.VALIDATORS.set(vPayloads, valIdx + 1);
+            HEAP.VAL_PTR += vCount + 1;
         }
         let ptr = HEAP.KIND_PTR;
         if (ptr + slots > HEAP.KIND_LEN) {
@@ -146,12 +156,88 @@ function catalog(cfg) {
             buffer.set(KINDS);
             HEAP.KINDS = KINDS = buffer;
         }
-        KINDS[ptr] = header;
-        if (slots > 1) {
-            KINDS[ptr + 1] = registryIndex;
-        }
+        HEAP.KINDS[ptr] = header;
+        HEAP.KINDS[ptr + 1] = ri;
+        if (slots === 3) { HEAP.KINDS[ptr + 2] = valIdx; }
         HEAP.KIND_PTR += slots;
-        return ptr;
+        return (COMPLEX | ptr) >>> 0;
+    }
+
+    /**
+     * Internal allocator for the Scratch Heap. Identical logic to _malloc
+     * but targets SCR_HEAP buffers. Returns a scratch COMPLEX typedef pointer.
+     *
+     * @param {number} header
+     * @param {number} inline
+     * @param {Array<number>|Uint32Array|null} slabData
+     * @param {number} shapeLen
+     * @param {number} vHeader
+     * @param {Array<number>|null} vPayloads
+     * @returns {number}
+     */
+    function _smalloc(header, inline, slabData, shapeLen, vHeader, vPayloads) {
+        let ri = inline;
+        if (slabData !== null) {
+            let count = slabData.length;
+            if (SCR_HEAP.PTR + count > SCR_HEAP.SLAB_LEN) {
+                let buffer = new Uint32Array(SCR_HEAP.SLAB_LEN *= 2);
+                buffer.set(S_SLAB);
+                SCR_HEAP.SLAB = S_SLAB = buffer;
+            }
+            let offset = SCR_HEAP.PTR;
+            SCR_HEAP.SLAB.set(slabData, offset);
+            SCR_HEAP.PTR += count;
+            ri = SCR_HEAP.SHAPE_COUNT++;
+            if ((ri + 1) * 2 > SCR_HEAP.SHAPE_LEN) {
+                let buffer = new Uint32Array(SCR_HEAP.SHAPE_LEN *= 2);
+                buffer.set(S_SHAPES);
+                SCR_HEAP.SHAPES = S_SHAPES = buffer;
+            }
+            SCR_HEAP.SHAPES[ri * 2] = offset;
+            SCR_HEAP.SHAPES[ri * 2 + 1] = shapeLen;
+        }
+        let valIdx = 0, slots = 2;
+        if (vHeader !== 0 && vPayloads !== null) {
+            slots = 3;
+            let vCount = vPayloads.length;
+            if (SCR_HEAP.VAL_PTR + vCount + 1 > SCR_HEAP.VAL_LEN) {
+                let buffer = new Float64Array(SCR_HEAP.VAL_LEN *= 2);
+                buffer.set(S_VALIDATORS);
+                SCR_HEAP.VALIDATORS = S_VALIDATORS = buffer;
+            }
+            valIdx = SCR_HEAP.VAL_PTR;
+            SCR_HEAP.VALIDATORS[valIdx] = vHeader;
+            SCR_HEAP.VALIDATORS.set(vPayloads, valIdx + 1);
+            SCR_HEAP.VAL_PTR += vCount + 1;
+        }
+        let ptr = SCR_HEAP.KIND_PTR;
+        if (ptr + slots > SCR_HEAP.KIND_LEN) {
+            let buffer = new Uint32Array(SCR_HEAP.KIND_LEN *= 2);
+            buffer.set(S_KINDS);
+            SCR_HEAP.KINDS = S_KINDS = buffer;
+        }
+        SCR_HEAP.KINDS[ptr] = header;
+        SCR_HEAP.KINDS[ptr + 1] = ri;
+        if (slots === 3) { SCR_HEAP.KINDS[ptr + 2] = valIdx; }
+        SCR_HEAP.KIND_PTR += slots;
+        return (COMPLEX | SCRATCH | ptr) >>> 0;
+    }
+
+    /**
+     * Public allocation interface. Dispatches to _malloc (permanent) or
+     * _smalloc (scratch) based on the scratch flag.
+     *
+     * @param {number} header
+     * @param {boolean} scratch
+     * @param {number} inline
+     * @param {Array<number>|Uint32Array|null} slabData
+     * @param {number} shapeLen
+     * @param {number} vHeader
+     * @param {Array<number>|null} vPayloads
+     * @returns {number}
+     */
+    function malloc(header, scratch, inline, slabData, shapeLen, vHeader, vPayloads) {
+        return (scratch ? _smalloc : _malloc)(header, inline, slabData, shapeLen, vHeader, vPayloads);
     }
 
     /**
@@ -190,89 +276,6 @@ function catalog(cfg) {
         return ptr;
     }
 
-    /**
-     * Allocate entries on the SLAB and register in a typed registry (TUPLES or MATCHES).
-     * @param {!Array<number>} types
-     * @param {boolean} scratch
-     * @param {string} kind - 'tuple' or 'match'
-     * @returns {number} registry index
-     */
-    function allocOnSlab(types, scratch, kind) {
-        let count = types.length;
-        let heap = scratch ? SCR_HEAP : HEAP;
-        let slab = scratch ? S_SLAB : SLAB;
-        let ptr = heap.PTR;
-
-        // Grow slab if needed
-        if (scratch) {
-            if (ptr + count > SCR_HEAP.SLAB_LEN) {
-                let buffer = new Uint32Array(SCR_HEAP.SLAB_LEN *= 2);
-                buffer.set(S_SLAB);
-                SCR_HEAP.SLAB = S_SLAB = buffer;
-                slab = S_SLAB;
-            }
-        } else {
-            if (ptr + count > HEAP.SLAB_LEN) {
-                let buffer = new Uint32Array(HEAP.SLAB_LEN *= 2);
-                buffer.set(SLAB);
-                HEAP.SLAB = SLAB = buffer;
-                slab = SLAB;
-            }
-        }
-
-        let offset = ptr;
-        for (let i = 0; i < count; i++) {
-            slab[offset + i] = types[i] >>> 0;
-        }
-
-        heap.PTR += count;
-
-        // Register in the appropriate registry
-        if (kind === 'tuple') {
-            let tuples = scratch ? S_TUPLES : TUPLES;
-            let id = heap.TUP_COUNT++;
-
-            if ((id + 1) * 2 > heap.TUP_LEN) {
-                if (scratch) {
-                    let buffer = new Uint32Array(SCR_HEAP.TUP_LEN *= 2);
-                    buffer.set(S_TUPLES);
-                    SCR_HEAP.TUPLES = S_TUPLES = buffer;
-                    tuples = S_TUPLES;
-                } else {
-                    let buffer = new Uint32Array(HEAP.TUP_LEN *= 2);
-                    buffer.set(TUPLES);
-                    HEAP.TUPLES = TUPLES = buffer;
-                    tuples = TUPLES;
-                }
-            }
-
-            tuples[id * 2] = offset;
-            tuples[id * 2 + 1] = count;
-            return id;
-        }
-
-        // kind === 'match'
-        let matches = scratch ? S_MATCHES : MATCHES;
-        let id = heap.MAT_COUNT++;
-
-        if ((id + 1) * 2 > heap.MAT_LEN) {
-            if (scratch) {
-                let buffer = new Uint32Array(SCR_HEAP.MAT_LEN *= 2);
-                buffer.set(S_MATCHES);
-                SCR_HEAP.MATCHES = S_MATCHES = buffer;
-                matches = S_MATCHES;
-            } else {
-                let buffer = new Uint32Array(HEAP.MAT_LEN *= 2);
-                buffer.set(MATCHES);
-                HEAP.MATCHES = MATCHES = buffer;
-                matches = MATCHES;
-            }
-        }
-
-        matches[id * 2] = offset;
-        matches[id * 2 + 1] = count;
-        return id;
-    }
     // --- VALIDATOR RUNNERS ---
 
     /**
@@ -460,10 +463,10 @@ function catalog(cfg) {
         }
         if (vHeader & V_ADDITIONAL_PROPERTIES) {
             let addType = vals[p++] >>> 0;
-            let objects = scratch ? S_OBJECTS : OBJECTS;
+            let shapes = scratch ? S_SHAPES : SHAPES;
             let slab = scratch ? S_SLAB : SLAB;
-            let offset = objects[ri * 2];
-            let length = objects[ri * 2 + 1];
+            let offset = shapes[ri * 2];
+            let length = shapes[ri * 2 + 1];
             for (let ki = 0; ki < keyCount; ki++) {
                 let keyId = KEY_DICT.get(keys[ki]);
                 let declared = false;
@@ -583,10 +586,10 @@ function catalog(cfg) {
                     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                         return false;
                     }
-                    let objects = scratch ? S_OBJECTS : OBJECTS;
+                    let shapes = scratch ? S_SHAPES : SHAPES;
                     let slab = scratch ? S_SLAB : SLAB;
-                    let offset = objects[ri * 2];
-                    let length = objects[ri * 2 + 1];
+                    let offset = shapes[ri * 2];
+                    let length = shapes[ri * 2 + 1];
                     for (let i = 0; i < length; i++) {
                         let key = KEY_INDEX.get(slab[offset + (i * 2)]);
                         if (key === void 0) {
@@ -614,8 +617,7 @@ function catalog(cfg) {
                     if (!Array.isArray(data)) {
                         return false;
                     }
-                    let arrays = scratch ? S_ARRAYS : ARRAYS;
-                    let innerType = arrays[ri];
+                    let innerType = ri;
                     let length = data.length;
                     for (let i = 0; i < length; i++) {
                         if (!_validateSlot(data[i], innerType)) {
@@ -641,10 +643,10 @@ function catalog(cfg) {
                     return true;
                 }
                 case K_OR: {
-                    let matches = scratch ? S_MATCHES : MATCHES;
+                    let shapes = scratch ? S_SHAPES : SHAPES;
                     let slab = scratch ? S_SLAB : SLAB;
-                    let offset = matches[ri * 2];
-                    let count = matches[ri * 2 + 1];
+                    let offset = shapes[ri * 2];
+                    let count = shapes[ri * 2 + 1];
                     for (let i = 0; i < count; i++) {
                         if (_validate(data, slab[offset + i])) {
                             return true;
@@ -653,10 +655,10 @@ function catalog(cfg) {
                     return false;
                 }
                 case K_EXCLUSIVE: {
-                    let matches = scratch ? S_MATCHES : MATCHES;
+                    let shapes = scratch ? S_SHAPES : SHAPES;
                     let slab = scratch ? S_SLAB : SLAB;
-                    let offset = matches[ri * 2];
-                    let count = matches[ri * 2 + 1];
+                    let offset = shapes[ri * 2];
+                    let count = shapes[ri * 2 + 1];
                     let matchCount = 0;
                     for (let i = 0; i < count; i++) {
                         if (_validate(data, slab[offset + i])) {
@@ -669,10 +671,10 @@ function catalog(cfg) {
                     return matchCount === 1;
                 }
                 case K_INTERSECT: {
-                    let matches = scratch ? S_MATCHES : MATCHES;
+                    let shapes = scratch ? S_SHAPES : SHAPES;
                     let slab = scratch ? S_SLAB : SLAB;
-                    let offset = matches[ri * 2];
-                    let count = matches[ri * 2 + 1];
+                    let offset = shapes[ri * 2];
+                    let count = shapes[ri * 2 + 1];
                     for (let i = 0; i < count; i++) {
                         if (!_validate(data, slab[offset + i])) {
                             return false;
@@ -684,18 +686,19 @@ function catalog(cfg) {
                     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                         return false;
                     }
-                    let unions = scratch ? S_UNIONS : UNIONS;
+                    let shapes = scratch ? S_SHAPES : SHAPES;
                     let slab = scratch ? S_SLAB : SLAB;
-                    let discKey = KEY_INDEX.get(unions[ri * 3 + 2]);
+                    let offset = shapes[ri * 2];
+                    let length = shapes[ri * 2 + 1];
+                    // slab[offset] is the discriminator key id; variants follow at offset+1
+                    let discKey = KEY_INDEX.get(slab[offset]);
                     if (discKey === void 0) {
                         return false;
                     }
                     let valueId = KEY_DICT.get(data[discKey]);
-                    let offset = unions[ri * 3];
-                    let length = unions[ri * 3 + 1];
                     for (let i = 0; i < length; i++) {
-                        if (slab[offset + i * 2] === valueId) {
-                            return _validate(data, slab[offset + i * 2 + 1]);
+                        if (slab[offset + 1 + i * 2] === valueId) {
+                            return _validate(data, slab[offset + 2 + i * 2]);
                         }
                     }
                     return false;
@@ -704,10 +707,10 @@ function catalog(cfg) {
                     if (!Array.isArray(data)) {
                         return false;
                     }
-                    let tuples = scratch ? S_TUPLES : TUPLES;
+                    let shapes = scratch ? S_SHAPES : SHAPES;
                     let slab = scratch ? S_SLAB : SLAB;
-                    let offset = tuples[ri * 2];
-                    let count = tuples[ri * 2 + 1];
+                    let offset = shapes[ri * 2];
+                    let count = shapes[ri * 2 + 1];
                     let hasRest = count > 0 && (slab[offset + count - 1] & REST) !== 0;
                     let fixedCount = hasRest ? count - 1 : count;
                     if (data.length < fixedCount) {
@@ -735,19 +738,24 @@ function catalog(cfg) {
                     return true;
                 }
                 case K_REFINE: {
-                    if (!_validate(data, ri)) {
+                    let shapes = scratch ? S_SHAPES : SHAPES;
+                    let slab = scratch ? S_SLAB : SLAB;
+                    let offset = shapes[ri * 2];
+                    let innerType = slab[offset];
+                    let callbackIdx = slab[offset + 1];
+                    if (!_validate(data, innerType)) {
                         return false;
                     }
                     let callbacks = scratch ? S_CALLBACKS : CALLBACKS;
-                    return !!callbacks[kinds[ptr + 2]](data);
+                    return !!callbacks[callbackIdx](data);
                 }
                 case K_NOT: {
                     return !_validate(data, ri);
                 }
                 case K_CONDITIONAL: {
-                    let matches = scratch ? S_MATCHES : MATCHES;
+                    let shapes = scratch ? S_SHAPES : SHAPES;
                     let slab = scratch ? S_SLAB : SLAB;
-                    let offset = matches[ri * 2];
+                    let offset = shapes[ri * 2];
                     let ifType = slab[offset];
                     let thenType = slab[offset + 1];
                     let elseType = slab[offset + 2];
@@ -784,143 +792,10 @@ function catalog(cfg) {
         return result;
     }
 
-    /**
-     * Writes pre-resolved [keyId, typedef, ...] pairs to SLAB, registers in OBJECTS.
-     * @param {!Array<number>} resolved - sorted [keyId, typedef] pairs
-     * @param {number} count - number of properties (resolved.length / 2)
-     * @param {boolean} scratch
-     * @returns {number} object registry id
-     */
-    function registerObject(resolved, count, scratch) {
-        let required = count * 2;
-        if (scratch) {
-            if (SCR_HEAP.PTR + required > SCR_HEAP.SLAB_LEN) {
-                let buffer = new Uint32Array(SCR_HEAP.SLAB_LEN *= 2);
-                buffer.set(S_SLAB);
-                SCR_HEAP.SLAB = S_SLAB = buffer;
-            }
-            let offset = SCR_HEAP.PTR;
-            for (let i = 0; i < required; i++) {
-                S_SLAB[offset + i] = resolved[i];
-            }
-            if ((SCR_HEAP.OBJ_COUNT + 1) * 2 > SCR_HEAP.OBJ_LEN) {
-                let buffer = new Uint32Array(SCR_HEAP.OBJ_LEN *= 2);
-                buffer.set(S_OBJECTS);
-                SCR_HEAP.OBJECTS = S_OBJECTS = buffer;
-            }
-            let id = SCR_HEAP.OBJ_COUNT++;
-            S_OBJECTS[id * 2] = offset;
-            S_OBJECTS[id * 2 + 1] = count;
-            SCR_HEAP.PTR += required;
-            return id;
-        }
-        if (HEAP.PTR + required > HEAP.SLAB_LEN) {
-            let buffer = new Uint32Array(HEAP.SLAB_LEN *= 2);
-            buffer.set(SLAB);
-            HEAP.SLAB = SLAB = buffer;
-        }
-        let offset = HEAP.PTR;
-        for (let i = 0; i < required; i++) {
-            SLAB[offset + i] = resolved[i];
-        }
-        if ((HEAP.OBJ_COUNT + 1) * 2 > HEAP.OBJ_LEN) {
-            let buffer = new Uint32Array(HEAP.OBJ_LEN *= 2);
-            buffer.set(OBJECTS);
-            HEAP.OBJECTS = OBJECTS = buffer;
-        }
-        let id = HEAP.OBJ_COUNT++;
-        OBJECTS[id * 2] = offset;
-        OBJECTS[id * 2 + 1] = count;
-        HEAP.PTR += required;
-        return id;
-    }
-
-    /**
-     * Registers an element type in ARRAYS.
-     * @param {number} elemType
-     * @param {boolean} scratch
-     * @returns {number} array registry id
-     */
-    function registerArray(elemType, scratch) {
-        if (scratch) {
-            let index = SCR_HEAP.ARR_COUNT++;
-            if (index >= SCR_HEAP.ARR_LEN) {
-                let buffer = new Uint32Array(SCR_HEAP.ARR_LEN *= 2);
-                buffer.set(S_ARRAYS);
-                SCR_HEAP.ARRAYS = S_ARRAYS = buffer;
-            }
-            S_ARRAYS[index] = elemType >>> 0;
-            return index;
-        }
-        let index = HEAP.ARR_COUNT++;
-        if (index >= HEAP.ARR_LEN) {
-            let buffer = new Uint32Array(HEAP.ARR_LEN *= 2);
-            buffer.set(ARRAYS);
-            HEAP.ARRAYS = ARRAYS = buffer;
-        }
-        ARRAYS[index] = elemType >>> 0;
-        return index;
-    }
-
-    /**
-     * Writes variant pairs to SLAB, registers in UNIONS.
-     * @param {!Array<number>} resolved - [keyId, typedef, ...] pairs
-     * @param {number} count - number of variants (resolved.length / 2)
-     * @param {number} discKeyId - discriminator key id
-     * @param {boolean} scratch
-     * @returns {number} union registry id
-     */
-    function registerUnion(resolved, count, discKeyId, scratch) {
-        let required = count * 2;
-        if (scratch) {
-            if (SCR_HEAP.PTR + required > SCR_HEAP.SLAB_LEN) {
-                let buffer = new Uint32Array(SCR_HEAP.SLAB_LEN *= 2);
-                buffer.set(S_SLAB);
-                SCR_HEAP.SLAB = S_SLAB = buffer;
-            }
-            let offset = SCR_HEAP.PTR;
-            for (let i = 0; i < required; i++) {
-                S_SLAB[offset + i] = resolved[i];
-            }
-            SCR_HEAP.PTR += required;
-            let id = SCR_HEAP.UNION_COUNT++;
-            if ((id + 1) * 3 > SCR_HEAP.UNION_LEN) {
-                let buffer = new Uint32Array(SCR_HEAP.UNION_LEN *= 2);
-                buffer.set(S_UNIONS);
-                SCR_HEAP.UNIONS = S_UNIONS = buffer;
-            }
-            S_UNIONS[id * 3] = offset;
-            S_UNIONS[id * 3 + 1] = count;
-            S_UNIONS[id * 3 + 2] = discKeyId;
-            return id;
-        }
-        if (HEAP.PTR + required > HEAP.SLAB_LEN) {
-            let buffer = new Uint32Array(HEAP.SLAB_LEN *= 2);
-            buffer.set(SLAB);
-            HEAP.SLAB = SLAB = buffer;
-        }
-        let offset = HEAP.PTR;
-        for (let i = 0; i < required; i++) {
-            SLAB[offset + i] = resolved[i];
-        }
-        HEAP.PTR += required;
-        let id = HEAP.UNION_COUNT++;
-        if ((id + 1) * 3 > HEAP.UNION_LEN) {
-            let buffer = new Uint32Array(HEAP.UNION_LEN *= 2);
-            buffer.set(UNIONS);
-            HEAP.UNIONS = UNIONS = buffer;
-        }
-        UNIONS[id * 3] = offset;
-        UNIONS[id * 3 + 1] = count;
-        UNIONS[id * 3 + 2] = discKeyId;
-        return id;
-    }
-
     const __heap = {
         HEAP, SCR_HEAP, DICT: { KEY_DICT, KEY_INDEX },
         REGEX_CACHE, CALLBACKS, S_REGEX_CACHE, S_CALLBACKS,
-        allocKind, allocValidator, allocOnSlab, lookup,
-        registerObject, registerArray, registerUnion,
+        malloc, allocValidator, lookup,
         _validate,
         BARE_ARRAY, BARE_OBJECT, BARE_RECORD,
         setRewindPending() { rewindPending = true; },

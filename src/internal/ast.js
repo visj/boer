@@ -76,13 +76,9 @@ const SENTINEL = 0xFFFFFFFF;
 export function compile(cat, ast) {
     let heap = cat.__heap;
     let HEAP = heap.HEAP;
-    let allocKind      = heap.allocKind;
+    let malloc         = heap.malloc;
     let allocValidator = heap.allocValidator;
-    let allocOnSlab    = heap.allocOnSlab;
     let lookup         = heap.lookup;
-    let registerObject = heap.registerObject;
-    let registerArray  = heap.registerArray;
-    let registerUnion  = heap.registerUnion;
 
     let scratch = false;
 
@@ -114,25 +110,25 @@ export function compile(cat, ast) {
     // ── Helper: build validator payloads from the FlatAst slab ──
 
     /**
-     * Reads a node's fixed-slot validator payloads (bits 0–15) and allocates
-     * them on the catalog's validator heap.
+     * Reads a node's fixed-slot validator payloads (bits 0–15) and returns
+     * the packed vHeader and nodePayloads ready for passing to malloc or
+     * allocValidator, without allocating.
      *
-     * Returns -1 if the node has no validators; otherwise returns the
-     * allocValidator index (always >= 0, since it writes into a Uint32Array).
+     * Returns null if the node has no validators.
      *
      * V_PATTERN payload is an index into ast.regexes[]; this function
-     * converts it to a real REGEX_CACHE index before calling allocValidator.
+     * converts it to a real REGEX_CACHE index.
      *
      * NOTE: sequential high-bit payloads (V_DEPENDENT_REQUIRED, etc.) are NOT
-     * handled here — the N_OBJECT second-visit rebuild block reads them directly
+     * included — the N_OBJECT second-visit rebuild block reads them directly
      * from vPayloads when needed.
      *
      * @param {number} nodeId
-     * @returns {number} -1 | validatorIndex
+     * @returns {{vHeader: number, nodePayloads: !Array<number>}|null}
      */
     function compileValidator(nodeId) {
         let vHeader = astVHeaders[nodeId];
-        if (vHeader === 0) return -1;
+        if (vHeader === 0) return null;
         let off   = astVOffset[nodeId];
         let count = popcnt16(vHeader & 0xFFFF);
         let regexCache = heap.REGEX_CACHE;
@@ -147,7 +143,7 @@ export function compile(cat, ast) {
                 nodePayloads[i] = raw;
             }
         }
-        return allocValidator(vHeader, nodePayloads, scratch);
+        return { vHeader, nodePayloads };
     }
 
     // ── Main compilation loop ──
@@ -161,12 +157,12 @@ export function compile(cat, ast) {
 
         // ── Primitives: compile immediately (leaf node) ──
         if (kind === N_PRIM) {
-            let valIdx = compileValidator(nodeId);
-            if (valIdx !== -1) {
+            let vp = compileValidator(nodeId);
+            if (vp !== null) {
                 let primBits = astFlags[nodeId];
-                let kindHeader = K_PRIMITIVE | K_VALIDATOR | primBits;
-                let kindPtr = allocKind(kindHeader, valIdx, scratch, 2);
-                astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
+                /** K_PRIMITIVE stores validator index as inline (KINDS slot 1). */
+                let valIdx = allocValidator(vp.vHeader, vp.nodePayloads, scratch);
+                astCompiled[nodeId] = malloc(K_PRIMITIVE | K_VALIDATOR | primBits, scratch, valIdx, null, 0, 0, null);
             } else {
                 astCompiled[nodeId] = astFlags[nodeId];
             }
@@ -181,13 +177,11 @@ export function compile(cat, ast) {
          * KINDS constants. Otherwise, allocate a proper entry with the validator.
          */
         if (kind === N_BARE_ARRAY) {
-            let valIdx = compileValidator(nodeId);
-            if (valIdx !== -1) {
-                let anyIndex = registerArray((ANY | NULLABLE) >>> 0, scratch);
-                let kindHeader = K_ARRAY | K_VALIDATOR;
-                let kindPtr = allocKind(kindHeader, anyIndex, scratch, 3);
-                HEAP.KINDS[kindPtr + 2] = valIdx;
-                astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
+            let vp = compileValidator(nodeId);
+            if (vp !== null) {
+                /** K_ARRAY inline = ANY|NULLABLE elemType; validator in slot 2. */
+                astCompiled[nodeId] = malloc(K_ARRAY | K_VALIDATOR, scratch,
+                    (ANY | NULLABLE) >>> 0, null, 0, vp.vHeader, vp.nodePayloads);
             } else {
                 astCompiled[nodeId] = heap.BARE_ARRAY;
             }
@@ -195,13 +189,11 @@ export function compile(cat, ast) {
             continue;
         }
         if (kind === N_BARE_OBJECT) {
-            let valIdx = compileValidator(nodeId);
-            if (valIdx !== -1) {
-                let objId = registerObject([], 0, scratch);
-                let kindHeader = K_OBJECT | K_VALIDATOR;
-                let kindPtr = allocKind(kindHeader, objId, scratch, 3);
-                HEAP.KINDS[kindPtr + 2] = valIdx;
-                astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
+            let vp = compileValidator(nodeId);
+            if (vp !== null) {
+                /** Empty slab for zero-property object; validator in slot 2. */
+                astCompiled[nodeId] = malloc(K_OBJECT | K_VALIDATOR, scratch,
+                    0, [], 0, vp.vHeader, vp.nodePayloads);
             } else {
                 astCompiled[nodeId] = heap.BARE_OBJECT;
             }
@@ -371,11 +363,11 @@ export function compile(cat, ast) {
                     }
                 }
 
-                let objId = registerObject(resolved, count, scratch);
-
                 // Build validator — may need to inject additional sequential payloads
                 // (patternProperties, additionalProperties type, dependentRequired remapping).
-                let valIdx = compileValidator(nodeId);
+                let vp = compileValidator(nodeId);
+                let finalVHeader = 0;
+                let finalPayloads = null;
 
                 if (patPayloads !== null || additionalType !== 0
                     || (astVHeaders[nodeId] & V_ADDITIONAL_PROPERTIES)
@@ -421,28 +413,27 @@ export function compile(cat, ast) {
                     if (vHeader & V_ADDITIONAL_PROPERTIES) {
                         nodePayloads.push(additionalType);
                     }
-                    valIdx = allocValidator(vHeader, nodePayloads, scratch);
+                    finalVHeader = vHeader;
+                    finalPayloads = nodePayloads;
+                } else if (vp !== null) {
+                    finalVHeader = vp.vHeader;
+                    finalPayloads = vp.nodePayloads;
                 }
 
-                let hasVal = valIdx !== -1;
+                let hasVal = finalPayloads !== null;
                 let kindHeader = hasVal ? (K_OBJECT | K_VALIDATOR) : K_OBJECT;
-                let slots = hasVal ? 3 : 2;
-                let kindPtr = allocKind(kindHeader, objId, scratch, slots);
-                if (hasVal) HEAP.KINDS[kindPtr + 2] = valIdx;
-                astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
+                astCompiled[nodeId] = malloc(kindHeader, scratch, 0,
+                    resolved, count, hasVal ? finalVHeader : 0, finalPayloads);
                 break;
             }
 
             case N_ARRAY: {
                 let elemType = astCompiled[astChild0[nodeId]];
-                let arrId = registerArray(elemType, scratch);
-                let valIdx = compileValidator(nodeId);
-                let hasVal = valIdx !== -1;
-                let kindHeader = hasVal ? (K_ARRAY | K_VALIDATOR) : K_ARRAY;
-                let slots = hasVal ? 3 : 2;
-                let kindPtr = allocKind(kindHeader, arrId, scratch, slots);
-                if (hasVal) HEAP.KINDS[kindPtr + 2] = valIdx;
-                astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
+                let vp = compileValidator(nodeId);
+                let kindHeader = (vp !== null) ? (K_ARRAY | K_VALIDATOR) : K_ARRAY;
+                /** K_ARRAY inline = elemType (KINDS slot 1); no SHAPES entry. */
+                astCompiled[nodeId] = malloc(kindHeader, scratch, elemType >>> 0,
+                    null, 0, vp !== null ? vp.vHeader : 0, vp !== null ? vp.nodePayloads : null);
                 break;
             }
 
@@ -463,14 +454,12 @@ export function compile(cat, ast) {
                 if (allPrimitive) {
                     astCompiled[nodeId] = merged >>> 0;
                 } else {
-                    let matchId = allocOnSlab(types, scratch, 'match');
-                    let kindPtr = allocKind(K_OR, matchId, scratch, 2);
-                    let flags = COMPLEX | kindPtr;
+                    let result = malloc(K_OR, scratch, 0, types, types.length, 0, null);
                     for (let i = 0; i < types.length; i++) {
-                        if (types[i] & NULLABLE) flags |= NULLABLE;
-                        if (types[i] & OPTIONAL) flags |= OPTIONAL;
+                        if (types[i] & NULLABLE) result |= NULLABLE;
+                        if (types[i] & OPTIONAL) result |= OPTIONAL;
                     }
-                    astCompiled[nodeId] = flags >>> 0;
+                    astCompiled[nodeId] = result >>> 0;
                 }
                 break;
             }
@@ -482,9 +471,7 @@ export function compile(cat, ast) {
                 for (let i = 0; i < count; i++) {
                     types[i] = astCompiled[astEdges[offset + i]];
                 }
-                let matchId = allocOnSlab(types, scratch, 'match');
-                let kindPtr = allocKind(K_EXCLUSIVE, matchId, scratch, 2);
-                astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
+                astCompiled[nodeId] = malloc(K_EXCLUSIVE, scratch, 0, types, types.length, 0, null);
                 break;
             }
 
@@ -495,16 +482,13 @@ export function compile(cat, ast) {
                 for (let i = 0; i < count; i++) {
                     types[i] = astCompiled[astEdges[offset + i]];
                 }
-                let matchId = allocOnSlab(types, scratch, 'match');
-                let kindPtr = allocKind(K_INTERSECT, matchId, scratch, 2);
-                astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
+                astCompiled[nodeId] = malloc(K_INTERSECT, scratch, 0, types, types.length, 0, null);
                 break;
             }
 
             case N_NOT: {
                 let innerType = astCompiled[astChild0[nodeId]];
-                let kindPtr = allocKind(K_NOT, innerType >>> 0, scratch, 2);
-                astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
+                astCompiled[nodeId] = malloc(K_NOT, scratch, innerType >>> 0, null, 0, 0, null);
                 break;
             }
 
@@ -514,9 +498,7 @@ export function compile(cat, ast) {
                 let thenType = astEdges[base + 1] !== SENTINEL ? astCompiled[astEdges[base + 1]] : 0;
                 let elseType = astEdges[base + 2] !== SENTINEL ? astCompiled[astEdges[base + 2]] : 0;
                 let types = [ifType, thenType, elseType];
-                let matchId = allocOnSlab(types, scratch, 'match');
-                let kindPtr = allocKind(K_CONDITIONAL, matchId, scratch, 2);
-                astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
+                astCompiled[nodeId] = malloc(K_CONDITIONAL, scratch, 0, types, types.length, 0, null);
                 break;
             }
 
@@ -533,29 +515,25 @@ export function compile(cat, ast) {
                 if (hasRestElem) {
                     types[count] = (astCompiled[astEdges[offset + count]] | REST) >>> 0;
                 }
-                let tupleId = allocOnSlab(types, scratch, 'tuple');
-
-                let valIdx = compileValidator(nodeId);
-                let hasVal = valIdx !== -1;
-                let kindHeader = hasVal ? (K_TUPLE | K_VALIDATOR) : K_TUPLE;
-                let slots = hasVal ? 3 : 2;
-                let kindPtr = allocKind(kindHeader, tupleId, scratch, slots);
-                if (hasVal) HEAP.KINDS[kindPtr + 2] = valIdx;
-                astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
+                let vp = compileValidator(nodeId);
+                let kindHeader = (vp !== null) ? (K_TUPLE | K_VALIDATOR) : K_TUPLE;
+                astCompiled[nodeId] = malloc(kindHeader, scratch, 0,
+                    types, totalCount, vp !== null ? vp.vHeader : 0, vp !== null ? vp.nodePayloads : null);
                 break;
             }
 
             case N_REFINE: {
                 let innerType = astCompiled[astChild0[nodeId]];
                 let cbIdx = astChild1[nodeId];
-                let callbacksArr = HEAP.CALLBACKS;
-                let callbackIdx = callbacksArr.push(callbacks[cbIdx]) - 1;
-                let kindPtr = allocKind(K_REFINE, innerType >>> 0, scratch, 3);
-                HEAP.KINDS[kindPtr + 2] = callbackIdx;
-                let flags = COMPLEX | kindPtr;
-                if (innerType & NULLABLE) flags |= NULLABLE;
-                if (innerType & OPTIONAL) flags |= OPTIONAL;
-                astCompiled[nodeId] = flags >>> 0;
+                let callbackIdx = HEAP.CALLBACKS.push(callbacks[cbIdx]) - 1;
+                /** Store [innerType, callbackIdx] on SLAB; KINDS slot 1 = SHAPES index. */
+                let slabData = new Uint32Array(2);
+                slabData[0] = innerType >>> 0;
+                slabData[1] = callbackIdx;
+                let result = malloc(K_REFINE, scratch, 0, slabData, 2, 0, null);
+                if (innerType & NULLABLE) result |= NULLABLE;
+                if (innerType & OPTIONAL) result |= OPTIONAL;
+                astCompiled[nodeId] = result >>> 0;
                 break;
             }
         }

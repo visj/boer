@@ -94,10 +94,10 @@ function createConform(cat) {
                     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                         return false;
                     }
-                    let objects = hp.OBJECTS;
+                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = objects[ri * 2];
-                    let length = objects[ri * 2 + 1];
+                    let offset = shapes[ri * 2];
+                    let length = shapes[ri * 2 + 1];
                     for (let i = 0; i < length; i++) {
                         let key = DICT.KEY_INDEX.get(slab[offset + (i * 2)]);
                         if (key === void 0) {
@@ -114,7 +114,7 @@ function createConform(cat) {
                     if (!Array.isArray(data)) {
                         return false;
                     }
-                    let elemType = hp.ARRAYS[ri];
+                    let elemType = ri;
                     let length = data.length;
                     for (let i = 0; i < length; i++) {
                         if (!_parseSlot(data, i, elemType, reify)) {
@@ -136,10 +136,10 @@ function createConform(cat) {
                     return true;
                 }
                 case K_OR: {
-                    let matches = hp.MATCHES;
+                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = matches[ri * 2];
-                    let count = matches[ri * 2 + 1];
+                    let offset = shapes[ri * 2];
+                    let count = shapes[ri * 2 + 1];
                     for (let i = 0; i < count; i++) {
                         if (_conform(data, slab[offset + i], reify)) {
                             return true;
@@ -148,10 +148,10 @@ function createConform(cat) {
                     return false;
                 }
                 case K_EXCLUSIVE: {
-                    let matches = hp.MATCHES;
+                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = matches[ri * 2];
-                    let count = matches[ri * 2 + 1];
+                    let offset = shapes[ri * 2];
+                    let count = shapes[ri * 2 + 1];
                     let matchCount = 0;
                     for (let i = 0; i < count; i++) {
                         if (_conform(data, slab[offset + i], reify)) {
@@ -164,10 +164,10 @@ function createConform(cat) {
                     return matchCount === 1;
                 }
                 case K_INTERSECT: {
-                    let matches = hp.MATCHES;
+                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = matches[ri * 2];
-                    let count = matches[ri * 2 + 1];
+                    let offset = shapes[ri * 2];
+                    let count = shapes[ri * 2 + 1];
                     for (let i = 0; i < count; i++) {
                         if (!_conform(data, slab[offset + i], reify)) {
                             return false;
@@ -179,9 +179,12 @@ function createConform(cat) {
                     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                         return false;
                     }
-                    let unions = hp.UNIONS;
+                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let discKey = DICT.KEY_INDEX.get(unions[ri * 3 + 2]);
+                    let offset = shapes[ri * 2];
+                    let length = shapes[ri * 2 + 1];
+                    // slab[offset] is the discriminator key id; variants follow at offset+1
+                    let discKey = DICT.KEY_INDEX.get(slab[offset]);
                     if (discKey === void 0) {
                         return false;
                     }
@@ -189,11 +192,9 @@ function createConform(cat) {
                     if (valueId === void 0) {
                         return false;
                     }
-                    let offset = unions[ri * 3];
-                    let length = unions[ri * 3 + 1];
                     for (let i = 0; i < length; i++) {
-                        if (slab[offset + i * 2] === valueId) {
-                            return _conform(data, slab[offset + i * 2 + 1], reify);
+                        if (slab[offset + 1 + i * 2] === valueId) {
+                            return _conform(data, slab[offset + 2 + i * 2], reify);
                         }
                     }
                     return false;
@@ -202,10 +203,10 @@ function createConform(cat) {
                     if (!Array.isArray(data)) {
                         return false;
                     }
-                    let tuples = hp.TUPLES;
+                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = tuples[ri * 2];
-                    let count = tuples[ri * 2 + 1];
+                    let offset = shapes[ri * 2];
+                    let count = shapes[ri * 2 + 1];
                     let hasRest = count > 0 && (slab[offset + count - 1] & REST) !== 0;
                     let fixedCount = hasRest ? count - 1 : count;
                     if (data.length < fixedCount) {
@@ -230,15 +231,18 @@ function createConform(cat) {
                     return true;
                 }
                 case K_REFINE: {
-                    return _conform(data, ri, reify);
+                    let shapes = hp.SHAPES;
+                    let slab = hp.SLAB;
+                    let offset = shapes[ri * 2];
+                    return _conform(data, slab[offset], reify);
                 }
                 case K_NOT: {
                     return !_conform(data, ri, reify);
                 }
                 case K_CONDITIONAL: {
-                    let matches = hp.MATCHES;
+                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = matches[ri * 2];
+                    let offset = shapes[ri * 2];
                     let ifType = slab[offset];
                     let thenType = slab[offset + 1];
                     let elseType = slab[offset + 2];

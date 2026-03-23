@@ -240,51 +240,18 @@ export interface Catalog<R extends symbol> {
         readonly S_CALLBACKS: Array<(...args: any[]) => any>;
         readonly S_REGEX_CACHE: RegExp[];
 
-        /** Allocates a specific kind on the heap. */
-        readonly allocKind: (
+        readonly malloc: (
             header: number,
-            registryIndex: number,
             scratch: boolean,
-            slots: number
-        ) => number;
-
-        /** Allocates a validator with associated payloads. */
-        readonly allocValidator: (
+            inline: number,
+            slabData: number[] | Uint32Array<ArrayBufferLike> | null,
+            shapeLen: number,
             vHeader: number,
-            payloads: number[],
-            scratch: boolean
-        ) => number;
-
-        /** Allocate entries on the SLAB and register in a typed registry (TUPLES or MATCHES). */
-        readonly allocOnSlab: (
-            types: number[],
-            scratch: boolean,
-            kind: 'tuple' | 'match'
+            vPayloads: Array<number> | null
         ) => number;
 
         /** Performs a dictionary lookup for a given key string. */
         readonly lookup: (key: string) => number;
-
-        /** Writes pre-resolved [keyId, typedef, ...] pairs to SLAB, registers in OBJECTS. */
-        readonly registerObject: (
-            resolved: number[],
-            count: number,
-            scratch: boolean
-        ) => number;
-
-        /** Registers an element type in ARRAYS. */
-        readonly registerArray: (
-            elemType: number,
-            scratch: boolean
-        ) => number;
-
-        /** Writes variant pairs to SLAB, registers in UNIONS. */
-        readonly registerUnion: (
-            resolved: number[],
-            count: number,
-            discKeyId: number,
-            scratch: boolean
-        ) => number;
     }
 
 }
@@ -296,26 +263,14 @@ export function catalog<R extends symbol>(): Catalog<R>;
 export interface Heap {
     PTR: number;
     SLAB_LEN: number;
-    OBJ_LEN: number;
-    OBJ_COUNT: number;
-    ARR_LEN: number;
-    ARR_COUNT: number;
-    UNION_LEN: number;
-    UNION_COUNT: number;
-    TUP_LEN: number;
-    TUP_COUNT: number;
-    MAT_LEN: number;
-    MAT_COUNT: number;
+    SHAPE_LEN: number;
+    SHAPE_COUNT: number;
     KIND_LEN: number;
     KIND_PTR: number;
     VAL_LEN: number;
     VAL_PTR: number;
     SLAB: Uint32Array;
-    OBJECTS: Uint32Array;
-    ARRAYS: Uint32Array;
-    UNIONS: Uint32Array;
-    TUPLES: Uint32Array;
-    MATCHES: Uint32Array;
+    SHAPES: Uint32Array;
     KINDS: Uint32Array;
     VALIDATORS: Float64Array;
     REGEX_CACHE: RegExp[];
@@ -324,11 +279,7 @@ export interface Heap {
 
 export interface HeapConfig {
     slab: number;
-    objects: number;
-    arrays: number;
-    unions: number;
-    tuples: number;
-    matches: number;
+    shapes: number;
     kinds: number;
     validators: number;
 }

@@ -91,10 +91,10 @@ function createDiagnose(cat) {
                         errors.push({ path, message: 'expected object, got ' + typeof data });
                         return;
                     }
-                    let objects = hp.OBJECTS;
+                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = objects[ri * 2];
-                    let length = objects[ri * 2 + 1];
+                    let offset = shapes[ri * 2];
+                    let length = shapes[ri * 2 + 1];
                     for (let i = 0; i < length; i++) {
                         let key = DICT.KEY_INDEX.get(slab[offset + (i * 2)]);
                         if (key === void 0) {
@@ -112,7 +112,7 @@ function createDiagnose(cat) {
                         errors.push({ path, message: 'expected array, got ' + typeof data });
                         return;
                     }
-                    let itemType = hp.ARRAYS[ri];
+                    let itemType = ri;
                     let length = data.length;
                     for (let i = 0; i < length; i++) {
                         _diagnose(data[i], itemType, path + '[' + i + ']', errors);
@@ -131,10 +131,10 @@ function createDiagnose(cat) {
                     return;
                 }
                 case K_OR: {
-                    let matches = hp.MATCHES;
+                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = matches[ri * 2];
-                    let count = matches[ri * 2 + 1];
+                    let offset = shapes[ri * 2];
+                    let count = shapes[ri * 2 + 1];
                     for (let i = 0; i < count; i++) {
                         if (_validate(data, slab[offset + i])) {
                             return;
@@ -144,10 +144,10 @@ function createDiagnose(cat) {
                     return;
                 }
                 case K_EXCLUSIVE: {
-                    let matches = hp.MATCHES;
+                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = matches[ri * 2];
-                    let count = matches[ri * 2 + 1];
+                    let offset = shapes[ri * 2];
+                    let count = shapes[ri * 2 + 1];
                     let matchCount = 0;
                     for (let i = 0; i < count; i++) {
                         if (_validate(data, slab[offset + i])) {
@@ -162,10 +162,10 @@ function createDiagnose(cat) {
                     return;
                 }
                 case K_INTERSECT: {
-                    let matches = hp.MATCHES;
+                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = matches[ri * 2];
-                    let count = matches[ri * 2 + 1];
+                    let offset = shapes[ri * 2];
+                    let count = shapes[ri * 2 + 1];
                     for (let i = 0; i < count; i++) {
                         if (!_validate(data, slab[offset + i])) {
                             _diagnose(data, slab[offset + i], path, errors);
@@ -174,9 +174,12 @@ function createDiagnose(cat) {
                     return;
                 }
                 case K_UNION: {
-                    let unions = hp.UNIONS;
+                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let discKey = DICT.KEY_INDEX.get(unions[ri * 3 + 2]);
+                    let offset = shapes[ri * 2];
+                    let length = shapes[ri * 2 + 1];
+                    // slab[offset] is the discriminator key id; variants follow at offset+1
+                    let discKey = DICT.KEY_INDEX.get(slab[offset]);
                     if (discKey === void 0) {
                         errors.push({ path, message: '!! CRITICAL ERROR !! Please file an issue at Github !!' });
                         return;
@@ -190,11 +193,9 @@ function createDiagnose(cat) {
                         return;
                     }
                     let valueId = DICT.KEY_DICT.get(data[discKey]);
-                    let offset = unions[ri * 3];
-                    let length = unions[ri * 3 + 1];
                     for (let i = 0; i < length; i++) {
-                        if (slab[offset + i * 2] === valueId) {
-                            _diagnose(data, slab[offset + i * 2 + 1], path, errors);
+                        if (slab[offset + 1 + i * 2] === valueId) {
+                            _diagnose(data, slab[offset + 2 + i * 2], path, errors);
                             return;
                         }
                     }
@@ -206,10 +207,10 @@ function createDiagnose(cat) {
                         errors.push({ path, message: 'expected tuple, got ' + typeof data });
                         return;
                     }
-                    let tuples = hp.TUPLES;
+                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = tuples[ri * 2];
-                    let count = tuples[ri * 2 + 1];
+                    let offset = shapes[ri * 2];
+                    let count = shapes[ri * 2 + 1];
                     let hasRest = count > 0 && (slab[offset + count - 1] & REST) !== 0;
                     let fixedCount = hasRest ? count - 1 : count;
                     if (data.length < fixedCount) {
@@ -232,7 +233,10 @@ function createDiagnose(cat) {
                     return;
                 }
                 case K_REFINE: {
-                    _diagnose(data, ri, path, errors);
+                    let shapes = hp.SHAPES;
+                    let slab = hp.SLAB;
+                    let offset = shapes[ri * 2];
+                    _diagnose(data, slab[offset], path, errors);
                     return;
                 }
                 case K_NOT: {
@@ -242,9 +246,9 @@ function createDiagnose(cat) {
                     return;
                 }
                 case K_CONDITIONAL: {
-                    let matches = hp.MATCHES;
+                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = matches[ri * 2];
+                    let offset = shapes[ri * 2];
                     let ifType = slab[offset];
                     let thenType = slab[offset + 1];
                     let elseType = slab[offset + 2];
