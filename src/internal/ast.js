@@ -9,7 +9,7 @@ import {
     BARE_ARRAY, BARE_OBJECT, BARE_RECORD
 } from "./catalog.js";
 
-import { popcnt16, REST, ANY, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED } from "./const.js";
+import { popcnt16, REST, ANY, STRING, NUMBER, INTEGER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_ENUM } from "./const.js";
 
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
@@ -158,12 +158,54 @@ export function compile(cat, ast) {
 
         // ── Primitives: compile immediately (leaf node) ──
         if (kind === N_PRIM) {
-            let vp = compileValidator(nodeId);
-            if (vp !== null) {
+            let vHeader = astVHeaders[nodeId];
+            if (vHeader !== 0) {
                 let primBits = astFlags[nodeId];
-                /** K_PRIMITIVE stores validator index as inline (KINDS slot 1). */
-                let valIdx = allocValidator(vp.vHeader, vp.nodePayloads, scratch);
-                astCompiled[nodeId] = malloc(K_PRIMITIVE | K_VALIDATOR | primBits, scratch, valIdx, null, 0, 0, null);
+                let off = astVOffset[nodeId];
+                let fixedCount = popcnt16(vHeader & 0xFFFF);
+                let nodePayloads = [];
+                // Read fixed-slot payloads (bits 0-15), remapping regex placeholder indices.
+                let patternSlot = (vHeader & V_PATTERN) ? popcnt16(vHeader & (V_PATTERN - 1)) : -1;
+                for (let i = 0; i < fixedCount; i++) {
+                    let raw = vPayloads[off + i];
+                    if (i === patternSlot) {
+                        nodePayloads.push(heap.REGEX_CACHE.push(regexes[raw]) - 1);
+                    } else {
+                        nodePayloads.push(raw);
+                    }
+                }
+                // V_ENUM sequential section (bit 20): remap virtual string indices to real
+                // catalog keyIds, sort independently, then append number segment.
+                if (vHeader & V_ENUM) {
+                    let p = off + fixedCount;
+                    if (primBits & STRING) {
+                        let strCount = vPayloads[p++] | 0;
+                        let keyIds = new Array(strCount);
+                        for (let i = 0; i < strCount; i++) {
+                            keyIds[i] = lookup(propNames[vPayloads[p++] | 0]);
+                        }
+                        keyIds.sort((a, b) => a - b);
+                        nodePayloads.push(strCount);
+                        for (let i = 0; i < strCount; i++) { nodePayloads.push(keyIds[i]); }
+                    }
+                    if (primBits & (NUMBER | INTEGER)) {
+                        let numCount = vPayloads[p++] | 0;
+                        let nums = new Array(numCount);
+                        for (let i = 0; i < numCount; i++) { nums[i] = vPayloads[p++]; }
+                        nums.sort((a, b) => a - b);
+                        nodePayloads.push(numCount);
+                        for (let i = 0; i < numCount; i++) { nodePayloads.push(nums[i]); }
+                    }
+                }
+                /** K_PRIMITIVE stores the validator index as inline (KINDS slot 1). */
+                let valIdx = allocValidator(vHeader, nodePayloads, scratch);
+                let result = malloc(K_PRIMITIVE | K_VALIDATOR | primBits, scratch, valIdx, null, 0, 0, null);
+                // Preserve NULLABLE / OPTIONAL on the typedef pointer so the null/undefined
+                // fast-paths in _validate fire correctly (primBits NULLABLE/OPTIONAL are
+                // stripped by `header & SIMPLE` inside K_PRIMITIVE dispatch).
+                if (primBits & NULLABLE) { result = (result | NULLABLE) >>> 0; }
+                if (primBits & OPTIONAL) { result = (result | OPTIONAL) >>> 0; }
+                astCompiled[nodeId] = result;
             } else {
                 astCompiled[nodeId] = astFlags[nodeId];
             }

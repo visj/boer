@@ -3,6 +3,7 @@ import { config, heap } from './config.js';
 import {
     COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
     ANY, NEVER, REST, SIMPLE, PRIM_MASK, KIND_MASK,
+    STRING,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
@@ -13,6 +14,7 @@ import {
     V_MIN_ITEMS, V_MAX_ITEMS, V_CONTAINS, V_MIN_CONTAINS, V_MAX_CONTAINS,
     V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
     V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED,
+    V_ENUM,
     popcnt16,
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
@@ -279,6 +281,28 @@ function catalog(cfg) {
     // --- VALIDATOR RUNNERS ---
 
     /**
+     * Non-recursive binary search over a Float64Array slice.
+     * Returns true if `target` is found in arr[offset .. offset+length-1].
+     * @param {Float64Array} arr
+     * @param {number} offset — first index of the search range
+     * @param {number} length — number of elements to search
+     * @param {number} target
+     * @returns {boolean}
+     */
+    function binarySearch(arr, offset, length, target) {
+        let lo = 0;
+        let hi = length - 1;
+        while (lo <= hi) {
+            let mid = (lo + hi) >>> 1;
+            let val = arr[offset + mid];
+            if (val === target) { return true; }
+            if (val < target) { lo = mid + 1; }
+            else { hi = mid - 1; }
+        }
+        return false;
+    }
+
+    /**
      * @param {*} value
      * @param {number} primBits
      * @param {number} valIdx
@@ -340,6 +364,26 @@ function catalog(cfg) {
                 if (!isMultiple) {
                     return false;
                 }
+            }
+        }
+        // V_ENUM: binary search for the value in the sorted enum payload.
+        // The sequential section starts right after the fixed-slot payloads (bits 0-15),
+        // since bits 16-19 are K_OBJECT only and are never set on K_PRIMITIVE validators.
+        if (vHeader & V_ENUM) {
+            let p = base + popcnt16(vHeader & 0xFFFF);
+            if (typeof value === 'string') {
+                let strCount = vals[p] | 0;
+                let keyId = KEY_DICT.get(value);
+                if (keyId === void 0) { return false; }
+                if (!binarySearch(vals, p + 1, strCount, keyId)) { return false; }
+            } else if (typeof value === 'number') {
+                if (primBits & STRING) {
+                    // Skip the string segment to reach the number segment.
+                    let strCount = vals[p] | 0;
+                    p += 1 + strCount;
+                }
+                let numCount = vals[p] | 0;
+                if (!binarySearch(vals, p + 1, numCount, value)) { return false; }
             }
         }
         return true;

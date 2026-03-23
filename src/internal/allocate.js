@@ -1,6 +1,7 @@
 /// <reference path="../../global.d.ts" />
 import {
     COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
+    TRUE, FALSE, NEVER,
     STRING, NUMBER, BOOLEAN, BIGINT, DATE, URI, INTEGER,
     PRIM_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
@@ -13,6 +14,7 @@ import {
     V_MIN_ITEMS, V_MAX_ITEMS, V_CONTAINS, V_MIN_CONTAINS, V_MAX_CONTAINS,
     V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
     V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED,
+    V_ENUM,
 } from './const.js';
 import {
     assertIsNumber, assertIsObject,
@@ -126,6 +128,120 @@ function refineImpl(ctx, typedef, fn, scratch) {
  */
 function tupleArrayImpl(ctx, types, scratch) {
     return ctx.malloc(K_TUPLE, scratch, 0, types, types.length, 0, null);
+}
+
+/**
+ * Encodes a single literal value as a zero-allocation typedef.
+ *   null    → NULLABLE pointer
+ *   true    → TRUE primitive bit
+ *   false   → FALSE primitive bit
+ *   string  → K_PRIMITIVE | STRING | K_VALIDATOR with V_ENUM [1, keyId]
+ *   number  → K_PRIMITIVE | NUMBER | K_VALIDATOR with V_ENUM [1, num]
+ *   array   → K_TUPLE with each element recursively desugared
+ *   object  → K_OBJECT with each property recursively desugared + additionalProperties:false
+ * @param {*} ctx
+ * @param {*} value
+ * @param {boolean} scratch
+ * @returns {number}
+ */
+function literalImpl(ctx, value, scratch) {
+    if (value === null) { return NULLABLE; }
+    if (value === true) { return TRUE; }
+    if (value === false) { return FALSE; }
+    if (typeof value === 'string') {
+        let keyId = ctx.lookup(value);
+        let valIdx = ctx.allocValidator(V_ENUM, [1, keyId], scratch);
+        return ctx.malloc(K_PRIMITIVE | K_VALIDATOR | STRING, scratch, valIdx, null, 0, 0, null);
+    }
+    if (typeof value === 'number') {
+        let valIdx = ctx.allocValidator(V_ENUM, [1, value], scratch);
+        return ctx.malloc(K_PRIMITIVE | K_VALIDATOR | NUMBER, scratch, valIdx, null, 0, 0, null);
+    }
+    if (Array.isArray(value)) {
+        /** Desugar to exact-length K_TUPLE: each element becomes its own literal type. */
+        let elemTypes = new Array(value.length);
+        for (let i = 0; i < value.length; i++) {
+            elemTypes[i] = literalImpl(ctx, value[i], scratch);
+        }
+        return tupleArrayImpl(ctx, elemTypes, scratch);
+    }
+    if (typeof value === 'object') {
+        /** Desugar to K_OBJECT with additionalProperties:false: each property is a literal type. */
+        let keys = Object.keys(value);
+        let def = {};
+        for (let i = 0; i < keys.length; i++) {
+            def[keys[i]] = literalImpl(ctx, value[keys[i]], scratch);
+        }
+        return objectImpl(ctx, def, scratch, { additionalProperties: false });
+    }
+    return NEVER;
+}
+
+/**
+ * Encodes an array of allowed values as a typedef. Uses the V_ENUM fast-path
+ * for primitive values and structural desugaring for objects/arrays.
+ *   - null / true / false → primitive bit flags only, no validator payload
+ *   - strings  → sorted keyId binary search (V_ENUM)
+ *   - numbers  → sorted float64 binary search (V_ENUM)
+ *   - objects  → K_OBJECT structural desugaring via literalImpl
+ *   - arrays   → K_TUPLE structural desugaring via literalImpl
+ * Heterogeneous enums with complex types (Rule C.2) are wrapped in K_OR.
+ * @param {*} ctx
+ * @param {!Array<*>} values
+ * @param {boolean} scratch
+ * @returns {number}
+ */
+function enumImpl(ctx, values, scratch) {
+    if (!Array.isArray(values) || values.length === 0) { return NEVER; }
+    /** @type {string[]} */
+    let strings = [];
+    /** @type {number[]} */
+    let numbers = [];
+    let enumPrimBits = 0;
+    /** @type {number[]} */
+    let complexTypes = [];
+    for (let i = 0; i < values.length; i++) {
+        let v = values[i];
+        if (v === null) { enumPrimBits |= NULLABLE; }
+        else if (v === true) { enumPrimBits |= TRUE; }
+        else if (v === false) { enumPrimBits |= FALSE; }
+        else if (typeof v === 'string') { strings.push(v); }
+        else if (typeof v === 'number') { numbers.push(v); }
+        else { complexTypes.push(literalImpl(ctx, v, scratch)); }
+    }
+    let primType = 0;
+    let payloadBits = enumPrimBits;
+    let payload = [];
+    if (strings.length > 0) {
+        payloadBits |= STRING;
+        let keyIds = new Array(strings.length);
+        for (let i = 0; i < strings.length; i++) { keyIds[i] = ctx.lookup(strings[i]); }
+        keyIds.sort((a, b) => a - b);
+        payload.push(keyIds.length);
+        for (let i = 0; i < keyIds.length; i++) { payload.push(keyIds[i]); }
+    }
+    if (numbers.length > 0) {
+        payloadBits |= NUMBER;
+        let nums = numbers.slice().sort((a, b) => a - b);
+        payload.push(nums.length);
+        for (let i = 0; i < nums.length; i++) { payload.push(nums[i]); }
+    }
+    if (payload.length > 0) {
+        // Build K_PRIMITIVE with V_ENUM validator; re-attach NULLABLE / OPTIONAL on the pointer.
+        let primBits = payloadBits & ~(NULLABLE | OPTIONAL);
+        let valIdx = ctx.allocValidator(V_ENUM, payload, scratch);
+        primType = ctx.malloc(K_PRIMITIVE | K_VALIDATOR | primBits, scratch, valIdx, null, 0, 0, null);
+        if (payloadBits & NULLABLE) { primType = (primType | NULLABLE) >>> 0; }
+        if (payloadBits & OPTIONAL) { primType = (primType | OPTIONAL) >>> 0; }
+    } else if (payloadBits !== 0) {
+        // Boolean/null only — no validator payload needed, raw bit flags suffice.
+        primType = payloadBits >>> 0;
+    }
+    if (complexTypes.length === 0) { return primType; }
+    // Rule C.2: mix of structural + primitive types → K_OR.
+    let branches = complexTypes.slice();
+    if (primType !== 0) { branches.unshift(primType); }
+    return orImpl(ctx, branches, scratch);
 }
 
 /**
@@ -521,6 +637,8 @@ function allocators(cat) {
         intersect: (first, second, third) => intersectImpl(ctx, normalizeTypeArgs(first, second, third), false),
         not: (typedef) => notImpl(ctx, typedef, false),
         when: (config) => whenImpl(ctx, config, false),
+        literal: (value) => literalImpl(ctx, value, false),
+        enum: (values) => enumImpl(ctx, values, false),
         optional,
         nullable,
     };
@@ -548,6 +666,8 @@ function $allocators(cat) {
         $intersect: (first, second, third) => { if (rp()) rw(); return intersectImpl(ctx, normalizeTypeArgs(first, second, third), true); },
         $not: (typedef) => { if (rp()) rw(); return notImpl(ctx, typedef, true); },
         $when: (config) => { if (rp()) rw(); return whenImpl(ctx, config, true); },
+        $literal: (value) => { if (rp()) rw(); return literalImpl(ctx, value, true); },
+        $enum: (values) => { if (rp()) rw(); return enumImpl(ctx, values, true); },
         optional,
         nullable,
     };

@@ -132,6 +132,15 @@ const V_DEPENDENT_REQUIRED = 1 << 16;
 const V_PATTERN_PROPERTIES = 1 << 17;
 const V_PROPERTY_NAMES = 1 << 18;
 const V_DEPENDENT_SCHEMAS = 1 << 19;
+/**
+ * V_ENUM: variable-length enum membership payload for K_PRIMITIVE validators.
+ * Bit 20 — sequential, never co-occurs with bits 16–19 (those are K_OBJECT only).
+ * Payload layout (after fixed-slot payloads at base + popcnt16(vHeader & 0xFFFF)):
+ *   If primBits & STRING: [ strCount, sortedKeyId0, ..., sortedKeyIdN ]
+ *   If primBits & (NUMBER|INTEGER): [ numCount, sortedNum0, ..., sortedNumM ]
+ *   If both: string segment first, then number segment.
+ */
+const V_ENUM = 1 << 20;
 
 // Boolean modifier flags (no payload)
 const V_EXCLUSIVE_MINIMUM = 1 << 28;
@@ -207,6 +216,7 @@ export {
     V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
     V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED,
     V_UNEVALUATED_ITEMS, V_UNEVALUATED_PROPERTIES, V_DEPENDENT_SCHEMAS,
+    V_ENUM,
     popcnt16,
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME, FMT_MAP,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,

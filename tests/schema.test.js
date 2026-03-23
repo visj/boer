@@ -15,16 +15,6 @@ const SUITE_DIR = path.resolve(import.meta.dir, "suite/tests/draft2020-12");
 // Keys are file names. 
 // It maps "Group Descriptions" to a Set of specific failing test descriptions.
 const TODO_TESTS = {
-    // ── EASY: Basic Validators & Edge Cases ──
-    // "const.json": {
-    //     "const with object": new Set([
-    //         "same object with different property order is valid"
-    //     ])
-    // },
-    // "enum.json": {
-    //     "heterogeneous enum validation": new Set(["something else is invalid"]),
-    //     "empty enum": new Set(["null is invalid"])
-    // },
     "items.json": {
         "items and subitems": new Set(["fewer items is valid"]),
         "prefixItems with no additional items allowed": new Set([

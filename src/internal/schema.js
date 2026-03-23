@@ -1,11 +1,12 @@
 /// <reference path="../../global.d.ts" />
 import {
-    ANY, NEVER, STRING, NUMBER, INTEGER, BOOLEAN, NULLABLE, OPTIONAL,
+    ANY, NEVER, STRING, NUMBER, INTEGER, BOOLEAN, TRUE, FALSE, NULLABLE, OPTIONAL,
     V_MIN_LENGTH, V_MAX_LENGTH, V_PATTERN, V_FORMAT,
     V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
     V_MIN_ITEMS, V_MAX_ITEMS, V_MIN_CONTAINS, V_MAX_CONTAINS, V_UNIQUE_ITEMS,
     V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_DEPENDENT_REQUIRED,
     V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES,
+    V_ENUM,
     hasOwnProperty
 } from "./const.js";
 import { packValidators, PAYLOAD_QUEUE } from "./validator.js";
@@ -431,35 +432,127 @@ export function parseJsonSchema(schema) {
             }
         }
 
-        // enum/const require closures and cannot be expressed as numeric payloads.
-        /** @type {Array<(d: any) => boolean>} */
-        let cbs = [];
-        let enumValues = sch.enum;
-        if (enumValues !== void 0) {
-            cbs.push(/** @param {*} d */(d) => {
-                for (let i = 0; i < enumValues.length; i++) {
-                    if (d === enumValues[i]) return true;
-                    if (typeof d === 'object' && d !== null &&
-                        JSON.stringify(d) === JSON.stringify(enumValues[i])) return true;
-                }
-                return false;
-            });
-        }
+        // ── enum / const preprocessing ──
+        // Rule A: const → enum [x]. const is conceptually an enum of length 1.
         let constVal = sch.const;
-        if (constVal !== void 0) {
-            cbs.push(/** @param {*} d */(d) => {
-                if (d === constVal) return true;
-                if (typeof d === 'object' && d !== null) {
-                    return JSON.stringify(d) === JSON.stringify(constVal);
+        let enumValues = sch.enum;
+        if (constVal !== void 0 && enumValues === void 0) {
+            enumValues = [constVal];
+        }
+        let hasEnum = enumValues !== void 0;
+
+        /** Accumulated primitive type bits from enum values. */
+        let enumPrimBits = 0;
+        /** @type {string[]} */
+        let enumStrings = [];
+        /** @type {number[]} */
+        let enumNumbers = [];
+        /**
+         * Desugared structural schemas for object/array enum values.
+         * Rule B: Objects → {type:"object", properties, required, additionalProperties:false}
+         *         Arrays  → {type:"array", prefixItems, items:false}
+         * @type {Array<Object>}
+         */
+        let enumComplexSchemas = [];
+
+        if (hasEnum) {
+            for (let i = 0; i < enumValues.length; i++) {
+                let v = enumValues[i];
+                if (v === null) {
+                    enumPrimBits |= NULLABLE;
+                } else if (v === true) {
+                    enumPrimBits |= TRUE;
+                } else if (v === false) {
+                    enumPrimBits |= FALSE;
+                } else if (typeof v === 'string') {
+                    enumStrings.push(v);
+                } else if (typeof v === 'number') {
+                    enumNumbers.push(v);
+                } else if (Array.isArray(v)) {
+                    /** Rule B (array): desugar to {type:"array",prefixItems:[{enum:[v[0]]},…],items:false} */
+                    let prefixItems = new Array(v.length);
+                    for (let j = 0; j < v.length; j++) {
+                        prefixItems[j] = { enum: [v[j]] };
+                    }
+                    enumComplexSchemas.push({ type: 'array', prefixItems, items: false });
+                } else if (typeof v === 'object') {
+                    /** Rule B (object): desugar to {type:"object",properties:{k:{enum:[v[k]]},...},required,additionalProperties:false} */
+                    let propKeys = Object.keys(v);
+                    let properties = {};
+                    for (let j = 0; j < propKeys.length; j++) {
+                        properties[propKeys[j]] = { enum: [v[propKeys[j]]] };
+                    }
+                    enumComplexSchemas.push({ type: 'object', properties, required: propKeys, additionalProperties: false });
                 }
-                return false;
-            });
+            }
+
+            if (enumComplexSchemas.length > 0) {
+                /**
+                 * Rule C.2: enum contains structural types (objects/arrays).
+                 * Emit N_OR at nodeId; each complex schema and the unified primitive branch
+                 * become separate children compiled on next loop iterations.
+                 */
+                let branches = [];
+                if (enumStrings.length > 0 || enumNumbers.length > 0 || enumPrimBits !== 0) {
+                    // Gather just the primitive values into a new synthetic enum schema.
+                    // The recursive parse will apply Rule C.1 (primitive-only path).
+                    let primEnum = [];
+                    for (let i = 0; i < enumStrings.length; i++) { primEnum.push(enumStrings[i]); }
+                    for (let i = 0; i < enumNumbers.length; i++) { primEnum.push(enumNumbers[i]); }
+                    if (enumPrimBits & NULLABLE) { primEnum.push(null); }
+                    if (enumPrimBits & TRUE)     { primEnum.push(true); }
+                    if (enumPrimBits & FALSE)    { primEnum.push(false); }
+                    branches.push({ enum: primEnum });
+                }
+                for (let i = 0; i < enumComplexSchemas.length; i++) {
+                    branches.push(enumComplexSchemas[i]);
+                }
+                astKinds[nodeId] = N_OR;
+                astChild0[nodeId] = astEdges.length;
+                astChild1[nodeId] = branches.length;
+                for (let i = 0; i < branches.length; i++) {
+                    let slot = astEdges.length;
+                    astEdges.push(0);
+                    let childId = allocNode();
+                    pushFrame(branches[i], childId, LINK_EDGE, slot);
+                }
+                continue;
+            }
+
+            /**
+             * Rule C.1: primitive-only enum (no objects/arrays).
+             * Build V_ENUM sequential payload and OR the type bits into vHeader.
+             * Strings are stored as virtual propNames indices; ast.js resolves
+             * them to real keyIds via lookup(propNames[idx]) and sorts them.
+             * Numbers are sorted here immediately.
+             */
+            if (enumStrings.length > 0 || enumNumbers.length > 0) {
+                if (enumStrings.length > 0) { enumPrimBits |= STRING; }
+                if (enumNumbers.length > 0) { enumPrimBits |= NUMBER; }
+                vHeader |= V_ENUM;
+                if (enumStrings.length > 0) {
+                    // Write string segment: [strCount, vIdx0, vIdx1, ...]
+                    // ast.js remaps vIdx → lookup(propNames[vIdx]) and sorts by keyId.
+                    vPayloadArr.push(enumStrings.length);
+                    for (let i = 0; i < enumStrings.length; i++) {
+                        vPayloadArr.push(virtualLookup(enumStrings[i]));
+                    }
+                }
+                if (enumNumbers.length > 0) {
+                    // Write number segment: [numCount, sorted_num0, sorted_num1, ...]
+                    let sortedNums = enumNumbers.slice().sort((a, b) => a - b);
+                    vPayloadArr.push(sortedNums.length);
+                    for (let i = 0; i < sortedNums.length; i++) {
+                        vPayloadArr.push(sortedNums[i]);
+                    }
+                }
+            }
+            // enumPrimBits now holds TRUE/FALSE/NULLABLE/STRING/NUMBER bits from the enum values.
         }
 
         let typeVal = sch.type;
         const hasType = typeVal !== void 0;
         const hasVHeader = vHeader !== 0;
-        const hasCbs = cbs.length > 0;
 
         let props = sch.properties;
         let required = sch.required;
@@ -473,7 +566,7 @@ export function parseJsonSchema(schema) {
         const hasPatternProps = patternProps !== void 0;
         const hasPrefixItems = prefixItems !== void 0;
 
-        let hasSiblings = hasType || hasVHeader || hasCbs || hasProps || hasItems
+        let hasSiblings = hasType || hasVHeader || hasEnum || hasProps || hasItems
             || hasAdditionalProps || hasPatternProps || hasPrefixItems;
 
         // If composition keywords coexist with structural/type/validator keywords,
@@ -607,7 +700,7 @@ export function parseJsonSchema(schema) {
         }
 
         // Empty schema {} → matches everything
-        if (!hasType && !hasVHeader && !hasCbs && !hasProps && !hasItems
+        if (!hasType && !hasVHeader && !hasEnum && !hasProps && !hasItems
             && !hasAdditionalProps && !hasPatternProps && !hasPrefixItems) {
             astKinds[nodeId] = N_PRIM;
             astFlags[nodeId] = (ANY | NULLABLE) >>> 0;
@@ -625,37 +718,7 @@ export function parseJsonSchema(schema) {
         }
 
         // The node id where the "inner type" is written.
-        // If callbacks exist, we create an N_REFINE wrapper first.
         let typeNodeId = nodeId;
-
-        // ── Callbacks → wrap in N_REFINE ──
-        if (hasCbs) {
-            let fn = cbs.length === 1 ? cbs[0] :
-                /** @param {*} d */ (d) => {
-                    for (let i = 0; i < cbs.length; i++) {
-                        if (!cbs[i](d)) return false;
-                    }
-                    return true;
-                };
-            let cbIdx = callbacks.length;
-            callbacks.push(fn);
-
-            astKinds[nodeId] = N_REFINE;
-            astChild1[nodeId] = cbIdx;
-
-            if (hasType || hasVHeader || hasProps || hasItems) {
-                let innerId = allocNode();
-                astChild0[nodeId] = innerId;
-                typeNodeId = innerId;
-            } else {
-                // Standalone callback (enum/const without type) → inner = "any"
-                let anyId = allocNode();
-                astKinds[anyId] = N_PRIM;
-                astFlags[anyId] = (ANY | NULLABLE) >>> 0;
-                astChild0[nodeId] = anyId;
-                continue;
-            }
-        }
 
         // ── Object structural node (properties / required / additionalProperties / patternProperties) ──
         if (hasProps || hasAdditionalProps || hasPatternProps) {
@@ -910,6 +973,11 @@ export function parseJsonSchema(schema) {
                     }
                 }
             }
+        } else if (hasEnum) {
+            // Enum without explicit type keyword: use the type bits derived from enum values.
+            // enumPrimBits holds STRING, NUMBER, TRUE, FALSE, NULLABLE as appropriate.
+            astKinds[typeNodeId] = N_PRIM;
+            astFlags[typeNodeId] = enumPrimBits >>> 0;
         } else {
             // Validators but no type → matches any type
             astKinds[typeNodeId] = N_PRIM;
