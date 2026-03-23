@@ -23,7 +23,10 @@ const SCRATCH = (1 << 28) >>> 0;
  * Layer 2: JS value types
  *   24: FALSE    23: TRUE     (BOOLEAN = FALSE | TRUE)
  *   22: NUMBER   21: STRING   20: INTEGER   19: BIGINT
- *   18: ARRAY    17: OBJECT   16: DATE      15: URI
+ *   18: (reserved)  17: (reserved)  16: DATE  15: URI
+ *
+ * ARRAY and OBJECT are complex-only types (K_COLLECTION, K_OBJECT).
+ * They are no longer primitive value bits.
  *
  * Bits 9-14: Reserved for future use
  * Bit 8: CONTEXT (payload flag for sub-type enum in bits 0-7)
@@ -39,37 +42,52 @@ const NUMBER = (1 << 22) >>> 0;
 const STRING = (1 << 21) >>> 0;
 const INTEGER = (1 << 20) >>> 0;
 const BIGINT = (1 << 19) >>> 0;
-const ARRAY = (1 << 18) >>> 0;
-const OBJECT = (1 << 17) >>> 0;
 const DATE = (1 << 16) >>> 0;
 const URI = (1 << 15) >>> 0;
 const CONTEXT = (1 << 8) >>> 0;
 
 /**
- * SIMPLE: all non-header type bits (used internally for masking kind headers)
+ * SIMPLE: all non-header, non-container type bits (used for K_PRIMITIVE headers)
  * VALUE: true value types only (no containers, no meta types)
  */
-const SIMPLE = (ANY | NEVER | REST | FALSE | TRUE | NUMBER | STRING | INTEGER | BIGINT | ARRAY | OBJECT | DATE | URI);
+const SIMPLE = (ANY | NEVER | REST | FALSE | TRUE | NUMBER | STRING | INTEGER | BIGINT | DATE | URI);
 const VALUE = (FALSE | TRUE | NUMBER | STRING | INTEGER | BIGINT | DATE | URI);
 const PRIM_MASK = 0x0FFFFFFF;
 const KIND_MASK = 0x0FFFFFFF;
 
-// Complex kind enum (sequential, not bit flags)
-const K_PRIMITIVE = 0;
-const K_OBJECT = 1;
-const K_ARRAY = 2;
-const K_UNION = 3;
-const K_REFINE = 4;
-const K_TUPLE = 5;
-const K_RECORD = 6;
-const K_OR = 7;
-const K_EXCLUSIVE = 8;
-const K_INTERSECT = 9;
-const K_NOT = 10;
-const K_CONDITIONAL = 11;
+// ── Complex KINDS enum (bits 0-3, values 0-7) ──
+// The KINDS vtable header stores the enum in the lower 4 bits,
+// followed by HAS_VALIDATOR, then contextual inner-type bit flags.
+const K_PRIMITIVE   = 0;
+const K_OBJECT      = 1;
+const K_COLLECTION  = 2;   // K_ARRAY, K_RECORD
+const K_COMPOSITION = 3;   // K_OR, K_EXCLUSIVE, K_INTERSECT
+const K_UNION       = 4;
+const K_TUPLE       = 5;
+const K_WRAPPER     = 6;   // K_REFINE, K_NOT
+const K_CONDITIONAL = 7;
 
 const KIND_ENUM_MASK = 0xF;
 const HAS_VALIDATOR = 1 << 4;
+
+// ── Inner type bit flags (bits 5+, contextual per group) ──
+// K_COLLECTION inner flags
+const K_ARRAY  = 1 << 5;
+const K_RECORD = 1 << 6;
+// K_COMPOSITION inner flags
+const K_OR        = 1 << 5;
+const K_EXCLUSIVE = 1 << 6;
+const K_INTERSECT = 1 << 7;
+// K_WRAPPER inner flags
+const K_REFINE = 1 << 5;
+const K_NOT    = 1 << 6;
+
+/**
+ * K_ANY_INNER: when set on a KINDS header, the inner type is ANY
+ * and no registry entry exists. The KINDS slot is only 1 wide.
+ * Used for bare `type: "array"`, `type: "object"`, `record(ANY)`, etc.
+ */
+const K_ANY_INNER = 1 << 8;
 
 // --- Validator bit flags (globally unique, unified layout) ---
 //
@@ -171,11 +189,12 @@ export {
     COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
     ANY, NEVER, REST, FALSE, TRUE, BOOLEAN,
     NUMBER, STRING, INTEGER, BIGINT,
-    ARRAY, OBJECT, DATE, URI,
+    DATE, URI,
     CONTEXT, SIMPLE, VALUE, PRIM_MASK, KIND_MASK,
-    K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION,
-    K_REFINE, K_TUPLE, K_RECORD, K_OR, K_EXCLUSIVE,
-    K_INTERSECT, K_NOT, K_CONDITIONAL,
+    K_PRIMITIVE, K_OBJECT, K_COLLECTION, K_COMPOSITION,
+    K_UNION, K_TUPLE, K_WRAPPER, K_CONDITIONAL,
+    K_ARRAY, K_RECORD, K_OR, K_EXCLUSIVE, K_INTERSECT,
+    K_REFINE, K_NOT, K_ANY_INNER,
     KIND_ENUM_MASK, HAS_VALIDATOR,
     V_STR_MIN_LEN, V_STR_MAX_LEN, V_STR_PATTERN, V_STR_FORMAT,
     V_NUM_MIN, V_NUM_MAX, V_NUM_MULTIPLE, V_NUM_EX_MIN, V_NUM_EX_MAX,

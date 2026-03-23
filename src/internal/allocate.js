@@ -3,9 +3,10 @@ import {
     COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
     STRING, NUMBER, BOOLEAN, BIGINT, DATE, URI, INTEGER,
     PRIM_MASK,
-    K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION,
-    K_REFINE, K_TUPLE, K_RECORD, K_OR, K_EXCLUSIVE,
-    K_INTERSECT, K_NOT, K_CONDITIONAL,
+    K_PRIMITIVE, K_OBJECT, K_COLLECTION, K_COMPOSITION,
+    K_UNION, K_TUPLE, K_WRAPPER, K_CONDITIONAL,
+    K_ARRAY, K_RECORD, K_OR, K_EXCLUSIVE,
+    K_INTERSECT, K_REFINE, K_NOT, K_ANY_INNER,
     HAS_VALIDATOR,
     V_STR_MIN_LEN, V_STR_MAX_LEN, V_STR_PATTERN, V_STR_FORMAT,
     V_NUM_MIN, V_NUM_MAX, V_NUM_MULTIPLE, V_NUM_EX_MIN, V_NUM_EX_MAX,
@@ -49,7 +50,7 @@ function normalizeTypeArgs(first, second, third) {
 /**
  * @param {*} ctx
  * @param {number} primConst
- * @param {!uvd.cat.Validators} opts
+ * @param {!uvd.Validators} opts
  * @param {boolean} scratch
  * @returns {{vHeader: number, payloads: !Array<number>}}
  */
@@ -156,7 +157,7 @@ function refineImpl(ctx, typedef, fn, scratch) {
     assertIsNumber(typedef, 0);
     let callbacks = scratch ? ctx.S_CALLBACKS : ctx.CALLBACKS;
     let callbackIdx = callbacks.push(fn) - 1;
-    let kindPtr = ctx.allocKind(K_REFINE, typedef >>> 0, scratch, 3);
+    let kindPtr = ctx.allocKind(K_WRAPPER | K_REFINE, typedef >>> 0, scratch, 3);
     let HEAP = scratch ? ctx.SCR_HEAP : ctx.HEAP;
     let kinds = HEAP.KINDS;
     kinds[kindPtr + 2] = callbackIdx;
@@ -193,7 +194,7 @@ function tupleArrayImpl(ctx, types, scratch) {
  */
 function recordImpl(ctx, valueType, scratch) {
     assertIsNumber(valueType, 0);
-    let kindPtr = ctx.allocKind(K_RECORD, valueType >>> 0, scratch, 2);
+    let kindPtr = ctx.allocKind(K_COLLECTION | K_RECORD, valueType >>> 0, scratch, 2);
     return (COMPLEX | (scratch ? SCRATCH : 0) | kindPtr) >>> 0;
 }
 
@@ -229,7 +230,7 @@ function orImpl(ctx, types, scratch) {
         return merged >>> 0;
     }
     let id = ctx.allocOnSlab(types, scratch, 'match');
-    let kindPtr = ctx.allocKind(K_OR, id, scratch, 2);
+    let kindPtr = ctx.allocKind(K_COMPOSITION | K_OR, id, scratch, 2);
     flags |= kindPtr;
     for (; j < length; j++) {
         const type = /** @type {number} */(types[j]);
@@ -251,7 +252,7 @@ function orImpl(ctx, types, scratch) {
  */
 function exclusiveImpl(ctx, types, scratch) {
     let id = ctx.allocOnSlab(types, scratch, 'match');
-    let kindPtr = ctx.allocKind(K_EXCLUSIVE, id, scratch, 2);
+    let kindPtr = ctx.allocKind(K_COMPOSITION | K_EXCLUSIVE, id, scratch, 2);
     return (COMPLEX | (scratch ? SCRATCH : 0) | kindPtr) >>> 0;
 }
 
@@ -263,7 +264,7 @@ function exclusiveImpl(ctx, types, scratch) {
  */
 function intersectImpl(ctx, types, scratch) {
     let id = ctx.allocOnSlab(types, scratch, 'match');
-    let kindPtr = ctx.allocKind(K_INTERSECT, id, scratch, 2);
+    let kindPtr = ctx.allocKind(K_COMPOSITION | K_INTERSECT, id, scratch, 2);
     return (COMPLEX | (scratch ? SCRATCH : 0) | kindPtr) >>> 0;
 }
 
@@ -275,7 +276,7 @@ function intersectImpl(ctx, types, scratch) {
  */
 function notImpl(ctx, typedef, scratch) {
     assertIsNumber(typedef, 0);
-    let kindPtr = ctx.allocKind(K_NOT, typedef >>> 0, scratch, 2);
+    let kindPtr = ctx.allocKind(K_WRAPPER | K_NOT, typedef >>> 0, scratch, 2);
     return (COMPLEX | (scratch ? SCRATCH : 0) | kindPtr) >>> 0;
 }
 
@@ -302,7 +303,7 @@ function whenImpl(ctx, config, scratch) {
  * @param {*} ctx
  * @param {!Object} definition
  * @param {boolean} scratch
- * @param {uvd.cat.ObjectValidators=} opts
+ * @param {uvd.ObjectValidators=} opts
  * @returns {number}
  */
 function objectImpl(ctx, definition, scratch, opts) {
@@ -333,7 +334,6 @@ function objectImpl(ctx, definition, scratch, opts) {
     }
     sortByKeyId(resolved);
     let valIdx = 0;
-    let additionalType = 0;
     const hasValidator = opts !== void 0;
     if (hasValidator) {
         let vHeader = 0;
@@ -415,7 +415,7 @@ function objectImpl(ctx, definition, scratch, opts) {
  * @param {*} ctx
  * @param {number} elemType
  * @param {boolean} scratch
- * @param {uvd.cat.ArrayValidators=} opts
+ * @param {uvd.ArrayValidators=} opts
  * @returns {number}
  */
 function arrayImpl(ctx, elemType, scratch, opts) {
@@ -452,7 +452,7 @@ function arrayImpl(ctx, elemType, scratch, opts) {
         valIdx = ctx.allocValidator(vHeader, payloads, scratch);
     }
     let index = ctx.registerArray(elemType, scratch);
-    let kindHeader = hasVal ? (K_ARRAY | HAS_VALIDATOR) : K_ARRAY;
+    let kindHeader = hasVal ? (K_COLLECTION | K_ARRAY | HAS_VALIDATOR) : (K_COLLECTION | K_ARRAY);
     let slots = hasVal ? 3 : 2;
     let kindPtr = ctx.allocKind(kindHeader, index, scratch, slots);
     if (hasVal) {

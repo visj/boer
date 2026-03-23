@@ -2,9 +2,10 @@
 import {
     COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
     ANY, REST, SIMPLE, PRIM_MASK, KIND_MASK,
-    K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION,
-    K_REFINE, K_TUPLE, K_RECORD, K_OR, K_EXCLUSIVE,
-    K_INTERSECT, K_NOT, K_CONDITIONAL,
+    K_PRIMITIVE, K_OBJECT, K_COLLECTION, K_COMPOSITION,
+    K_UNION, K_TUPLE, K_WRAPPER, K_CONDITIONAL,
+    K_ARRAY, K_RECORD, K_OR, K_EXCLUSIVE, K_INTERSECT,
+    K_REFINE, K_NOT, K_ANY_INNER,
     KIND_ENUM_MASK, FAIL,
 } from './const.js';
 import { parseValue } from './util.js';
@@ -70,23 +71,26 @@ function createConform(cat) {
             let ptr = typedef & KIND_MASK;
             let header = kinds[ptr];
             let ct = header & KIND_ENUM_MASK;
+
+            /** Fast path: K_ANY_INNER means no registry entry, just a type check */
+            if (header & K_ANY_INNER) {
+                if (ct === K_COLLECTION) {
+                    if (header & K_ARRAY) {
+                        return Array.isArray(data);
+                    }
+                    return typeof data === 'object' && data !== null && !Array.isArray(data);
+                }
+                if (ct === K_OBJECT) {
+                    return typeof data === 'object' && data !== null && !Array.isArray(data);
+                }
+                return false;
+            }
+
             let ri = kinds[ptr + 1];
+
             if (ct === K_PRIMITIVE) {
                 let vm = header & SIMPLE;
                 return vm !== 0 && parseValue(data, vm, reify) !== FAIL;
-            }
-            if (ct === K_ARRAY) {
-                if (!Array.isArray(data)) {
-                    return false;
-                }
-                let elemType = hp.ARRAYS[ri];
-                let length = data.length;
-                for (let i = 0; i < length; i++) {
-                    if (!_parseSlot(data, i, elemType, reify)) {
-                        return false;
-                    }
-                }
-                return true;
             }
             if (ct === K_OBJECT) {
                 if (typeof data !== 'object' || data === null || Array.isArray(data)) {
@@ -103,6 +107,65 @@ function createConform(cat) {
                     }
                     let type = slab[offset + (i * 2) + 1];
                     if (!_parseSlot(data, key, type, reify)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            if (ct === K_COLLECTION) {
+                if (header & K_ARRAY) {
+                    if (!Array.isArray(data)) {
+                        return false;
+                    }
+                    let elemType = hp.ARRAYS[ri];
+                    let length = data.length;
+                    for (let i = 0; i < length; i++) {
+                        if (!_parseSlot(data, i, elemType, reify)) {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+                /** K_RECORD */
+                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                    return false;
+                }
+                let dataKeys = Object.keys(data);
+                for (let i = 0; i < dataKeys.length; i++) {
+                    if (!_parseSlot(data, dataKeys[i], ri, reify)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            if (ct === K_COMPOSITION) {
+                let matches = hp.MATCHES;
+                let slab = hp.SLAB;
+                let offset = matches[ri * 2];
+                let count = matches[ri * 2 + 1];
+                if (header & K_OR) {
+                    for (let i = 0; i < count; i++) {
+                        if (_conform(data, slab[offset + i], reify)) {
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                if (header & K_EXCLUSIVE) {
+                    let matchCount = 0;
+                    for (let i = 0; i < count; i++) {
+                        if (_conform(data, slab[offset + i], reify)) {
+                            matchCount++;
+                            if (matchCount > 1) {
+                                return false;
+                            }
+                        }
+                    }
+                    return matchCount === 1;
+                }
+                /** K_INTERSECT */
+                for (let i = 0; i < count; i++) {
+                    if (!_conform(data, slab[offset + i], reify)) {
                         return false;
                     }
                 }
@@ -130,9 +193,6 @@ function createConform(cat) {
                     }
                 }
                 return false;
-            }
-            if (ct === K_REFINE) {
-                return _conform(data, ri, reify);
             }
             if (ct === K_TUPLE) {
                 if (!Array.isArray(data)) {
@@ -165,59 +225,11 @@ function createConform(cat) {
                 }
                 return true;
             }
-            if (ct === K_RECORD) {
-                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-                    return false;
+            if (ct === K_WRAPPER) {
+                if (header & K_REFINE) {
+                    return _conform(data, ri, reify);
                 }
-                let dataKeys = Object.keys(data);
-                for (let i = 0; i < dataKeys.length; i++) {
-                    if (!_parseSlot(data, dataKeys[i], ri, reify)) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-            if (ct === K_OR) {
-                let matches = hp.MATCHES;
-                let slab = hp.SLAB;
-                let offset = matches[ri * 2];
-                let count = matches[ri * 2 + 1];
-                for (let i = 0; i < count; i++) {
-                    if (_conform(data, slab[offset + i], reify)) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-            if (ct === K_EXCLUSIVE) {
-                let matches = hp.MATCHES;
-                let slab = hp.SLAB;
-                let offset = matches[ri * 2];
-                let count = matches[ri * 2 + 1];
-                let matchCount = 0;
-                for (let i = 0; i < count; i++) {
-                    if (_conform(data, slab[offset + i], reify)) {
-                        matchCount++;
-                        if (matchCount > 1) {
-                            return false;
-                        }
-                    }
-                }
-                return matchCount === 1;
-            }
-            if (ct === K_INTERSECT) {
-                let matches = hp.MATCHES;
-                let slab = hp.SLAB;
-                let offset = matches[ri * 2];
-                let count = matches[ri * 2 + 1];
-                for (let i = 0; i < count; i++) {
-                    if (!_conform(data, slab[offset + i], reify)) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-            if (ct === K_NOT) {
+                /** K_NOT */
                 return !_conform(data, ri, reify);
             }
             if (ct === K_CONDITIONAL) {

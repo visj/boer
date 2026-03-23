@@ -410,10 +410,11 @@ export interface FlatAst {
     // Object edges reference these by index (nameIdx).
     readonly propNames: string[];
 
-    // 5. CALLBACK STORAGE
+    // 5. CALLBACK/REGEX STORAGE
     // For validators that can't be expressed as numeric payloads
     // (enum, const, pattern). Referenced by N_REFINE's astChild1.
     readonly callbacks: Array<(data: any) => boolean>;
+    readonly regexes: Array<RegExp>;
 
     // 6. SCHEMA METADATA
     readonly rootId: number;

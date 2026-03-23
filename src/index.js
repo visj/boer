@@ -1,7 +1,7 @@
 import {
     VALUE, NULL, UNDEFINED, BOOLEAN,
     NUMBER, STRING, DATE, URI, BIGINT,
-    ANY, NEVER, TRUE, FALSE, ARRAY, OBJECT,
+    ANY, NEVER, TRUE, FALSE
 } from './internal/const.js';
 import {
     catalog
@@ -12,6 +12,10 @@ import { createDiagnose } from './internal/error.js';
 
 /** @type {uvd.Catalog<uvd.UVD>} */
 const uvd = catalog();
+
+/** Pre-allocated bare complex types from the default catalog */
+const ARRAY = uvd.__heap.BARE_ARRAY;
+const OBJECT = uvd.__heap.BARE_OBJECT;
 
 const {
     object, array, union,
@@ -50,5 +54,6 @@ export {
 export {
     VALUE, NULL, UNDEFINED, BOOLEAN,
     NUMBER, STRING, DATE, URI, BIGINT,
-    ANY, NEVER, TRUE, FALSE, ARRAY, OBJECT,
+    ANY, NEVER, TRUE, FALSE,
+    ARRAY, OBJECT,
 }

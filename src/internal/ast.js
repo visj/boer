@@ -1,16 +1,19 @@
 /// <reference path="../../global.d.ts" />
 import {
     COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
-    K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION, K_REFINE, K_TUPLE,
-    K_RECORD, K_OR, K_EXCLUSIVE, K_INTERSECT, K_NOT, K_CONDITIONAL,
+    K_PRIMITIVE, K_OBJECT, K_COLLECTION, K_COMPOSITION,
+    K_UNION, K_TUPLE, K_WRAPPER, K_CONDITIONAL,
+    K_ARRAY, K_RECORD, K_OR, K_EXCLUSIVE, K_INTERSECT,
+    K_REFINE, K_NOT,
     HAS_VALIDATOR, sortByKeyId,
 } from "./catalog.js";
 
-import { popcnt16, REST, V_OBJ_PAT_PROP, V_OBJ_NO_ADD } from "./const.js";
+import { popcnt16, REST, ANY, V_OBJ_PAT_PROP, V_OBJ_NO_ADD } from "./const.js";
 
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
     N_EXCLUSIVE, N_INTERSECT, N_NOT, N_CONDITIONAL, N_TUPLE, N_REF,
+    N_BARE_ARRAY, N_BARE_OBJECT,
 } from "./schema.js";
 
 const KIND_MASK = 0x0FFFFFFF;
@@ -139,6 +142,7 @@ export function compile(cat, ast) {
 
         // ── Primitives: compile immediately (leaf node) ──
         if (kind === N_PRIM) {
+            let vHeader = astVHeaders[nodeId];
             let [hasVal, valIdx] = compileValidator(nodeId);
             if (hasVal) {
                 let primBits = astFlags[nodeId];
@@ -147,6 +151,41 @@ export function compile(cat, ast) {
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
             } else {
                 astCompiled[nodeId] = astFlags[nodeId];
+            }
+            astState[nodeId] = COMPILED;
+            continue;
+        }
+
+        /**
+         * Bare container types: N_BARE_ARRAY and N_BARE_OBJECT are leaf nodes
+         * representing `type: "array"` and `type: "object"` without structural
+         * keywords. When no validators are attached, compile to the pre-allocated
+         * KINDS constants. Otherwise, allocate a proper entry with the validator.
+         */
+        if (kind === N_BARE_ARRAY) {
+            let [hasVal, valIdx] = compileValidator(nodeId);
+            if (hasVal) {
+                let anyIndex = registerArray((ANY | NULLABLE) >>> 0, scratch);
+                let kindHeader = K_COLLECTION | K_ARRAY | HAS_VALIDATOR;
+                let kindPtr = allocKind(kindHeader, anyIndex, scratch, 3);
+                HEAP.KINDS[kindPtr + 2] = valIdx;
+                astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
+            } else {
+                astCompiled[nodeId] = heap.BARE_ARRAY;
+            }
+            astState[nodeId] = COMPILED;
+            continue;
+        }
+        if (kind === N_BARE_OBJECT) {
+            let [hasVal, valIdx] = compileValidator(nodeId);
+            if (hasVal) {
+                let objId = registerObject([], 0, scratch);
+                let kindHeader = K_OBJECT | HAS_VALIDATOR;
+                let kindPtr = allocKind(kindHeader, objId, scratch, 3);
+                HEAP.KINDS[kindPtr + 2] = valIdx;
+                astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
+            } else {
+                astCompiled[nodeId] = heap.BARE_OBJECT;
             }
             astState[nodeId] = COMPILED;
             continue;
@@ -364,7 +403,7 @@ export function compile(cat, ast) {
                 let elemType = astCompiled[astChild0[nodeId]];
                 let arrId = registerArray(elemType, scratch);
                 let [hasVal, valIdx] = compileValidator(nodeId);
-                let kindHeader = hasVal ? (K_ARRAY | HAS_VALIDATOR) : K_ARRAY;
+                let kindHeader = hasVal ? (K_COLLECTION | K_ARRAY | HAS_VALIDATOR) : (K_COLLECTION | K_ARRAY);
                 let slots = hasVal ? 3 : 2;
                 let kindPtr = allocKind(kindHeader, arrId, scratch, slots);
                 if (hasVal) HEAP.KINDS[kindPtr + 2] = valIdx;
@@ -390,7 +429,7 @@ export function compile(cat, ast) {
                     astCompiled[nodeId] = merged >>> 0;
                 } else {
                     let matchId = allocOnSlab(types, scratch, 'match');
-                    let kindPtr = allocKind(K_OR, matchId, scratch, 2);
+                    let kindPtr = allocKind(K_COMPOSITION | K_OR, matchId, scratch, 2);
                     let flags = COMPLEX | kindPtr;
                     for (let i = 0; i < types.length; i++) {
                         if (types[i] & NULLABLE) flags |= NULLABLE;
@@ -409,7 +448,7 @@ export function compile(cat, ast) {
                     types[i] = astCompiled[astEdges[offset + i]];
                 }
                 let matchId = allocOnSlab(types, scratch, 'match');
-                let kindPtr = allocKind(K_EXCLUSIVE, matchId, scratch, 2);
+                let kindPtr = allocKind(K_COMPOSITION | K_EXCLUSIVE, matchId, scratch, 2);
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
                 break;
             }
@@ -422,14 +461,14 @@ export function compile(cat, ast) {
                     types[i] = astCompiled[astEdges[offset + i]];
                 }
                 let matchId = allocOnSlab(types, scratch, 'match');
-                let kindPtr = allocKind(K_INTERSECT, matchId, scratch, 2);
+                let kindPtr = allocKind(K_COMPOSITION | K_INTERSECT, matchId, scratch, 2);
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
                 break;
             }
 
             case N_NOT: {
                 let innerType = astCompiled[astChild0[nodeId]];
-                let kindPtr = allocKind(K_NOT, innerType >>> 0, scratch, 2);
+                let kindPtr = allocKind(K_WRAPPER | K_NOT, innerType >>> 0, scratch, 2);
                 astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
                 break;
             }
@@ -475,7 +514,7 @@ export function compile(cat, ast) {
                 let cbIdx = astChild1[nodeId];
                 let callbacksArr = HEAP.CALLBACKS;
                 let callbackIdx = callbacksArr.push(callbacks[cbIdx]) - 1;
-                let kindPtr = allocKind(K_REFINE, innerType >>> 0, scratch, 3);
+                let kindPtr = allocKind(K_WRAPPER | K_REFINE, innerType >>> 0, scratch, 3);
                 HEAP.KINDS[kindPtr + 2] = callbackIdx;
                 let flags = COMPLEX | kindPtr;
                 if (innerType & NULLABLE) flags |= NULLABLE;

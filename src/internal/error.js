@@ -2,9 +2,10 @@
 import {
     COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
     ANY, REST, SIMPLE, PRIM_MASK, KIND_MASK,
-    K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION,
-    K_REFINE, K_TUPLE, K_RECORD, K_OR, K_EXCLUSIVE,
-    K_INTERSECT, K_NOT, K_CONDITIONAL,
+    K_PRIMITIVE, K_OBJECT, K_COLLECTION, K_COMPOSITION,
+    K_UNION, K_TUPLE, K_WRAPPER, K_CONDITIONAL,
+    K_ARRAY, K_RECORD, K_OR, K_EXCLUSIVE, K_INTERSECT,
+    K_REFINE, K_NOT, K_ANY_INNER,
     KIND_ENUM_MASK,
 } from './const.js';
 import { _isValue, describeType } from './util.js';
@@ -51,7 +52,23 @@ function createDiagnose(cat) {
             let ptr = typedef & KIND_MASK;
             let header = kinds[ptr];
             let ct = header & KIND_ENUM_MASK;
+
+            /** Fast path: K_ANY_INNER means no registry entry, just a type check */
+            if (header & K_ANY_INNER) {
+                if (ct === K_COLLECTION && (header & K_ARRAY)) {
+                    if (!Array.isArray(data)) {
+                        errors.push({ path, message: 'expected array, got ' + typeof data });
+                    }
+                } else if (ct === K_OBJECT || ct === K_COLLECTION) {
+                    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                        errors.push({ path, message: 'expected object, got ' + typeof data });
+                    }
+                }
+                return;
+            }
+
             let ri = kinds[ptr + 1];
+
             if (ct === K_PRIMITIVE) {
                 let primBits = header & SIMPLE;
                 if (primBits === 0 || !_isValue(data, primBits)) {
@@ -68,15 +85,84 @@ function createDiagnose(cat) {
                 }
                 return;
             }
-            if (ct === K_ARRAY) {
-                if (!Array.isArray(data)) {
-                    errors.push({ path, message: 'expected array, got ' + typeof data });
+            if (ct === K_OBJECT) {
+                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                    errors.push({ path, message: 'expected object, got ' + typeof data });
                     return;
                 }
-                let itemType = hp.ARRAYS[ri];
-                let length = data.length;
+                let objects = hp.OBJECTS;
+                let slab = hp.SLAB;
+                let offset = objects[ri * 2];
+                let length = objects[ri * 2 + 1];
                 for (let i = 0; i < length; i++) {
-                    _diagnose(data[i], itemType, path + '[' + i + ']', errors);
+                    let key = DICT.KEY_INDEX.get(slab[offset + (i * 2)]);
+                    if (key === void 0) {
+                        errors.push({ path, message: '!! CRITICAL ERROR !! Please file an issue at Github !!' });
+                        return;
+                    }
+                    let type = slab[offset + (i * 2) + 1];
+                    let fieldPath = path + (path ? '.' : '') + key;
+                    _diagnose(data[key], type, fieldPath, errors);
+                }
+                return;
+            }
+            if (ct === K_COLLECTION) {
+                if (header & K_ARRAY) {
+                    if (!Array.isArray(data)) {
+                        errors.push({ path, message: 'expected array, got ' + typeof data });
+                        return;
+                    }
+                    let itemType = hp.ARRAYS[ri];
+                    let length = data.length;
+                    for (let i = 0; i < length; i++) {
+                        _diagnose(data[i], itemType, path + '[' + i + ']', errors);
+                    }
+                    return;
+                }
+                /** K_RECORD */
+                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                    errors.push({ path, message: 'expected object (record), got ' + typeof data });
+                    return;
+                }
+                let dataKeys = Object.keys(data);
+                for (let i = 0; i < dataKeys.length; i++) {
+                    _diagnose(data[dataKeys[i]], ri, path + (path ? '.' : '') + dataKeys[i], errors);
+                }
+                return;
+            }
+            if (ct === K_COMPOSITION) {
+                let matches = hp.MATCHES;
+                let slab = hp.SLAB;
+                let offset = matches[ri * 2];
+                let count = matches[ri * 2 + 1];
+                if (header & K_OR) {
+                    for (let i = 0; i < count; i++) {
+                        if (_validate(data, slab[offset + i])) {
+                            return;
+                        }
+                    }
+                    errors.push({ path, message: 'value did not match any of the expected types' });
+                    return;
+                }
+                if (header & K_EXCLUSIVE) {
+                    let matchCount = 0;
+                    for (let i = 0; i < count; i++) {
+                        if (_validate(data, slab[offset + i])) {
+                            matchCount++;
+                        }
+                    }
+                    if (matchCount === 0) {
+                        errors.push({ path, message: 'value did not match any of the exclusive types' });
+                    } else if (matchCount > 1) {
+                        errors.push({ path, message: 'value matched ' + matchCount + ' types, expected exactly 1' });
+                    }
+                    return;
+                }
+                /** K_INTERSECT */
+                for (let i = 0; i < count; i++) {
+                    if (!_validate(data, slab[offset + i])) {
+                        _diagnose(data, slab[offset + i], path, errors);
+                    }
                 }
                 return;
             }
@@ -106,31 +192,6 @@ function createDiagnose(cat) {
                     }
                 }
                 errors.push({ path: path + (path ? '.' : '') + discKey, message: 'unknown discriminator value "' + data[discKey] + '"' });
-                return;
-            }
-            if (ct === K_OBJECT) {
-                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-                    errors.push({ path, message: 'expected object, got ' + typeof data });
-                    return;
-                }
-                let objects = hp.OBJECTS;
-                let slab = hp.SLAB;
-                let offset = objects[ri * 2];
-                let length = objects[ri * 2 + 1];
-                for (let i = 0; i < length; i++) {
-                    let key = DICT.KEY_INDEX.get(slab[offset + (i * 2)]);
-                    if (key === void 0) {
-                        errors.push({ path, message: '!! CRITICAL ERROR !! Please file an issue at Github !!' });
-                        return;
-                    }
-                    let type = slab[offset + (i * 2) + 1];
-                    let fieldPath = path + (path ? '.' : '') + key;
-                    _diagnose(data[key], type, fieldPath, errors);
-                }
-                return;
-            }
-            if (ct === K_REFINE) {
-                _diagnose(data, ri, path, errors);
                 return;
             }
             if (ct === K_TUPLE) {
@@ -163,61 +224,12 @@ function createDiagnose(cat) {
                 }
                 return;
             }
-            if (ct === K_RECORD) {
-                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-                    errors.push({ path, message: 'expected object (record), got ' + typeof data });
+            if (ct === K_WRAPPER) {
+                if (header & K_REFINE) {
+                    _diagnose(data, ri, path, errors);
                     return;
                 }
-                let dataKeys = Object.keys(data);
-                for (let i = 0; i < dataKeys.length; i++) {
-                    _diagnose(data[dataKeys[i]], ri, path + (path ? '.' : '') + dataKeys[i], errors);
-                }
-                return;
-            }
-            if (ct === K_OR) {
-                let matches = hp.MATCHES;
-                let slab = hp.SLAB;
-                let offset = matches[ri * 2];
-                let count = matches[ri * 2 + 1];
-                for (let i = 0; i < count; i++) {
-                    if (_validate(data, slab[offset + i])) {
-                        return;
-                    }
-                }
-                errors.push({ path, message: 'value did not match any of the expected types' });
-                return;
-            }
-            if (ct === K_EXCLUSIVE) {
-                let matches = hp.MATCHES;
-                let slab = hp.SLAB;
-                let offset = matches[ri * 2];
-                let count = matches[ri * 2 + 1];
-                let matchCount = 0;
-                for (let i = 0; i < count; i++) {
-                    if (_validate(data, slab[offset + i])) {
-                        matchCount++;
-                    }
-                }
-                if (matchCount === 0) {
-                    errors.push({ path, message: 'value did not match any of the exclusive types' });
-                } else if (matchCount > 1) {
-                    errors.push({ path, message: 'value matched ' + matchCount + ' types, expected exactly 1' });
-                }
-                return;
-            }
-            if (ct === K_INTERSECT) {
-                let matches = hp.MATCHES;
-                let slab = hp.SLAB;
-                let offset = matches[ri * 2];
-                let count = matches[ri * 2 + 1];
-                for (let i = 0; i < count; i++) {
-                    if (!_validate(data, slab[offset + i])) {
-                        _diagnose(data, slab[offset + i], path, errors);
-                    }
-                }
-                return;
-            }
-            if (ct === K_NOT) {
+                /** K_NOT */
                 if (_validate(data, ri)) {
                     errors.push({ path, message: 'value should NOT match the given type' });
                 }

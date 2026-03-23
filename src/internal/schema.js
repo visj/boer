@@ -1,6 +1,6 @@
 /// <reference path="../../global.d.ts" />
 import {
-    ANY, NEVER, STRING, NUMBER, INTEGER, BOOLEAN, NULLABLE, ARRAY, OBJECT,
+    ANY, NEVER, STRING, NUMBER, INTEGER, BOOLEAN, NULLABLE, OPTIONAL,
     V_STR_MIN_LEN, V_STR_MAX_LEN,
     V_NUM_MIN, V_NUM_MAX, V_NUM_MULTIPLE, V_NUM_EX_MIN, V_NUM_EX_MAX,
     V_ARR_MIN, V_ARR_MAX, V_ARR_UNIQUE,
@@ -37,6 +37,8 @@ export const N_PRIM = 0;
 export const N_OBJECT = 1;
 export const N_ARRAY = 2;
 export const N_REFINE = 4;
+export const N_BARE_ARRAY = 5;
+export const N_BARE_OBJECT = 6;
 export const N_OR = 7;
 export const N_EXCLUSIVE = 8;
 export const N_INTERSECT = 9;
@@ -241,6 +243,21 @@ function collectValidators(schema) {
  * @param {string} type — JSON Schema type keyword
  * @returns {number} primitive bitmask
  */
+/**
+ * Returns true if the type string is a complex container type
+ * ("array" or "object") rather than a primitive type.
+ * @param {string} type
+ * @returns {boolean}
+ */
+function isContainerType(type) {
+    return type === 'array' || type === 'object';
+}
+
+/**
+ * @throws
+ * @param {string} type 
+ * @returns {number}
+ */
 function mapSingleTypePrim(type) {
     switch (type) {
         case 'string': return STRING;
@@ -248,8 +265,6 @@ function mapSingleTypePrim(type) {
         case 'integer': return INTEGER;
         case 'boolean': return BOOLEAN;
         case 'null': return NULLABLE;
-        case 'object': return OBJECT;
-        case 'array': return ARRAY;
     }
     throw new Error('Unknown JSON Schema type: ' + type);
 }
@@ -341,6 +356,8 @@ export function parseJsonSchema(schema) {
     // ── Callbacks for enum/const/pattern validators ──
     /** @type {Array<(data: any) => boolean>} */
     let callbacks = [];
+    /** @type {Array<RegExp>} */
+    let regexes = [];
 
     // ── $ref resolution ──
     /** @type {Map<number, string>} */
@@ -750,8 +767,7 @@ export function parseJsonSchema(schema) {
                 // if (is object) then (validate) else (pass)
                 objNodeId = allocNode();
                 let ifId = allocNode();
-                astKinds[ifId] = N_PRIM;
-                astFlags[ifId] = OBJECT;
+                astKinds[ifId] = N_BARE_OBJECT;
 
                 let condBase = astEdges.length;
                 astEdges.push(ifId, objNodeId, SENTINEL);
@@ -834,8 +850,7 @@ export function parseJsonSchema(schema) {
             } else {
                 tupleNodeId = allocNode();
                 let ifId = allocNode();
-                astKinds[ifId] = N_PRIM;
-                astFlags[ifId] = ARRAY;
+                astKinds[ifId] = N_BARE_ARRAY;
 
                 let condBase = astEdges.length;
                 astEdges.push(ifId, tupleNodeId, SENTINEL);
@@ -888,8 +903,7 @@ export function parseJsonSchema(schema) {
                 // No explicit type → conditional guard
                 arrNodeId = allocNode();
                 let ifId = allocNode();
-                astKinds[ifId] = N_PRIM;
-                astFlags[ifId] = ARRAY;
+                astKinds[ifId] = N_BARE_ARRAY;
 
                 let condBase = astEdges.length;
                 astEdges.push(ifId, arrNodeId, SENTINEL);
@@ -913,19 +927,72 @@ export function parseJsonSchema(schema) {
         if (hasVHeader) writeValidators(typeNodeId, vHeader, vPayloadArr);
 
         if (hasType) {
-            if (typeof typeVal === 'string') {
-                astKinds[typeNodeId] = N_PRIM;
-                astFlags[typeNodeId] = mapSingleTypePrim(typeVal) >>> 0;
-            } else if (typeVal.length === 1) {
-                astKinds[typeNodeId] = N_PRIM;
-                astFlags[typeNodeId] = mapSingleTypePrim(typeVal[0]) >>> 0;
-            } else {
-                let merged = 0;
-                for (let i = 0; i < typeVal.length; i++) {
-                    merged |= mapSingleTypePrim(typeVal[i]);
+            /**
+             * Emit a single type string or type array as AST nodes.
+             * Primitives map to N_PRIM with bitmask flags. Container types
+             * ("array", "object") map to N_BARE_ARRAY / N_BARE_OBJECT since
+             * they are complex-only types with no primitive bit representation.
+             * Mixed type arrays with containers are wrapped in N_OR.
+             */
+            let typeArr = typeof typeVal === 'string' ? null : typeVal;
+            let singleType = typeof typeVal === 'string' ? typeVal : (typeVal.length === 1 ? typeVal[0] : null);
+
+            if (singleType !== null) {
+                if (singleType === 'array') {
+                    astKinds[typeNodeId] = N_BARE_ARRAY;
+                } else if (singleType === 'object') {
+                    astKinds[typeNodeId] = N_BARE_OBJECT;
+                } else {
+                    astKinds[typeNodeId] = N_PRIM;
+                    astFlags[typeNodeId] = mapSingleTypePrim(singleType) >>> 0;
                 }
-                astKinds[typeNodeId] = N_PRIM;
-                astFlags[typeNodeId] = merged >>> 0;
+            } else {
+                // Type array with multiple entries — check for container types
+                let hasContainer = false;
+                let primMerged = 0;
+                let hasArrayType = false;
+                let hasObjectType = false;
+                for (let i = 0; i < typeArr.length; i++) {
+                    if (isContainerType(typeArr[i])) {
+                        hasContainer = true;
+                        if (typeArr[i] === 'array') {
+                            hasArrayType = true;
+                        } else {
+                            hasObjectType = true;
+                        }
+                    } else {
+                        primMerged |= mapSingleTypePrim(typeArr[i]);
+                    }
+                }
+                if (!hasContainer) {
+                    // All primitives — merge as before
+                    astKinds[typeNodeId] = N_PRIM;
+                    astFlags[typeNodeId] = primMerged >>> 0;
+                } else {
+                    // Mixed: wrap in N_OR (anyOf) with primitives + bare containers
+                    let edgeBase = astEdges.length;
+                    let branchCount = (primMerged !== 0 ? 1 : 0) + (hasArrayType ? 1 : 0) + (hasObjectType ? 1 : 0);
+                    astKinds[typeNodeId] = N_OR;
+                    astChild0[typeNodeId] = edgeBase;
+                    astChild1[typeNodeId] = branchCount;
+
+                    if (primMerged !== 0) {
+                        let primId = allocNode();
+                        astKinds[primId] = N_PRIM;
+                        astFlags[primId] = primMerged >>> 0;
+                        astEdges.push(primId);
+                    }
+                    if (hasArrayType) {
+                        let arrId = allocNode();
+                        astKinds[arrId] = N_BARE_ARRAY;
+                        astEdges.push(arrId);
+                    }
+                    if (hasObjectType) {
+                        let objId = allocNode();
+                        astKinds[objId] = N_BARE_OBJECT;
+                        astEdges.push(objId);
+                    }
+                }
             }
         } else {
             // Validators but no type → matches any type
@@ -958,6 +1025,7 @@ export function parseJsonSchema(schema) {
         vPayloads,
         propNames,
         callbacks,
+        regexes,
         rootId,
         defIds,
         defNames,

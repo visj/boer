@@ -2,11 +2,12 @@ import {
     COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
     ANY, NEVER, FALSE, TRUE, BOOLEAN,
     NUMBER, STRING, INTEGER, BIGINT,
-    ARRAY, OBJECT, DATE, URI,
+    DATE, URI,
     SIMPLE, PRIM_MASK, KIND_MASK,
-    K_PRIMITIVE, K_OBJECT, K_ARRAY, K_UNION,
-    K_REFINE, K_TUPLE, K_RECORD, K_OR, K_EXCLUSIVE,
-    K_INTERSECT, K_NOT, K_CONDITIONAL,
+    K_PRIMITIVE, K_OBJECT, K_COLLECTION, K_COMPOSITION,
+    K_UNION, K_TUPLE, K_WRAPPER, K_CONDITIONAL,
+    K_ARRAY, K_RECORD, K_OR, K_EXCLUSIVE, K_INTERSECT,
+    K_REFINE, K_NOT,
     KIND_ENUM_MASK, HAS_VALIDATOR,
     FAIL, toString
 } from './const.js';
@@ -34,8 +35,8 @@ function optional(typedef) {
 }
 
 /**
- * 
- * @param {*} value 
+ *
+ * @param {*} value
  * @returns {value is number}
  */
 function isNumber(value) {
@@ -43,8 +44,8 @@ function isNumber(value) {
 }
 
 /**
- * 
- * @param {*} value 
+ *
+ * @param {*} value
  * @returns {value is Record<string, any>}
  */
 function isObject(value) {
@@ -52,15 +53,15 @@ function isObject(value) {
 }
 
 /**
- * 
+ *
  * @param {!Array<number>} buffer
- * @returns {void} 
+ * @returns {void}
  */
 function sortByKeyId(buffer) {
     /**
-     * 
-     * @param {number} i 
-     * @param {number} j 
+     *
+     * @param {number} i
+     * @param {number} j
      */
     function swap(i, j) {
         let i2 = i << 1;
@@ -76,9 +77,9 @@ function sortByKeyId(buffer) {
     }
 
     /**
-     * 
-     * @param {number} low 
-     * @param {number} high 
+     *
+     * @param {number} low
+     * @param {number} high
      * @returns {void}
      */
     function quicksort(low, high) {
@@ -117,13 +118,17 @@ function sortByKeyId(buffer) {
 }
 
 /**
+ * Parses a raw value against a primitive type bitmask, with optional reification.
+ * ARRAY and OBJECT are complex-only; they do not appear in this function.
  * @param {*} raw
  * @param {number} mask - only VALUE bits
  * @param {boolean} reify
  * @returns {*} parsed value, or FAIL
  */
 function parseValue(raw, mask, reify) {
-    if (mask & ANY) return raw;
+    if (mask & ANY) {
+        return raw;
+    }
     let jsType = typeof raw;
     if (jsType === 'boolean') {
         return (raw ? (mask & TRUE) : (mask & FALSE)) ? raw : FAIL;
@@ -172,9 +177,6 @@ function parseValue(raw, mask, reify) {
         }
         return FAIL;
     }
-    if (Array.isArray(raw)) {
-        return (mask & ARRAY) ? raw : FAIL;
-    }
     if (
         ((mask & BIGINT) && jsType === 'bigint') ||
         ((mask & DATE) && raw instanceof Date) ||
@@ -182,35 +184,35 @@ function parseValue(raw, mask, reify) {
     ) {
         return raw;
     }
-    if ((mask & OBJECT) && toString.call(raw) === '[object Object]') {
-        return raw;
-    }
     return FAIL;
 }
 
 /**
+ * Fast path type check for primitive value bits.
  * @param {*} raw
  * @param {number} mask - only VALUE bits
  * @returns {boolean}
  */
 function _isValue(raw, mask) {
-    if (mask & ANY) return true;
+    if (mask & ANY) {
+        return true;
+    }
     let jsType = typeof raw;
     return (
         jsType === 'string' ? (mask & STRING) !== 0 :
             jsType === 'number' ? ((mask & NUMBER) !== 0 || ((mask & INTEGER) !== 0 && Number.isInteger(raw))) :
                 jsType === 'boolean' ? (raw ? (mask & TRUE) : (mask & FALSE)) !== 0 :
                     jsType === 'bigint' ? (mask & BIGINT) !== 0 :
-                        Array.isArray(raw) ? (mask & ARRAY) !== 0 :
-                            raw instanceof Date ? (mask & DATE) !== 0 :
-                                raw instanceof URL ? (mask & URI) !== 0 :
-                                    (mask & OBJECT) !== 0 && toString.call(raw) === '[object Object]'
+                        raw instanceof Date ? (mask & DATE) !== 0 :
+                            raw instanceof URL ? (mask & URI) !== 0 :
+                                false
     );
 }
 
 
 /**
  * Appends primitive type labels from bit flags to parts array.
+ * ARRAY and OBJECT are complex-only; they don't appear here.
  * @param {number} bits
  * @param {!Array<string>} parts
  */
@@ -227,13 +229,12 @@ function describePrimBits(bits, parts) {
     if (bits & STRING) parts.push('string');
     if (bits & INTEGER) parts.push('integer');
     if (bits & BIGINT) parts.push('bigint');
-    if (bits & ARRAY) parts.push('Array');
-    if (bits & OBJECT) parts.push('Object');
     if (bits & DATE) parts.push('Date');
     if (bits & URI) parts.push('URL');
 }
 
 /**
+ * Describes a typedef for diagnostic messages. Uses the new grouped KINDS enum.
  * @param {number} type
  * @param {Uint32Array} kinds
  * @returns {string}
@@ -253,26 +254,32 @@ function describeType(type, kinds) {
         let ct = header & KIND_ENUM_MASK;
         if (ct === K_PRIMITIVE) {
             describePrimBits(header & SIMPLE, parts);
-        } else if (ct === K_ARRAY) {
-            parts.push('Array');
-        } else if (ct === K_UNION) {
-            parts.push('Union');
         } else if (ct === K_OBJECT) {
             parts.push('Object');
-        } else if (ct === K_REFINE) {
-            parts.push('Refined');
+        } else if (ct === K_COLLECTION) {
+            if (header & K_ARRAY) {
+                parts.push('Array');
+            } else if (header & K_RECORD) {
+                parts.push('Record');
+            }
+        } else if (ct === K_COMPOSITION) {
+            if (header & K_OR) {
+                parts.push('Or');
+            } else if (header & K_EXCLUSIVE) {
+                parts.push('Exclusive');
+            } else if (header & K_INTERSECT) {
+                parts.push('Intersect');
+            }
+        } else if (ct === K_UNION) {
+            parts.push('Union');
         } else if (ct === K_TUPLE) {
             parts.push('Tuple');
-        } else if (ct === K_RECORD) {
-            parts.push('Record');
-        } else if (ct === K_OR) {
-            parts.push('Or');
-        } else if (ct === K_EXCLUSIVE) {
-            parts.push('Exclusive');
-        } else if (ct === K_INTERSECT) {
-            parts.push('Intersect');
-        } else if (ct === K_NOT) {
-            parts.push('Not');
+        } else if (ct === K_WRAPPER) {
+            if (header & K_REFINE) {
+                parts.push('Refined');
+            } else if (header & K_NOT) {
+                parts.push('Not');
+            }
         } else if (ct === K_CONDITIONAL) {
             parts.push('Conditional');
         }
