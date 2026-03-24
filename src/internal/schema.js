@@ -9,7 +9,9 @@ import {
     V_ENUM,
     hasOwnProperty
 } from "./const.js";
+import { isObject, isString } from './util.js';
 import { packValidators, PAYLOAD_QUEUE } from "./validator.js";
+import { resolve } from "uri-js";
 
 /**
  * @typedef {import("json-schema-typed").JSONSchema} JSONSchema
@@ -124,6 +126,163 @@ function mapSingleTypePrim(type) {
     throw new Error('Unknown JSON Schema type: ' + type);
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// JSON Schema Dialect Support
+// ────────────────────────────────────────────────────────────────────────────
+
+/** Supported JSON Schema draft versions as integer enum. */
+const DRAFT_4 = 0;
+const DRAFT_6 = 1;
+const DRAFT_7 = 2;
+const DRAFT_2019 = 3;
+const DRAFT_2020 = 4;
+
+/**
+ * Transpiles legacy JSON Schema drafts into Draft 2020-12 format in-place.
+ * * @param {Schema} schema - The schema object to mutate.
+ * @param {number} dialect - The dialect constant (e.g., DRAFT_7).
+ */
+export function transpile(schema, dialect) {
+    // 1. Draft 2019-09 and older (DRAFT_2019, 7, 6, 4)
+    // Desugar array tuples: `items` (array) + `additionalItems` -> `prefixItems` + `items`
+    if (dialect <= DRAFT_2019) {
+        if (Array.isArray(schema.items)) {
+            schema.prefixItems = schema.items;
+            schema.items = schema.additionalItems !== void 0 ? schema.additionalItems : true;
+            schema.additionalItems = void 0;
+        }
+    }
+
+    // 2. Draft 7 and older (DRAFT_7, 6, 4)
+    if (dialect <= DRAFT_7) {
+        // Desugar dependencies -> dependentRequired / dependentSchemas
+        if (schema.dependencies !== void 0) {
+            /**
+             * @type {Record<string, Array<string> | ReadonlyArray<string>> | undefined}
+             */
+            let depReq;
+            /**
+             * @type {Record<string, JSONSchema> | undefined}
+             */
+            let depSch;
+
+            for (let k in schema.dependencies) {
+                let v = schema.dependencies[k];
+                if (Array.isArray(v)) {
+                    if (depReq === void 0) {
+                        depReq = {};
+                    }
+                    depReq[k] = v;
+                } else {
+                    if (depSch === void 0) {
+                        depSch = {};
+                    }
+                    depSch[k] = /** @type {JSONSchema} */(v);
+                }
+            }
+
+            schema.dependencies = void 0;
+            if (depReq !== void 0) schema.dependentRequired = depReq;
+            if (depSch !== void 0) schema.dependentSchemas = depSch;
+        }
+
+        // Rename definitions -> $defs
+        if (schema.definitions !== void 0) {
+            schema.$defs = schema.definitions;
+            schema.definitions = void 0;
+        }
+    }
+
+    // 3. Draft 4 only (DRAFT_4)
+    if (dialect === DRAFT_4) {
+        // Rename id -> $id
+        // @ts-ignore
+        if (schema.id !== void 0 && typeof schema.id === 'string') {
+            //@ts-ignore
+            schema.$id = schema.id;
+            //@ts-ignore
+            schema.id = void 0;
+        }
+
+        // Desugar boolean exclusive limits into numeric exclusive limits
+        //@ts-ignore
+        if (schema.exclusiveMinimum === true && schema.minimum !== void 0) {
+            schema.exclusiveMinimum = schema.minimum;
+            schema.minimum = void 0;
+            //@ts-ignore
+        } else if (schema.exclusiveMinimum === false) {
+            schema.exclusiveMinimum = void 0;
+        }
+        //@ts-ignore
+        if (schema.exclusiveMaximum === true && schema.maximum !== void 0) {
+            schema.exclusiveMaximum = schema.maximum;
+            schema.maximum = void 0;
+            //@ts-ignore
+        } else if (schema.exclusiveMaximum === false) {
+            schema.exclusiveMaximum = void 0;
+        }
+    }
+    schema.$schema = "https://json-schema.org/draft/2020-12/schema";
+}
+
+/**
+ * Maps a JSON Schema `$schema` URI to a dialect enum constant.
+ * Defaults to DRAFT_2020 for unknown or absent URIs.
+ * @param {string|null|undefined} uri
+ * @returns {number}
+ */
+function getDialect(uri) {
+    if (!uri) return DRAFT_2020;
+    if (uri.indexOf('draft-07') !== -1) return DRAFT_7;
+    if (uri.indexOf('draft-06') !== -1) return DRAFT_6;
+    if (uri.indexOf('draft-04') !== -1) return DRAFT_4;
+    if (uri.indexOf('2019-09') !== -1) return DRAFT_2019;
+    return DRAFT_2020;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// CompoundSchema — multi-schema container for bundle parsing
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Holds one or more related JSON Schemas and compiles them together into a
+ * single FlatAst, enabling cross-schema $ref resolution and per-schema
+ * dialect desugaring.
+ *
+ * @constructor
+ * @param {string|null} dialect — default dialect URI for schemas without $schema
+ */
+function CompoundSchema(dialect) {
+    /** @type {Array<JSONSchema>} */
+    this.schemas = [];
+    /** @type {Array<string|null>} */
+    this.names = [];
+    this.count = 0;
+    /** @type {number} — default dialect for schemas without a $schema keyword */
+    this.defaultDialect = getDialect(dialect);
+    /** @type {Map<string, JSONSchema>} — Maps Absolute URI → Raw JS Schema Object */
+    this.uriRegistry = new Map();
+    /** @type {Map<string, Set<string>>} — Maps $dynamicAnchor name → Set of Absolute URIs */
+    this.dynamicAnchors = new Map();
+}
+
+/**
+ * Adds a schema to this compound. The optional second argument is a friendly
+ * name used as the key in the `roots` record returned by compile().
+ * Dialect detection and URI registration happen lazily during bundle() via
+ * runPreScan — this method only stores the schema and name.
+ *
+ * @param {JSONSchema} schema
+ * @param {string=} name
+ * @returns {number} index in this.schemas (pass to bundle() to request compilation)
+ */
+CompoundSchema.prototype.add = function (schema, name) {
+    const index = this.count++;
+    this.schemas[index] = schema;
+    this.names[index] = name || null;
+    return index;
+};
+
 // parseJsonSchema(schema) → FlatAst
 //
 // Parses a JSON Schema (draft 2020-12) into a FlatAst — a compact,
@@ -179,11 +338,154 @@ function mapSingleTypePrim(type) {
 //
 // ────────────────────────────────────────────────────────────────────────────
 
+// ────────────────────────────────────────────────────────────────────────────
+// Pre-Scan Phase — Tier 1 of the Multi-Tier JIT Resolver
+// ────────────────────────────────────────────────────────────────────────────
+//
+// runPreScan walks the entire schema tree before AST compilation begins. It:
+//   1. Detects per-node dialect from $schema and updates the active dialect.
+//   2. Calls transpile() to upgrade legacy drafts to 2020-12 in-place.
+//   3. Resolves $id values to absolute URIs and registers them in uriRegistry.
+//   4. Registers $anchor fragments in uriRegistry as baseUri#anchorName.
+//   5. Registers $dynamicAnchor names in dynamicAnchors.
+//
+// Because transpile() is destructive, the schemas in compound.schemas are
+// permanently mutated. Callers who need the originals must structuredClone
+// before passing to CompoundSchema.add().
+
 /**
- * @param {JSONSchema|boolean} schema — a JSON Schema document (object or boolean)
+ * Depth-first recursive walker used by runPreScan.
+ * @param {CompoundSchema} compound
+ * @param {any} obj
+ * @param {string} baseUri — absolute URI context inherited from parent scope
+ * @param {number} dialect — DRAFT_* constant inherited from parent scope
+ */
+function walkSchema(compound, obj, baseUri, dialect) {
+    if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
+        return;
+    }
+
+    // A $schema keyword inside a sub-schema changes the active dialect for
+    // that sub-tree. This handles embedded schemas with differing drafts.
+    if (obj.$schema) {
+        dialect = getDialect(obj.$schema);
+    }
+
+    // Transpile legacy keywords to their Draft 2020-12 equivalents in-place.
+    if (dialect !== DRAFT_2020) {
+        transpile(obj, dialect);
+    }
+
+    // After transpile, $id is canonical (Draft 4 `id` has been renamed to $id).
+    const id = obj.$id;
+    if (id) {
+        baseUri = resolve(baseUri, id);
+        compound.uriRegistry.set(baseUri, obj);
+    }
+
+    // $anchor creates a plain-name fragment — store as baseUri#anchorName.
+    if (obj.$anchor) {
+        compound.uriRegistry.set(baseUri + '#' + obj.$anchor, obj);
+    }
+
+    // $dynamicAnchor registers the anchor name in the dynamic scope map.
+    if (obj.$dynamicAnchor) {
+        compound.uriRegistry.set(baseUri + '#' + obj.$dynamicAnchor, obj);
+        let uriSet = compound.dynamicAnchors.get(obj.$dynamicAnchor);
+        if (uriSet === void 0) {
+            uriSet = new Set();
+            compound.dynamicAnchors.set(obj.$dynamicAnchor, uriSet);
+        }
+        uriSet.add(baseUri);
+    }
+
+    // Recurse into every child value that is an object or an array of objects.
+    for (let key in obj) {
+        let val = obj[key];
+        if (typeof val === 'object' && val !== null) {
+            if (Array.isArray(val)) {
+                for (let i = 0; i < val.length; i++) {
+                    walkSchema(compound, val[i], baseUri, dialect);
+                }
+            } else {
+                walkSchema(compound, val, baseUri, dialect);
+            }
+        }
+    }
+}
+
+/**
+ * 
+ * @param {string} baseUri 
+ * @param {string} refString 
+ * @returns {string}
+ */
+function resolveUri(baseUri, refString) {
+    // TODO we will drop this dependency in the future
+    return resolve(baseUri, refString);
+}
+
+/**
+ * Walks a raw JS object using a JSON Pointer fragment.
+ * @param {JSONSchema} rootObj - The root schema object.
+ * @param {string} fragment - The pointer string (e.g., "/$defs/User" or "foo").
+ * @returns {JSONSchema | undefined} The target schema object, or undefined if not found.
+ */
+function resolvePointer(rootObj, fragment) {
+    // JSON Pointers usually start with a slash (e.g., `#/properties/name`).
+    // If it starts with a slash, slice it off so we don't get an empty first segment.
+    let path = fragment.charCodeAt(0) === 47 ? fragment.slice(1) : fragment;
+    if (path === "") {
+        return rootObj;
+    }
+
+    let parts = path.split('/');
+    /** @type {Record<string, any>} */
+    let current = rootObj;
+
+    for (let i = 0; i < parts.length; i++) {
+        // 1. Unescape JSON Pointer special characters
+        // 2. URI decode in case of percent-encoding (e.g., %20)
+        let key = decodeURIComponent(parts[i].replace(/~1/g, '/').replace(/~0/g, '~'));
+        current = current[key];
+        if (current == null) {
+            return void 0;
+        }
+    }
+
+    return current;
+}
+
+/**
+ * Runs the Tier 1 pre-scan over all schemas in the compound. Populates
+ * compound.uriRegistry and compound.dynamicAnchors, and transpiles every
+ * schema object to Draft 2020-12 in-place.
+ * @param {CompoundSchema} compound
+ */
+function runPreScan(compound) {
+    for (let si = 0; si < compound.count; si++) {
+        walkSchema(compound, compound.schemas[si], '', compound.defaultDialect);
+    }
+}
+
+/**
+ * Compiles the schemas added via `.add()` into a single FlatAst. The
+ * `schemas` argument is one or more indices (returned by `.add()`) that
+ * designate the entry-point schemas whose roots are exposed in the final
+ * `roots` record. All other schemas in the compound are parsed as context
+ * (providing $defs and $ref targets) but are not exposed as roots.
+ *
+ * @param {number | number[]} schemas — entry-point schema index or indices
  * @returns {uvd.FlatAst}
  */
-export function parseJsonSchema(schema) {
+CompoundSchema.prototype.bundle = function (schemas) {
+    /** @type {number[]} */
+    const entries = typeof schemas === 'number' ? [schemas] : schemas;
+    const entriesCount = entries.length;
+    // Tier 1: transpile all schemas to Draft 2020-12 in-place and populate
+    // uriRegistry / dynamicAnchors before any AST nodes are allocated.
+    runPreScan(this);
+
     // ── Core SoA node arrays ──
     let capacity = INITIAL_CAPACITY;
     let astKinds = new Uint8Array(capacity);
@@ -239,12 +541,6 @@ export function parseJsonSchema(schema) {
         return idx;
     }
 
-    // ── $ref resolution ──
-    /** @type {Map<number, string>} */
-    let unresolvedRefs = new Map();
-    /** @type {Map<string, number>} */
-    let symbolTable = new Map();
-
     let nextNodeId = 0;
 
     // ── Explicit parse stack (parallel arrays) ──
@@ -255,12 +551,13 @@ export function parseJsonSchema(schema) {
     let frameNodeId = new Uint32Array(MAX_DEPTH);
     let frameLinkType = new Uint8Array(MAX_DEPTH);
     let frameLinkOffset = new Uint32Array(MAX_DEPTH);
+    /**
+     * @type {Array<string>}
+     */
+    let frameBaseUri = new Array(MAX_DEPTH)
+    /** @type {Array<JSONSchema>} */
+    let frameDocRoot = new Array(MAX_DEPTH);
     let tail = 0;
-
-    /** @type {number[]} */
-    let defIds = [];
-    /** @type {string[]} */
-    let defNames = [];
 
     // ── Helpers ──
 
@@ -294,17 +591,20 @@ export function parseJsonSchema(schema) {
     }
 
     /**
-     * 
-     * @param {JSONSchema} schemaObj 
-     * @param {number} nodeId 
-     * @param {number} linkType 
-     * @param {number} linkOffset 
+     * @param {JSONSchema} schemaObj
+     * @param {number} nodeId
+     * @param {number} linkType
+     * @param {number} linkOffset
+     * @param {string} baseUri
+     * @param {JSONSchema} root
      */
-    function pushFrame(schemaObj, nodeId, linkType, linkOffset) {
+    function pushFrame(schemaObj, nodeId, linkType, linkOffset, baseUri, root) {
         frameSchema[tail] = schemaObj;
         frameNodeId[tail] = nodeId;
         frameLinkType[tail] = linkType;
         frameLinkOffset[tail] = linkOffset;
+        frameBaseUri[tail] = baseUri;
+        frameDocRoot[tail] = root;
         tail++;
     }
 
@@ -346,33 +646,43 @@ export function parseJsonSchema(schema) {
             vPayloads.push(vPayloadArr[i]);
         }
     }
+    /**
+     * We only push the input schemas onto the stack
+     * The base schemas are resolved lazily if we encounter them
+     * through a $ref in any of the input schemas
+     */
 
-    // Pre-scan $defs — allocate node ids so $ref can resolve them.
+    /** @type {number[]} */
+    let schemaRootIds = new Array(entries.length);
+    for (let i = 0; i < entriesCount; i++) {
+        let si = entries[i];
+        let rid = allocNode();
+        schemaRootIds[si] = rid;
 
-    if (typeof schema === 'object' && schema !== null) {
-        let defs = schema.$defs;
-        if (defs !== void 0) {
-            let defKeys = Object.keys(defs);
-            for (let i = 0; i < defKeys.length; i++) {
-                let name = defKeys[i];
-                let id = allocNode();
-                symbolTable.set('#/$defs/' + name, id);
-                defIds.push(id);
-                defNames.push(name);
-                pushFrame(defs[name], id, LINK_DEF, 0);
+        let schema = this.schemas[si];
+        let baseUri = "";
+        let docRoot = schema; // Boolean schemas act as their own document root
+
+        // Only objects can have an $id or act as a parent for fragments
+        if (typeof schema === 'object' && schema !== null) {
+            if (schema.$id !== void 0) {
+                baseUri = resolveUri('', schema.$id);
             }
         }
+
+        pushFrame(schema, rid, LINK_ROOT, 0, baseUri, docRoot);
     }
 
-    // Push root
-    let rootId = allocNode();
-    pushFrame(schema, rootId, LINK_ROOT, 0);
+    /**
+     * @type {Map<string, number>}
+     */
+    let compiledUris = new Map();
 
     // Phase 1: Iterative depth-first parse
 
     while (tail > 0) {
         tail--;
-        let sch = frameSchema[tail];
+        let schema = frameSchema[tail];
         let nodeId = frameNodeId[tail];
         let linkType = frameLinkType[tail];
         let linkOffset = frameLinkOffset[tail];
@@ -384,46 +694,46 @@ export function parseJsonSchema(schema) {
         writeLink(linkType, linkOffset, nodeId);
 
         // ── Boolean schemas ──
-        if (sch === true) {
+        if (schema === true) {
             astKinds[nodeId] = N_PRIM;
             astFlags[nodeId] = (ANY | NULLABLE) >>> 0;
             continue;
         }
-        if (sch === false) {
+        if (schema === false) {
             astKinds[nodeId] = N_PRIM;
             astFlags[nodeId] = NEVER;
             continue;
         }
 
-        if (sch === null) {
+        if (schema === null) {
             throw new Error('Compiler error')
-        }
-
-        // ── $ref ──
-        let ref = sch.$ref;
-        if (ref !== void 0) {
-            astKinds[nodeId] = N_REF;
-            unresolvedRefs.set(nodeId, ref);
-            continue;
         }
 
         // ── Composition keywords ──
 
-        let allOf = sch.allOf;
-        let anyOf = sch.anyOf;
-        let oneOf = sch.oneOf;
-        let notSchema = sch.not;
-        let ifSchema = sch.if;
+        let currentBaseUri = frameBaseUri[tail];
+        let currentDocRoot = frameDocRoot[tail];
+        if (isString(schema.$id)) {
+            currentBaseUri = resolveUri(currentBaseUri, schema.$id);
+            currentDocRoot = schema;
+        }
+        let refStr = schema.$ref;
+        const hasRef = isString(refStr);
+        let allOf = schema.allOf;
+        let anyOf = schema.anyOf;
+        let oneOf = schema.oneOf;
+        let notSchema = schema.not;
+        let ifSchema = schema.if;
         let hasComposition = allOf !== void 0 || anyOf !== void 0 || oneOf !== void 0
-            || notSchema !== void 0 || ifSchema !== void 0;
+            || notSchema !== void 0 || ifSchema !== void 0 || hasRef;
         // Count how many composition keywords are present
         let compositionCount = (allOf !== void 0 ? 1 : 0) + (anyOf !== void 0 ? 1 : 0)
             + (oneOf !== void 0 ? 1 : 0) + (notSchema !== void 0 ? 1 : 0)
-            + (ifSchema !== void 0 ? 1 : 0);
+            + (ifSchema !== void 0 ? 1 : 0) + (hasRef ? 1 : 0);
 
         // ── Type + validators + structural keywords ──
 
-        let result = packValidators(sch, SCHEMA_PURE_MASK, virtualLookup);
+        let result = packValidators(schema, SCHEMA_PURE_MASK, virtualLookup);
         let vHeader = result[0];
         /** @type {number[]} */
         let vPayloadArr = [];
@@ -439,12 +749,12 @@ export function parseJsonSchema(schema) {
 
         // ── enum / const preprocessing ──
         // Rule A: const → enum [x]. const is conceptually an enum of length 1.
-        let constVal = sch.const;
-        let enumValues = sch.enum;
+        let constVal = schema.const;
+        let enumValues = schema.enum;
         if (constVal !== void 0 && enumValues === void 0) {
             enumValues = [constVal];
         }
-        let hasEnum = enumValues !== void 0;
+        const hasEnum = enumValues !== void 0;
 
         /** Accumulated primitive type bits from enum values. */
         let enumPrimBits = 0;
@@ -505,8 +815,8 @@ export function parseJsonSchema(schema) {
                     for (let i = 0; i < enumStrings.length; i++) { primEnum.push(enumStrings[i]); }
                     for (let i = 0; i < enumNumbers.length; i++) { primEnum.push(enumNumbers[i]); }
                     if (enumPrimBits & NULLABLE) { primEnum.push(null); }
-                    if (enumPrimBits & TRUE)     { primEnum.push(true); }
-                    if (enumPrimBits & FALSE)    { primEnum.push(false); }
+                    if (enumPrimBits & TRUE) { primEnum.push(true); }
+                    if (enumPrimBits & FALSE) { primEnum.push(false); }
                     branches.push({ enum: primEnum });
                 }
                 for (let i = 0; i < enumComplexSchemas.length; i++) {
@@ -519,7 +829,7 @@ export function parseJsonSchema(schema) {
                     let slot = astEdges.length;
                     astEdges.push(0);
                     let childId = allocNode();
-                    pushFrame(branches[i], childId, LINK_EDGE, slot);
+                    pushFrame(branches[i], childId, LINK_EDGE, slot, currentBaseUri, currentDocRoot);
                 }
                 continue;
             }
@@ -555,18 +865,18 @@ export function parseJsonSchema(schema) {
             // enumPrimBits now holds TRUE/FALSE/NULLABLE/STRING/NUMBER bits from the enum values.
         }
 
-        let typeVal = sch.type;
+        let typeVal = schema.type;
         const hasType = typeVal !== void 0;
         const hasVHeader = vHeader !== 0;
 
-        let props = sch.properties;
-        let required = sch.required;
-        let items = sch.items;
-        let additionalProps = sch.additionalProperties;
-        let patternProps = sch.patternProperties;
-        let prefixItems = sch.prefixItems;
-        let containsSchema = sch.contains;
-        let propNameSchema = sch.propertyNames;
+        let props = schema.properties;
+        let required = schema.required;
+        let items = schema.items;
+        let additionalProps = schema.additionalProperties;
+        let patternProps = schema.patternProperties;
+        let prefixItems = schema.prefixItems;
+        let containsSchema = schema.contains;
+        let propNameSchema = schema.propertyNames;
         const hasProps = props !== void 0 || required !== void 0;
         const hasItems = items !== void 0;
         const hasAdditionalProps = additionalProps !== void 0;
@@ -606,12 +916,13 @@ export function parseJsonSchema(schema) {
                     'minProperties', 'maxProperties', 'pattern',
                     'format', 'dependentRequired', 'minContains', 'maxContains',
                     'enum', 'const']) {
-                    if (sch[key] !== void 0) siblingSchema[key] = sch[key];
+                    if (schema[key] !== void 0) siblingSchema[key] = schema[key];
                 }
                 parts.push(siblingSchema);
             }
 
             // Each composition keyword becomes its own sub-schema
+            if (hasRef) parts.push({ $ref: refStr });
             if (allOf !== void 0) parts.push({ allOf });
             if (anyOf !== void 0) parts.push({ anyOf });
             if (oneOf !== void 0) parts.push({ oneOf });
@@ -619,8 +930,8 @@ export function parseJsonSchema(schema) {
             if (ifSchema !== void 0) {
                 /** @type {Record<string, any>} */
                 let ifPart = { if: ifSchema };
-                if (sch.then !== void 0) ifPart.then = sch.then;
-                if (sch.else !== void 0) ifPart.else = sch.else;
+                if (schema.then !== void 0) ifPart.then = schema.then;
+                if (schema.else !== void 0) ifPart.else = schema.else;
                 parts.push(ifPart);
             }
 
@@ -634,7 +945,7 @@ export function parseJsonSchema(schema) {
                 let slot = astEdges.length;
                 astEdges.push(0);
                 let partId = allocNode();
-                pushFrame(parts[i], partId, LINK_EDGE, slot);
+                pushFrame(parts[i], partId, LINK_EDGE, slot, currentBaseUri, currentDocRoot);
             }
             continue;
         }
@@ -648,7 +959,7 @@ export function parseJsonSchema(schema) {
                 let slot = astEdges.length;
                 astEdges.push(0); // placeholder
                 let childId = allocNode();
-                pushFrame(allOf[i], childId, LINK_EDGE, slot);
+                pushFrame(allOf[i], childId, LINK_EDGE, slot, currentBaseUri, currentDocRoot);
             }
             continue;
         }
@@ -662,7 +973,7 @@ export function parseJsonSchema(schema) {
                 let slot = astEdges.length;
                 astEdges.push(0);
                 let childId = allocNode();
-                pushFrame(anyOf[i], childId, LINK_EDGE, slot);
+                pushFrame(anyOf[i], childId, LINK_EDGE, slot, currentBaseUri, currentDocRoot);
             }
             continue;
         }
@@ -676,7 +987,7 @@ export function parseJsonSchema(schema) {
                 let slot = astEdges.length;
                 astEdges.push(0);
                 let childId = allocNode();
-                pushFrame(oneOf[i], childId, LINK_EDGE, slot);
+                pushFrame(oneOf[i], childId, LINK_EDGE, slot, currentBaseUri, currentDocRoot);
             }
             continue;
         }
@@ -685,7 +996,7 @@ export function parseJsonSchema(schema) {
             let childId = allocNode();
             astKinds[nodeId] = N_NOT;
             astChild0[nodeId] = childId;
-            pushFrame(notSchema, childId, LINK_CHILD0, nodeId);
+            pushFrame(notSchema, childId, LINK_CHILD0, nodeId, currentBaseUri, currentDocRoot);
             continue;
         }
 
@@ -696,18 +1007,72 @@ export function parseJsonSchema(schema) {
             astChild0[nodeId] = edgeBase;
 
             let ifId = allocNode();
-            pushFrame(ifSchema, ifId, LINK_EDGE, edgeBase);
+            pushFrame(ifSchema, ifId, LINK_EDGE, edgeBase, currentBaseUri, currentDocRoot);
 
-            let thenSchema = sch.then;
+            let thenSchema = schema.then;
             if (thenSchema !== void 0) {
                 let thenId = allocNode();
-                pushFrame(thenSchema, thenId, LINK_EDGE, edgeBase + 1);
+                pushFrame(thenSchema, thenId, LINK_EDGE, edgeBase + 1, currentBaseUri, currentDocRoot);
             }
-            let elseSchema = sch.else;
+            let elseSchema = schema.else;
             if (elseSchema !== void 0) {
                 let elseId = allocNode();
-                pushFrame(elseSchema, elseId, LINK_EDGE, edgeBase + 2);
+                pushFrame(elseSchema, elseId, LINK_EDGE, edgeBase + 2, currentBaseUri, currentDocRoot);
             }
+            continue;
+        }
+
+        if (hasRef) {
+            let absoluteUri = resolveUri(currentBaseUri, refStr);
+            let targetId = compiledUris.get(absoluteUri);
+
+            astKinds[nodeId] = N_REF;
+
+            // ── JIT Lazy Compilation ──
+            if (targetId === void 0) {
+                // 2. ONLY fallback to JSON Pointer if it's not a registered named anchor
+                if (targetId === void 0) {
+                    // Pre-split the URI to separate the Base Context from the Fragment
+                    let hashIdx = absoluteUri.indexOf('#');
+                    let baseDocUri = hashIdx !== -1 ? absoluteUri.substring(0, hashIdx) : absoluteUri;
+                    let fragment = hashIdx !== -1 ? absoluteUri.substring(hashIdx + 1) : "";
+
+                    // 1. Check for registered named anchors first (e.g., #items)
+                    let targetObj = this.uriRegistry.get(absoluteUri);
+                    let targetDocRoot;
+
+                    // 2. Resolve the owning document root for this target
+                    if (baseDocUri === currentBaseUri) {
+                        targetDocRoot = currentDocRoot;
+                    } else {
+                        targetDocRoot = this.uriRegistry.get(baseDocUri);
+                        if (targetDocRoot === void 0) {
+                            throw new Error("Unresolvable $ref base: " + baseDocUri);
+                        }
+                    }
+
+                    // 3. Fallback to JSON Pointer if it wasn't a named anchor
+                    if (targetObj === void 0) {
+                        if (fragment === "") {
+                            targetObj = targetDocRoot;
+                        } else {
+                            // SPEC: A fragment cannot point inside a boolean schema
+                            if (typeof targetDocRoot !== 'object' || targetDocRoot === null) {
+                                throw new Error("Cannot resolve fragment '" + fragment + "' inside boolean schema: " + baseDocUri);
+                            }
+                            targetObj = resolvePointer(targetDocRoot, fragment);
+                        }
+                        if (targetObj === void 0) {
+                            throw new Error("Unresolvable $ref pointer: " + absoluteUri);
+                        }
+                    }
+
+                    targetId = allocNode();
+                    compiledUris.set(absoluteUri, targetId);
+                    pushFrame(targetObj, targetId, LINK_DEF, 0, baseDocUri, targetDocRoot);
+                }
+            }
+            astChild0[nodeId] = targetId;
             continue;
         }
 
@@ -786,7 +1151,7 @@ export function parseJsonSchema(schema) {
                 astEdges.push(0);             // slot 1: child node id (placeholder)
                 astEdges.push(requiredSet.has(key) ? 0 : 1); // slot 2: flags
 
-                pushFrame(childSchema, childId, LINK_EDGE, childSlot);
+                pushFrame(childSchema, childId, LINK_EDGE, childSlot, currentBaseUri, currentDocRoot);
             }
 
             // additionalProperties: store child node id after property edges
@@ -802,7 +1167,7 @@ export function parseJsonSchema(schema) {
                     let addChildId = allocNode();
                     let addSlot = astEdges.length;
                     astEdges.push(0); // placeholder
-                    pushFrame(additionalProps, addChildId, LINK_EDGE, addSlot);
+                    pushFrame(additionalProps, addChildId, LINK_EDGE, addSlot, currentBaseUri, currentDocRoot);
                 }
             }
 
@@ -821,7 +1186,7 @@ export function parseJsonSchema(schema) {
                     let patChildId = allocNode();
                     let patSlot = astEdges.length;
                     astEdges.push(0); // placeholder for child node id
-                    pushFrame(patternProps[pat], patChildId, LINK_EDGE, patSlot);
+                    pushFrame(patternProps[pat], patChildId, LINK_EDGE, patSlot, currentBaseUri, currentDocRoot);
                 }
             }
 
@@ -832,7 +1197,7 @@ export function parseJsonSchema(schema) {
                 let pnChildId = allocNode();
                 let pnSlot = astEdges.length;
                 astEdges.push(0); // placeholder for child node id
-                pushFrame(propNameSchema, pnChildId, LINK_EDGE, pnSlot);
+                pushFrame(propNameSchema, pnChildId, LINK_EDGE, pnSlot, currentBaseUri, currentDocRoot);
             }
 
             // Attach validators (minProperties, maxProperties, etc.)
@@ -871,7 +1236,7 @@ export function parseJsonSchema(schema) {
                 let slot = astEdges.length;
                 astEdges.push(0); // placeholder
                 let childId = allocNode();
-                pushFrame(prefixItems[i], childId, LINK_EDGE, slot);
+                pushFrame(prefixItems[i], childId, LINK_EDGE, slot, currentBaseUri, currentDocRoot);
             }
 
             // items alongside prefixItems → rest type
@@ -881,7 +1246,7 @@ export function parseJsonSchema(schema) {
                 let restSlot = astEdges.length;
                 astEdges.push(0);
                 let restChildId = allocNode();
-                pushFrame(items, restChildId, LINK_EDGE, restSlot);
+                pushFrame(items, restChildId, LINK_EDGE, restSlot, currentBaseUri, currentDocRoot);
             } else {
                 astFlags[tupleNodeId] |= 1;
                 let anyRestId = allocNode();
@@ -890,7 +1255,9 @@ export function parseJsonSchema(schema) {
                 astEdges.push(anyRestId);
             }
 
-            if (hasVHeader) writeValidators(tupleNodeId, vHeader, vPayloadArr);
+            if (hasVHeader) {
+                writeValidators(tupleNodeId, vHeader, vPayloadArr);
+            }
             continue;
         }
 
@@ -924,9 +1291,11 @@ export function parseJsonSchema(schema) {
             astFlags[arrNodeId] |= 2; // bit 1 = has contains child
             let containsChildId = allocNode();
             astChild1[arrNodeId] = containsChildId;
-            pushFrame(containsSchema, containsChildId, LINK_CHILD1, arrNodeId);
+            pushFrame(containsSchema, containsChildId, LINK_CHILD1, arrNodeId, currentBaseUri, currentDocRoot);
 
-            if (hasVHeader) writeValidators(arrNodeId, vHeader, vPayloadArr);
+            if (hasVHeader) {
+                writeValidators(arrNodeId, vHeader, vPayloadArr);
+            }
             continue;
         }
 
@@ -953,24 +1322,28 @@ export function parseJsonSchema(schema) {
             let elemId = allocNode();
             astKinds[arrNodeId] = N_ARRAY;
             astChild0[arrNodeId] = elemId;
-            pushFrame(items, elemId, LINK_CHILD0, arrNodeId);
+            pushFrame(items, elemId, LINK_CHILD0, arrNodeId, currentBaseUri, currentDocRoot);
 
             // Wire contains child into astChild1 when both items and contains are present
             if (hasContains) {
                 astFlags[arrNodeId] |= 2; // bit 1 = has contains child
                 let containsChildId = allocNode();
                 astChild1[arrNodeId] = containsChildId;
-                pushFrame(containsSchema, containsChildId, LINK_CHILD1, arrNodeId);
+                pushFrame(containsSchema, containsChildId, LINK_CHILD1, arrNodeId, currentBaseUri, currentDocRoot);
             }
 
             // Attach validators (minItems, maxItems, uniqueItems, etc.)
-            if (hasVHeader) writeValidators(arrNodeId, vHeader, vPayloadArr);
+            if (hasVHeader) {
+                writeValidators(arrNodeId, vHeader, vPayloadArr);
+            }
             continue;
         }
 
         // ── Pure type / validator node (no structural keywords) ──
 
-        if (hasVHeader) writeValidators(typeNodeId, vHeader, vPayloadArr);
+        if (hasVHeader) {
+            writeValidators(typeNodeId, vHeader, vPayloadArr);
+        }
 
         if (hasType) {
             /**
@@ -1093,12 +1466,25 @@ export function parseJsonSchema(schema) {
 
     // Phase 2: Resolve $ref nodes
 
-    for (let [nodeId, uri] of unresolvedRefs) {
-        let targetId = symbolTable.get(uri);
-        if (targetId === undefined) {
-            throw new Error('Unresolved $ref: ' + uri);
+    /** @type {number[]} */
+    let rootIds = [];
+    /** @type {Array<string|null>} */
+    let rootNames = [];
+    /** @type {Array<string|null>} */
+    let rootUris = [];
+
+    for (let i = 0; i < entriesCount; i++) {
+        let index = entries[i];
+        let schema = this.schemas[index];
+
+        rootIds.push(schemaRootIds[index]);
+        rootNames.push(this.names[index]);
+
+        let uri = null;
+        if (isObject(schema) && schema.$id !== void 0) {
+            uri = schema.$id;
         }
-        astChild0[nodeId] = targetId;
+        rootUris.push(uri);
     }
 
     // Trim typed arrays to actual node count
@@ -1116,9 +1502,24 @@ export function parseJsonSchema(schema) {
         propNames,
         callbacks,
         regexes,
-        rootId,
-        defIds,
-        defNames,
+        rootIds,
+        rootNames,
+        rootUris,
         nodeCount: nc,
     };
+};
+
+/**
+ * Convenience wrapper — parses a single JSON Schema into a FlatAst.
+ * Internally creates a CompoundSchema, adds the schema, and calls bundle().
+ * @param {JSONSchema|boolean} schema — a JSON Schema document (object or boolean)
+ * @param {string} dialect
+ * @returns {uvd.FlatAst}
+ */
+export function parseJSONSchema(schema, dialect) {
+    const compound = new CompoundSchema(dialect);
+    const idx = compound.add(/** @type {JSONSchema} */(schema));
+    return compound.bundle(idx);
 }
+
+export { CompoundSchema };

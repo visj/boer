@@ -22,8 +22,8 @@ const MAX_DEPTH = 512;
 
 // Compiler states — tracks each node's progress through the two-visit pattern.
 const UNVISITED = 0;
-const VISITING  = 1;
-const COMPILED  = 2;
+const VISITING = 1;
+const COMPILED = 2;
 
 const SENTINEL = 0xFFFFFFFF;
 
@@ -69,17 +69,18 @@ const SENTINEL = 0xFFFFFFFF;
 
 /**
  * Compiles a FlatAst into the catalog's heap storage.
+ * @template T
  * @template {symbol} R
  * @param {uvd.Catalog<R>} cat — a catalog instance returned by catalog()
  * @param {uvd.FlatAst} ast
- * @returns {uvd.CompiledSchema}
+ * @returns {uvd.SchemaResource<T, R>[]}
  */
 export function compile(cat, ast) {
     let heap = cat.__heap;
     let HEAP = heap.HEAP;
-    let malloc         = heap.malloc;
+    let malloc = heap.malloc;
     let allocValidator = heap.allocValidator;
-    let lookup         = heap.lookup;
+    let lookup = heap.lookup;
 
     let scratch = false;
 
@@ -87,11 +88,11 @@ export function compile(cat, ast) {
         astKinds, astFlags, astChild0, astChild1,
         astVHeaders, astVOffset, vPayloads,
         astEdges, propNames, callbacks, regexes,
-        rootId, defIds, defNames, nodeCount,
+        rootIds, rootNames, rootUris, nodeCount,
     } = ast;
 
     // Per-node compiler state
-    let astState    = new Uint8Array(nodeCount);
+    let astState = new Uint8Array(nodeCount);
     let astCompiled = new Uint32Array(nodeCount);
 
     // Circular $ref patches: [refNodeId, targetNodeId, reservedKindPtr]
@@ -102,11 +103,10 @@ export function compile(cat, ast) {
     let stack = new Uint32Array(MAX_DEPTH);
     let sp = 0;
 
-    // Push all defs first so they're available for $ref resolution
-    for (let i = 0; i < defIds.length; i++) {
-        stack[sp++] = defIds[i];
+    // Push all entry-point roots
+    for (let i = 0; i < rootIds.length; i++) {
+        stack[sp++] = rootIds[i];
     }
-    stack[sp++] = rootId;
 
     // ── Helper: build validator payloads from the FlatAst slab ──
 
@@ -130,7 +130,7 @@ export function compile(cat, ast) {
     function compileValidator(nodeId) {
         let vHeader = astVHeaders[nodeId];
         if (vHeader === 0) return null;
-        let off   = astVOffset[nodeId];
+        let off = astVOffset[nodeId];
         let count = popcnt16(vHeader & 0xFFFF);
         let regexCache = heap.REGEX_CACHE;
         let patternSlot = (vHeader & V_PATTERN) ? popcnt16(vHeader & (V_PATTERN - 1)) : -1;
@@ -152,7 +152,9 @@ export function compile(cat, ast) {
     while (sp > 0) {
         let nodeId = stack[--sp];
 
-        if (astState[nodeId] === COMPILED) continue;
+        if (astState[nodeId] === COMPILED) {
+            continue;
+        }
 
         let kind = astKinds[nodeId];
 
@@ -268,7 +270,7 @@ export function compile(cat, ast) {
                 continue;
             }
 
-            if (astState[targetId] === VISITING) {
+            if (astState[targetId] === VISITING || targetId === nodeId) {
                 // Circular dependency — reserve kind slots for later patching
                 let kindPtr = HEAP.KIND_PTR;
                 HEAP.KIND_PTR += 2;
@@ -295,7 +297,7 @@ export function compile(cat, ast) {
             switch (kind) {
                 case N_OBJECT: {
                     let offset = astChild0[nodeId];
-                    let count  = astChild1[nodeId];
+                    let count = astChild1[nodeId];
                     for (let i = 0; i < count; i++) {
                         stack[sp++] = astEdges[offset + i * 3 + 1]; // childId
                     }
@@ -333,7 +335,7 @@ export function compile(cat, ast) {
                 case N_EXCLUSIVE:
                 case N_INTERSECT: {
                     let offset = astChild0[nodeId];
-                    let count  = astChild1[nodeId];
+                    let count = astChild1[nodeId];
                     for (let i = 0; i < count; i++) {
                         stack[sp++] = astEdges[offset + i];
                     }
@@ -352,7 +354,7 @@ export function compile(cat, ast) {
                 }
                 case N_TUPLE: {
                     let offset = astChild0[nodeId];
-                    let count  = astChild1[nodeId];
+                    let count = astChild1[nodeId];
                     for (let i = 0; i < count; i++) {
                         stack[sp++] = astEdges[offset + i];
                     }
@@ -375,13 +377,13 @@ export function compile(cat, ast) {
         switch (kind) {
             case N_OBJECT: {
                 let offset = astChild0[nodeId];
-                let count  = astChild1[nodeId];
+                let count = astChild1[nodeId];
                 let resolved = new Array(count * 2);
 
                 for (let i = 0; i < count; i++) {
                     let nameIdx = astEdges[offset + i * 3];
                     let childId = astEdges[offset + i * 3 + 1];
-                    let oflags  = astEdges[offset + i * 3 + 2];
+                    let oflags = astEdges[offset + i * 3 + 2];
 
                     resolved[i * 2] = lookup(propNames[nameIdx]);
                     let compiled = astCompiled[childId] >>> 0;
@@ -535,7 +537,7 @@ export function compile(cat, ast) {
 
             case N_OR: {
                 let offset = astChild0[nodeId];
-                let count  = astChild1[nodeId];
+                let count = astChild1[nodeId];
                 let types = new Array(count);
                 let allPrimitive = true;
                 let merged = 0;
@@ -562,7 +564,7 @@ export function compile(cat, ast) {
 
             case N_EXCLUSIVE: {
                 let offset = astChild0[nodeId];
-                let count  = astChild1[nodeId];
+                let count = astChild1[nodeId];
                 let types = new Array(count);
                 for (let i = 0; i < count; i++) {
                     types[i] = astCompiled[astEdges[offset + i]];
@@ -573,7 +575,7 @@ export function compile(cat, ast) {
 
             case N_INTERSECT: {
                 let offset = astChild0[nodeId];
-                let count  = astChild1[nodeId];
+                let count = astChild1[nodeId];
                 let types = new Array(count);
                 for (let i = 0; i < count; i++) {
                     types[i] = astCompiled[astEdges[offset + i]];
@@ -590,7 +592,7 @@ export function compile(cat, ast) {
 
             case N_CONDITIONAL: {
                 let base = astChild0[nodeId];
-                let ifType   = astCompiled[astEdges[base]];
+                let ifType = astCompiled[astEdges[base]];
                 let thenType = astEdges[base + 1] !== SENTINEL ? astCompiled[astEdges[base + 1]] : 0;
                 let elseType = astEdges[base + 2] !== SENTINEL ? astCompiled[astEdges[base + 2]] : 0;
                 let types = [ifType, thenType, elseType];
@@ -600,7 +602,7 @@ export function compile(cat, ast) {
 
             case N_TUPLE: {
                 let offset = astChild0[nodeId];
-                let count  = astChild1[nodeId];
+                let count = astChild1[nodeId];
                 /** Append restType | REST as extra slab element when present */
                 let hasRestElem = (astFlags[nodeId] & 1) !== 0;
                 let totalCount = hasRestElem ? count + 1 : count;
@@ -640,7 +642,7 @@ export function compile(cat, ast) {
     for (let i = 0; i < circularPatches.length; i++) {
         let [refNodeId, targetId, kindPtr] = circularPatches[i];
         let compiled = astCompiled[targetId];
-        if (typeof compiled === 'number' && (compiled & COMPLEX) === 0) {
+        if ((compiled & COMPLEX) === 0) {
             // Raw primitive → promote to K_PRIMITIVE
             HEAP.KINDS[kindPtr] = K_PRIMITIVE | compiled;
             HEAP.KINDS[kindPtr + 1] = 0;
@@ -652,12 +654,21 @@ export function compile(cat, ast) {
         }
     }
 
-    // ── Build result ──
-    /** @type {Record<string, number>} */
-    let resultDefs = {};
-    for (let i = 0; i < defNames.length; i++) {
-        resultDefs[defNames[i]] = astCompiled[defIds[i]];
+    /** @type {uvd.SchemaResource<T,R>[]} */
+    let resources = [];
+
+    for (let i = 0; i < rootIds.length; i++) {
+        let nodeId = rootIds[i];
+        let heapOffset = astCompiled[nodeId];
+
+        resources.push({
+            uri: rootUris[i] || `urn:uuid:schema-${i}`,
+            id: rootUris[i] || null,
+            anchor: null,
+            schema: /** @type {uvd.Type<T,R>} */(heapOffset),
+            name: rootNames[i] || null
+        });
     }
 
-    return { root: astCompiled[rootId], defs: resultDefs };
+    return resources;
 }

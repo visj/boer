@@ -35,6 +35,15 @@ function optional(typedef) {
 }
 
 /**
+ * 
+ * @param {*} value
+ * @returns {value is string} 
+ */
+function isString(value) {
+    return typeof value === 'string';
+}
+
+/**
  *
  * @param {*} value
  * @returns {value is number}
@@ -330,6 +339,7 @@ function deepEqual(a, b) {
 }
 
 export {
-    nullable, optional, isNumber, isObject, deepEqual,
-    sortByKeyId, parseValue, _isValue, describeType,
+    nullable, optional, isNumber, isString, isObject,
+    deepEqual, sortByKeyId, parseValue,
+    _isValue, describeType,
 }

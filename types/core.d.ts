@@ -362,18 +362,39 @@ export interface FlatAst {
     readonly regexes: Array<RegExp>;
 
     // 6. SCHEMA METADATA
-    readonly rootId: number;
-    readonly defNames: string[];
-    readonly defIds: number[];
+    readonly rootIds: number[];
+    readonly rootUris: Array<string | null>;
+    readonly rootNames: Array<string | null>;
     readonly nodeCount: number;
 }
 
-export interface CompiledSchema {
-    readonly root: number;
-    readonly defs: Record<string, number>;
+export interface SchemaResource<T = any, R extends symbol> {
+  /** The canonical, absolute URI of the resource. 
+   * Resolved using the $id and the base URI context.
+   */
+  uri: string;
+  /** The literal value of the $id (or id) keyword as found in the source JSON.
+   * Can be a relative path or a simple identifier like "User".
+   */
+  id: string | null;
+
+  /** The plain-name fragment identifier (e.g., "my-anchor").
+   * Defined by the $anchor keyword (2020-12) or a fragment-only $id (Draft 07).
+   */
+  anchor: string | null;
+
+  /** The opaque handle used by the validator to execute this schema.
+   * Internally, this is the 32-bit memory offset in the Catalog.
+   * Note: Inside the compiler, schema is just a number representing the memory offset.
+   */
+  schema: Type<T, R>;
+  /**
+   * The friendly name provided to .add(), if any
+   */
+  name: string | null;
 }
 
-export function compile(catalog: any, ast: FlatAst): CompiledSchema;
+export function compile<R extends symbol>(catalog: Catalog<R>, ast: FlatAst): SchemaResource[];
 
 export declare const N_PRIM = 0;
 export declare const N_OBJECT = 1;
