@@ -301,9 +301,8 @@ group('Pure Parsing (Second time after JIT is warmed up)', () => {
     bench('uvd (In-Place Bitwise)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) {
-                const ptr = UvdOrderPointer.__ptr; 
-                validate(data, ptr);
+            bench(data) { 
+                validate(data, UvdOrder);
             }
         };
     });

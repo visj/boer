@@ -9,7 +9,7 @@ import {
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
     K_CONDITIONAL,
     KIND_ENUM_MASK, K_VALIDATOR,
-    FAIL, toString
+    FAIL, toString, hasOwnProperty
 } from './const.js';
 
 /**
@@ -296,7 +296,40 @@ function describeType(type, kinds) {
     return parts.join(' | ') || 'unknown';
 }
 
+/**
+ * 
+ * @param {*} a 
+ * @param {*} b 
+ * @returns 
+ */
+function deepEqual(a, b) {
+    if (a === b) return true;
+    if (a == null || b == null) return false;
+    let ta = typeof a, tb = typeof b;
+    if (ta !== tb) return false;
+    if (ta !== 'object') return false; 
+    let isArrA = Array.isArray(a);
+    let isArrB = Array.isArray(b);
+    if (isArrA !== isArrB) return false;
+    if (isArrA) {
+        if (a.length !== b.length) return false;
+        for (let i = 0; i < a.length; i++) {
+            if (!deepEqual(a[i], b[i])) return false;
+        }
+        return true;
+    }
+    let keysA = Object.keys(a);
+    let keysB = Object.keys(b);
+    if (keysA.length !== keysB.length) return false;
+    for (let i = 0; i < keysA.length; i++) {
+        let k = keysA[i];
+        if (!hasOwnProperty.call(b, k)) return false;
+        if (!deepEqual(a[k], b[k])) return false;
+    }
+    return true;
+}
+
 export {
-    nullable, optional, isNumber, isObject,
-    sortByKeyId, parseValue, _isValue, describeType
+    nullable, optional, isNumber, isObject, deepEqual,
+    sortByKeyId, parseValue, _isValue, describeType,
 }

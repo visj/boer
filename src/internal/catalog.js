@@ -21,14 +21,14 @@ import {
     codepointLen, hasOwnProperty, toString
 } from './const.js';
 import {
-    sortByKeyId, _isValue
+    sortByKeyId, _isValue, deepEqual
 } from './util.js';
 
 /**
  * Pre-allocated typedef pointers for common bare complex types.
  * These point directly into KINDS[0..2] and avoid any registry allocation.
  */
-export const BARE_ARRAY  = (COMPLEX | 0) >>> 0;
+export const BARE_ARRAY = (COMPLEX | 0) >>> 0;
 export const BARE_OBJECT = (COMPLEX | 1) >>> 0;
 export const BARE_RECORD = (COMPLEX | 2) >>> 0;
 
@@ -412,9 +412,11 @@ function catalog(cfg) {
             }
         }
         if (vHeader & V_UNIQUE_ITEMS) {
-            let set = new Set(data);
-            if (set.size !== data.length) {
-                return false;
+            let length = data.length;
+            for (let i = 0; i < length; i++) {
+                for (let j = i + 1; j < length; j++) {
+                    if (deepEqual(data[i], data[j])) return false;
+                }
             }
         }
         if (vHeader & V_CONTAINS) {
@@ -661,15 +663,42 @@ function catalog(cfg) {
                     if (!Array.isArray(data)) {
                         return false;
                     }
-                    let innerType = ri;
-                    let length = data.length;
-                    for (let i = 0; i < length; i++) {
-                        if (!_validateSlot(data[i], innerType)) {
-                            return false;
-                        }
-                    }
                     if (header & K_VALIDATOR) {
-                        return runArrayValidator(data, kinds[ptr + 2], scratch);
+                        let valIdx = kinds[ptr + 2];
+                        let vals = scratch ? S_VALIDATORS : VALIDATORS;
+                        let vHeader = vals[valIdx] | 0;
+                        let base = valIdx + 1;
+                        if (vHeader & V_MIN_ITEMS) {
+                            let p = base + popcnt16(vHeader & (V_MIN_ITEMS - 1));
+                            if (data.length < vals[p]) {
+                                return false;
+                            }
+                        }
+                        if (vHeader & V_MAX_ITEMS) {
+                            let p = base + popcnt16(vHeader & (V_MAX_ITEMS - 1));
+                            if (data.length > vals[p]) {
+                                return false;
+                            }
+                        }
+                        // Todo inline unique items and contains
+                        let innerType = ri;
+                        let length = data.length;
+                        for (let i = 0; i < length; i++) {
+                            if (!_validateSlot(data[i], innerType)) {
+                                return false;
+                            }
+                        }
+                        if (header & K_VALIDATOR) {
+                            return runArrayValidator(data, kinds[ptr + 2], scratch);
+                        }
+                    } else {
+                        let innerType = ri;
+                        let length = data.length;
+                        for (let i = 0; i < length; i++) {
+                            if (!_validateSlot(data[i], innerType)) {
+                                return false;
+                            }
+                        }
                     }
                     return true;
                 }
@@ -757,20 +786,21 @@ function catalog(cfg) {
                     let count = shapes[ri * 2 + 1];
                     let hasRest = count > 0 && (slab[offset + count - 1] & REST) !== 0;
                     let fixedCount = hasRest ? count - 1 : count;
-                    if (data.length < fixedCount) {
+                    if (!hasRest && data.length !== fixedCount) {
                         return false;
                     }
-                    if (!hasRest && data.length > fixedCount) {
-                        return false;
-                    }
-                    for (let i = 0; i < fixedCount; i++) {
+                    // When hasRest is true, only validate the prefix elements that are actually
+                    // present (JSON Schema allows fewer items than prefixItems). When !hasRest
+                    // we have already asserted data.length === fixedCount above.
+                    let checkCount = (hasRest && data.length < fixedCount) ? data.length : fixedCount;
+                    for (let i = 0; i < checkCount; i++) {
                         if (!_validateSlot(data[i], slab[offset + i])) {
                             return false;
                         }
                     }
                     if (hasRest) {
                         let restType = (slab[offset + count - 1] & ~REST) >>> 0;
-                        for (let i = fixedCount; i < data.length; i++) {
+                        for (let i = checkCount; i < data.length; i++) {
                             if (!_validateSlot(data[i], restType)) {
                                 return false;
                             }

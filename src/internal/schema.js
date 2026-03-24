@@ -84,6 +84,8 @@ const LINK_ROOT = 0;
 const LINK_EDGE = 1;
 const LINK_CHILD0 = 2;
 const LINK_DEF = 3;
+/** Writes astChild1[linkOffset] = nodeId. Used for contains child on N_ARRAY. */
+const LINK_CHILD1 = 4;
 
 const SENTINEL = 0xFFFFFFFF;
 const INITIAL_CAPACITY = 256;
@@ -325,6 +327,9 @@ export function parseJsonSchema(schema) {
             case LINK_CHILD0:
                 astChild0[linkOffset] = nodeId;
                 break;
+            case LINK_CHILD1:
+                astChild1[linkOffset] = nodeId;
+                break;
         }
     }
 
@@ -560,14 +565,19 @@ export function parseJsonSchema(schema) {
         let additionalProps = sch.additionalProperties;
         let patternProps = sch.patternProperties;
         let prefixItems = sch.prefixItems;
+        let containsSchema = sch.contains;
+        let propNameSchema = sch.propertyNames;
         const hasProps = props !== void 0 || required !== void 0;
         const hasItems = items !== void 0;
         const hasAdditionalProps = additionalProps !== void 0;
         const hasPatternProps = patternProps !== void 0;
         const hasPrefixItems = prefixItems !== void 0;
+        const hasContains = containsSchema !== void 0;
+        const hasPropNames = propNameSchema !== void 0;
 
         let hasSiblings = hasType || hasVHeader || hasEnum || hasProps || hasItems
-            || hasAdditionalProps || hasPatternProps || hasPrefixItems;
+            || hasAdditionalProps || hasPatternProps || hasPrefixItems
+            || hasContains || hasPropNames;
 
         // If composition keywords coexist with structural/type/validator keywords,
         // or multiple composition keywords exist at the same level,
@@ -588,6 +598,8 @@ export function parseJsonSchema(schema) {
                 if (hasAdditionalProps) siblingSchema.additionalProperties = additionalProps;
                 if (hasPatternProps) siblingSchema.patternProperties = patternProps;
                 if (hasPrefixItems) siblingSchema.prefixItems = prefixItems;
+                if (hasContains) siblingSchema.contains = containsSchema;
+                if (hasPropNames) siblingSchema.propertyNames = propNameSchema;
                 for (let key of ['minLength', 'maxLength', 'minimum', 'maximum',
                     'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
                     'minItems', 'maxItems', 'uniqueItems',
@@ -701,7 +713,8 @@ export function parseJsonSchema(schema) {
 
         // Empty schema {} → matches everything
         if (!hasType && !hasVHeader && !hasEnum && !hasProps && !hasItems
-            && !hasAdditionalProps && !hasPatternProps && !hasPrefixItems) {
+            && !hasAdditionalProps && !hasPatternProps && !hasPrefixItems
+            && !hasContains && !hasPropNames) {
             astKinds[nodeId] = N_PRIM;
             astFlags[nodeId] = (ANY | NULLABLE) >>> 0;
             continue;
@@ -720,8 +733,8 @@ export function parseJsonSchema(schema) {
         // The node id where the "inner type" is written.
         let typeNodeId = nodeId;
 
-        // ── Object structural node (properties / required / additionalProperties / patternProperties) ──
-        if (hasProps || hasAdditionalProps || hasPatternProps) {
+        // ── Object structural node (properties / required / additionalProperties / patternProperties / propertyNames) ──
+        if (hasProps || hasAdditionalProps || hasPatternProps || hasPropNames) {
             let propObj = props || Object.create(null);
             let propKeys = Object.keys(propObj);
             let requiredSet = required ? new Set(required) : new Set();
@@ -812,6 +825,16 @@ export function parseJsonSchema(schema) {
                 }
             }
 
+            // propertyNames: compile child schema, store node id after patternProperties edges
+            // astFlags bit 3 = has propertyNames child
+            if (hasPropNames) {
+                astFlags[objNodeId] |= 8; // bit 3 = has propertyNames child
+                let pnChildId = allocNode();
+                let pnSlot = astEdges.length;
+                astEdges.push(0); // placeholder for child node id
+                pushFrame(propNameSchema, pnChildId, LINK_EDGE, pnSlot);
+            }
+
             // Attach validators (minProperties, maxProperties, etc.)
             if (objVHeader !== 0 || hasVHeader) {
                 writeValidators(objNodeId, objVHeader, vPayloadArr);
@@ -871,6 +894,42 @@ export function parseJsonSchema(schema) {
             continue;
         }
 
+        // ── contains-only section (contains without items or prefixItems) ──
+        // Creates an N_ARRAY with an ANY element type and wires the contains child
+        // into astChild1[arrNodeId] (astFlags bit 1). When `type` is absent, wraps
+        // in a conditional guard so non-arrays pass through unvalidated.
+        if (hasContains && !hasItems && !hasPrefixItems) {
+            let isExplicitArray = typeStr === 'array';
+            let arrNodeId;
+
+            if (isExplicitArray) {
+                arrNodeId = typeNodeId;
+            } else {
+                // No explicit type → conditional guard: if(isArray) → arrNodeId else pass
+                arrNodeId = allocNode();
+                let ifId = allocNode();
+                astKinds[ifId] = N_BARE_ARRAY;
+                let condBase = astEdges.length;
+                astEdges.push(ifId, arrNodeId, SENTINEL);
+                astKinds[typeNodeId] = N_CONDITIONAL;
+                astChild0[typeNodeId] = condBase;
+            }
+
+            // N_ARRAY: element type = ANY|NULLABLE, contains child in astChild1
+            let anyElemId = allocNode();
+            astKinds[anyElemId] = N_PRIM;
+            astFlags[anyElemId] = (ANY | NULLABLE) >>> 0;
+            astKinds[arrNodeId] = N_ARRAY;
+            astChild0[arrNodeId] = anyElemId;
+            astFlags[arrNodeId] |= 2; // bit 1 = has contains child
+            let containsChildId = allocNode();
+            astChild1[arrNodeId] = containsChildId;
+            pushFrame(containsSchema, containsChildId, LINK_CHILD1, arrNodeId);
+
+            if (hasVHeader) writeValidators(arrNodeId, vHeader, vPayloadArr);
+            continue;
+        }
+
         // ── Array structural node (items) ──
         if (hasItems) {
             let isExplicitArray = typeStr === 'array';
@@ -895,6 +954,14 @@ export function parseJsonSchema(schema) {
             astKinds[arrNodeId] = N_ARRAY;
             astChild0[arrNodeId] = elemId;
             pushFrame(items, elemId, LINK_CHILD0, arrNodeId);
+
+            // Wire contains child into astChild1 when both items and contains are present
+            if (hasContains) {
+                astFlags[arrNodeId] |= 2; // bit 1 = has contains child
+                let containsChildId = allocNode();
+                astChild1[arrNodeId] = containsChildId;
+                pushFrame(containsSchema, containsChildId, LINK_CHILD1, arrNodeId);
+            }
 
             // Attach validators (minItems, maxItems, uniqueItems, etc.)
             if (hasVHeader) writeValidators(arrNodeId, vHeader, vPayloadArr);
@@ -979,9 +1046,48 @@ export function parseJsonSchema(schema) {
             astKinds[typeNodeId] = N_PRIM;
             astFlags[typeNodeId] = enumPrimBits >>> 0;
         } else {
-            // Validators but no type → matches any type
-            astKinds[typeNodeId] = N_PRIM;
-            astFlags[typeNodeId] = (ANY | NULLABLE) >>> 0;
+            // Validators but no type keyword. Array/object validators (minItems, maxItems,
+            // uniqueItems, minProperties, maxProperties) require structural dispatch —
+            // runPrimValidator does not handle them. Emit a conditional guard node that
+            // only runs the validator when the value is the right container type.
+            const ARRAY_V = V_MIN_ITEMS | V_MAX_ITEMS | V_UNIQUE_ITEMS;
+            const OBJ_V = V_MIN_PROPERTIES | V_MAX_PROPERTIES;
+            let hasArrayV = (vHeader & ARRAY_V) !== 0;
+            let hasObjV = (vHeader & OBJ_V) !== 0;
+
+            if (hasArrayV && !hasObjV) {
+                // Conditional guard: if(isArray) → N_BARE_ARRAY with validators else pass
+                let arrNodeId = allocNode();
+                let ifId = allocNode();
+                astKinds[ifId] = N_BARE_ARRAY;
+                let condBase = astEdges.length;
+                astEdges.push(ifId, arrNodeId, SENTINEL);
+                astKinds[typeNodeId] = N_CONDITIONAL;
+                astChild0[typeNodeId] = condBase;
+                astKinds[arrNodeId] = N_BARE_ARRAY;
+                // Transfer validators from typeNodeId to the inner arrNodeId
+                astVHeaders[arrNodeId] = astVHeaders[typeNodeId];
+                astVOffset[arrNodeId] = astVOffset[typeNodeId];
+                astVHeaders[typeNodeId] = 0;
+            } else if (hasObjV && !hasArrayV) {
+                // Conditional guard: if(isObject) → N_BARE_OBJECT with validators else pass
+                let objNodeId = allocNode();
+                let ifId = allocNode();
+                astKinds[ifId] = N_BARE_OBJECT;
+                let condBase = astEdges.length;
+                astEdges.push(ifId, objNodeId, SENTINEL);
+                astKinds[typeNodeId] = N_CONDITIONAL;
+                astChild0[typeNodeId] = condBase;
+                astKinds[objNodeId] = N_BARE_OBJECT;
+                // Transfer validators from typeNodeId to the inner objNodeId
+                astVHeaders[objNodeId] = astVHeaders[typeNodeId];
+                astVOffset[objNodeId] = astVOffset[typeNodeId];
+                astVHeaders[typeNodeId] = 0;
+            } else {
+                // Pure primitive validators (minLength, minimum, etc.) or mixed → ANY|NULLABLE
+                astKinds[typeNodeId] = N_PRIM;
+                astFlags[typeNodeId] = (ANY | NULLABLE) >>> 0;
+            }
         }
     }
 

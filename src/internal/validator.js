@@ -158,19 +158,19 @@ export function packValidators(opts, mask, lookup) {
     }
     if ((mask & V_MIN_CONTAINS) && opts.minContains !== void 0) {
         vHeader |= V_MIN_CONTAINS;
-        out.push(+opts.minContains);
+        out.push(Math.floor(+opts.minContains));
     }
     if ((mask & V_MAX_CONTAINS) && opts.maxContains !== void 0) {
         vHeader |= V_MAX_CONTAINS;
-        out.push(+opts.maxContains);
+        out.push(Math.floor(+opts.maxContains));
     }
     if ((mask & V_MIN_PROPERTIES) && opts.minProperties !== void 0) {
         vHeader |= V_MIN_PROPERTIES;
-        out.push(+opts.minProperties);
+        out.push(Math.floor(+opts.minProperties));
     }
     if ((mask & V_MAX_PROPERTIES) && opts.maxProperties !== void 0) {
         vHeader |= V_MAX_PROPERTIES;
-        out.push(+opts.maxProperties);
+        out.push(Math.floor(+opts.maxProperties));
     }
     if ((mask & V_UNEVALUATED_ITEMS) && opts.unevaluatedItems !== void 0) {
         vHeader |= V_UNEVALUATED_ITEMS;

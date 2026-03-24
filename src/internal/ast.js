@@ -9,7 +9,7 @@ import {
     BARE_ARRAY, BARE_OBJECT, BARE_RECORD
 } from "./catalog.js";
 
-import { popcnt16, REST, ANY, STRING, NUMBER, INTEGER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_ENUM } from "./const.js";
+import { popcnt16, REST, ANY, STRING, NUMBER, INTEGER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_ENUM, V_CONTAINS, V_PROPERTY_NAMES } from "./const.js";
 
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
@@ -314,10 +314,19 @@ export function compile(cat, ast) {
                             stack[sp++] = astEdges[extraOff++]; // child id
                         }
                     }
+                    // propertyNames child (bit 3)
+                    if (flags & 8) {
+                        stack[sp++] = astEdges[extraOff];
+                    }
                     break;
                 }
                 case N_ARRAY: {
                     stack[sp++] = astChild0[nodeId]; // element type
+                    // contains child (bit 1) — compiled to a typedef, then injected
+                    // as a V_CONTAINS payload in Visit 2.
+                    if (astFlags[nodeId] & 2) {
+                        stack[sp++] = astChild1[nodeId];
+                    }
                     break;
                 }
                 case N_OR:
@@ -381,7 +390,7 @@ export function compile(cat, ast) {
                 }
                 sortByKeyId(resolved);
 
-                // Read extra edges: additionalProperties + patternProperties
+                // Read extra edges: additionalProperties + patternProperties + propertyNames
                 let objFlags = astFlags[nodeId];
                 let extraOff = offset + count * 3;
                 let additionalType = 0;
@@ -406,26 +415,57 @@ export function compile(cat, ast) {
                     }
                 }
 
-                // Build validator — may need to inject additional sequential payloads
-                // (patternProperties, additionalProperties type, dependentRequired remapping).
+                // propertyNames child (bit 3)
+                let propertyNamesType = 0;
+                if (objFlags & 8) {
+                    propertyNamesType = astCompiled[astEdges[extraOff]] >>> 0;
+                    extraOff++;
+                }
+
+                // Build validator — may need to inject additional sequential payloads.
+                // Write order must match runObjectValidator read order:
+                //   [fixed-slots] → [V_PAT_PROPS] → [V_PROP_NAMES] → [V_DEP_REQ] → [V_ADD_PROPS]
                 let vp = compileValidator(nodeId);
                 let finalVHeader = 0;
                 let finalPayloads = null;
 
                 if (patPayloads !== null || additionalType !== 0
                     || (astVHeaders[nodeId] & V_ADDITIONAL_PROPERTIES)
-                    || (astVHeaders[nodeId] & V_DEPENDENT_REQUIRED)) {
+                    || (astVHeaders[nodeId] & V_DEPENDENT_REQUIRED)
+                    || propertyNamesType !== 0) {
                     let vHeader = astVHeaders[nodeId];
                     let off = astVOffset[nodeId];
                     let pcount = popcnt16(vHeader & 0xFFFF);
                     let nodePayloads = [];
+
+                    // 1. Fixed-slot payloads (V_MIN_PROPERTIES, V_MAX_PROPERTIES via popcnt16)
                     for (let i = 0; i < pcount; i++) {
                         nodePayloads.push(vPayloads[off + i]);
                     }
 
-                    // Re-map V_DEPENDENT_REQUIRED: virtual propNames indices → real keyIds.
-                    // The sequential payload written by packValidators(virtualLookup) used
-                    // temporary propNames[] indices; here we convert them to catalog keyIds.
+                    // 2. V_PATTERN_PROPERTIES (variable-length, sequential)
+                    if (patPayloads !== null) {
+                        // payload: [count, reIdx0, type0, reIdx1, type1, ...]
+                        let regexCache = heap.REGEX_CACHE;
+                        nodePayloads.push(patPayloads.length / 2);
+                        for (let i = 0; i < patPayloads.length; i += 2) {
+                            let re = new RegExp(patPayloads[i], 'u');
+                            let reIdx = regexCache.length;
+                            regexCache.push(re);
+                            nodePayloads.push(reIdx);
+                            nodePayloads.push(patPayloads[i + 1]);
+                        }
+                        vHeader |= V_PATTERN_PROPERTIES;
+                    }
+
+                    // 3. V_PROPERTY_NAMES (1 slot: compiled typedef)
+                    if (propertyNamesType !== 0) {
+                        vHeader |= V_PROPERTY_NAMES;
+                        nodePayloads.push(propertyNamesType);
+                    }
+
+                    // 4. V_DEPENDENT_REQUIRED (variable-length): re-map virtual propNames
+                    // indices → real catalog keyIds written by packValidators(virtualLookup).
                     let p = off + pcount;
                     if (vHeader & V_DEPENDENT_REQUIRED) {
                         let numTriggers = vPayloads[p++];
@@ -440,22 +480,11 @@ export function compile(cat, ast) {
                         }
                     }
 
-                    if (patPayloads !== null) {
-                        // V_PATTERN_PROPERTIES payload: [count, reIdx0, type0, reIdx1, type1, ...]
-                        let regexCache = heap.REGEX_CACHE;
-                        nodePayloads.push(patPayloads.length / 2);
-                        for (let i = 0; i < patPayloads.length; i += 2) {
-                            let re = new RegExp(patPayloads[i], 'u');
-                            let reIdx = regexCache.length;
-                            regexCache.push(re);
-                            nodePayloads.push(reIdx);
-                            nodePayloads.push(patPayloads[i + 1]);
-                        }
-                        vHeader |= V_PATTERN_PROPERTIES;
-                    }
+                    // 5. V_ADDITIONAL_PROPERTIES (1 slot: compiled typedef or 0)
                     if (vHeader & V_ADDITIONAL_PROPERTIES) {
                         nodePayloads.push(additionalType);
                     }
+
                     finalVHeader = vHeader;
                     finalPayloads = nodePayloads;
                 } else if (vp !== null) {
@@ -473,6 +502,30 @@ export function compile(cat, ast) {
             case N_ARRAY: {
                 let elemType = astCompiled[astChild0[nodeId]];
                 let vp = compileValidator(nodeId);
+
+                // Inject V_CONTAINS payload when a contains child is present (astFlags bit 1).
+                // runArrayValidator uses popcnt16(vHeader & (V_CONTAINS - 1)) to locate the
+                // contains slot, so we insert the compiled typedef at that same offset.
+                if (astFlags[nodeId] & 2) {
+                    let containsType = astCompiled[astChild1[nodeId]] >>> 0;
+                    if (vp === null) {
+                        vp = { vHeader: V_CONTAINS, nodePayloads: [containsType] };
+                    } else {
+                        let insertAt = popcnt16(vp.vHeader & (V_CONTAINS - 1));
+                        let old = vp.nodePayloads;
+                        let neo = new Array(old.length + 1);
+                        for (let i = 0; i < insertAt; i++) {
+                            neo[i] = old[i];
+                        }
+                        neo[insertAt] = containsType;
+                        for (let i = insertAt; i < old.length; i++) {
+                            neo[i + 1] = old[i];
+                        }
+                        vp.nodePayloads = neo;
+                        vp.vHeader |= V_CONTAINS;
+                    }
+                }
+
                 let kindHeader = (vp !== null) ? (K_ARRAY | K_VALIDATOR) : K_ARRAY;
                 /** K_ARRAY inline = elemType (KINDS slot 1); no SHAPES entry. */
                 astCompiled[nodeId] = malloc(kindHeader, scratch, elemType >>> 0,
