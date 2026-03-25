@@ -68,6 +68,7 @@ export const N_CONDITIONAL = 11;
 export const N_TUPLE = 12;
 export const N_DYN_ANCHOR = 13;
 export const N_DYN_REF = 14;
+export const N_UNEVALUATED = 15;
 export const N_REF = 255;
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -985,6 +986,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
         let prefixItems = schema.prefixItems;
         let containsSchema = schema.contains;
         let propNameSchema = schema.propertyNames;
+        let depSchemas = schema.dependentSchemas;
         const hasProps = props !== void 0 || required !== void 0;
         const hasItems = items !== void 0;
         const hasAdditionalProps = additionalProps !== void 0;
@@ -992,10 +994,81 @@ CompoundSchema.prototype.bundle = function (schemas) {
         const hasPrefixItems = prefixItems !== void 0;
         const hasContains = containsSchema !== void 0;
         const hasPropNames = propNameSchema !== void 0;
+        const hasDepSchemas = depSchemas !== void 0;
 
         let hasSiblings = hasType || hasVHeader || hasEnum || hasProps || hasItems
             || hasAdditionalProps || hasPatternProps || hasPrefixItems
-            || hasContains || hasPropNames;
+            || hasContains || hasPropNames || hasDepSchemas;
+
+        // ── unevaluatedProperties wrapper ──
+        // When present, we wrap the entire node in N_UNEVALUATED.
+        // The inner node gets all other keywords; the wrapper checks unevaluated.
+        let unevalPropsSchema = schema.unevaluatedProperties;
+        let hasUnevalProps = unevalPropsSchema !== void 0;
+        if (hasUnevalProps) {
+            // When additionalProperties: true coexists, we need to actually compile
+            // it so it can mark properties as evaluated during validation.
+            if (hasAdditionalProps && additionalProps === true) {
+                additionalProps = true; // stays true, but we force V_ADDITIONAL_PROPERTIES
+            }
+
+            let innerNodeId = allocNode();
+            // Set up N_UNEVALUATED on the original nodeId
+            astKinds[nodeId] = N_UNEVALUATED;
+            astChild0[nodeId] = innerNodeId; // inner type child
+            // astFlags bit 0 = mode: 0=properties, 1=items
+            astFlags[nodeId] = 0;
+            // Store the unevalProps child schema in astEdges
+            let unevalChildId = allocNode();
+            let unevalSlot = astEdges.length;
+            astEdges.push(0); // placeholder
+            astChild1[nodeId] = unevalChildId; // unevalSchema child node
+            if (unevalPropsSchema === false) {
+                astKinds[unevalChildId] = N_PRIM;
+                astFlags[unevalChildId] = NEVER;
+            } else if (unevalPropsSchema === true) {
+                astKinds[unevalChildId] = N_PRIM;
+                astFlags[unevalChildId] = (ANY | NULLABLE) >>> 0;
+            } else {
+                pushFrame(unevalPropsSchema, unevalChildId, LINK_EDGE, unevalSlot, currentBaseUri, currentDocRoot);
+            }
+
+            // Redirect all subsequent parsing to the inner node
+            nodeId = innerNodeId;
+        }
+
+        // ── unevaluatedItems wrapper ──
+        // Same pattern as unevaluatedProperties, but for arrays.
+        // astFlags bit 0 = 1 signals items mode to the compiler.
+        let unevalItemsSchema = schema.unevaluatedItems;
+        let hasUnevalItems = unevalItemsSchema !== void 0;
+        if (hasUnevalItems) {
+            // When items: true coexists, we need to compile it so it marks
+            // items as evaluated during validation (like additionalProperties: true).
+            if (hasItems && items === true) {
+                items = true; // stays true, handled below in tuple/array compilation
+            }
+
+            let innerNodeId = allocNode();
+            astKinds[nodeId] = N_UNEVALUATED;
+            astChild0[nodeId] = innerNodeId;
+            astFlags[nodeId] = 1; // mode = 1 = items
+            let unevalChildId = allocNode();
+            let unevalSlot = astEdges.length;
+            astEdges.push(0);
+            astChild1[nodeId] = unevalChildId;
+            if (unevalItemsSchema === false) {
+                astKinds[unevalChildId] = N_PRIM;
+                astFlags[unevalChildId] = NEVER;
+            } else if (unevalItemsSchema === true) {
+                astKinds[unevalChildId] = N_PRIM;
+                astFlags[unevalChildId] = (ANY | NULLABLE) >>> 0;
+            } else {
+                pushFrame(unevalItemsSchema, unevalChildId, LINK_EDGE, unevalSlot, currentBaseUri, currentDocRoot);
+            }
+
+            nodeId = innerNodeId;
+        }
 
         // If composition keywords coexist with structural/type/validator keywords,
         // or multiple composition keywords exist at the same level,
@@ -1018,6 +1091,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
                 if (hasPrefixItems) siblingSchema.prefixItems = prefixItems;
                 if (hasContains) siblingSchema.contains = containsSchema;
                 if (hasPropNames) siblingSchema.propertyNames = propNameSchema;
+                if (hasDepSchemas) siblingSchema.dependentSchemas = depSchemas;
                 for (let key of ['minLength', 'maxLength', 'minimum', 'maximum',
                     'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
                     'minItems', 'maxItems', 'uniqueItems',
@@ -1293,7 +1367,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
         // Empty schema {} → matches everything
         if (!hasType && !hasVHeader && !hasEnum && !hasProps && !hasItems
             && !hasAdditionalProps && !hasPatternProps && !hasPrefixItems
-            && !hasContains && !hasPropNames) {
+            && !hasContains && !hasPropNames && !hasDepSchemas) {
             astKinds[nodeId] = N_PRIM;
             astFlags[nodeId] = (ANY | NULLABLE) >>> 0;
             continue;
@@ -1312,8 +1386,8 @@ CompoundSchema.prototype.bundle = function (schemas) {
         // The node id where the "inner type" is written.
         let typeNodeId = nodeId;
 
-        // ── Object structural node (properties / required / additionalProperties / patternProperties / propertyNames) ──
-        if (hasProps || hasAdditionalProps || hasPatternProps || hasPropNames) {
+        // ── Object structural node (properties / required / additionalProperties / patternProperties / propertyNames / dependentSchemas) ──
+        if (hasProps || hasAdditionalProps || hasPatternProps || hasPropNames || hasDepSchemas) {
             let propObj = props || Object.create(null);
             let propKeys = Object.keys(propObj);
             let requiredSet = required ? new Set(required) : new Set();
@@ -1371,7 +1445,19 @@ CompoundSchema.prototype.bundle = function (schemas) {
             // additionalProperties: store child node id after property edges
             // astFlags bit 0 = has additionalProperties child
             let objVHeader = vHeader;
-            if (hasAdditionalProps && additionalProps !== true) {
+            if (hasAdditionalProps && additionalProps === true) {
+                /**
+                 * additionalProperties: true is always compiled so that
+                 * runObjectValidator can mark properties as evaluated when
+                 * unevaluatedProperties is present in a parent/ancestor schema.
+                 */
+                objVHeader |= V_ADDITIONAL_PROPERTIES;
+                astFlags[objNodeId] |= 1; // bit 0 = has additionalProperties child
+                let addChildId = allocNode();
+                astKinds[addChildId] = N_PRIM;
+                astFlags[addChildId] = (ANY | NULLABLE) >>> 0;
+                astEdges.push(addChildId);
+            } else if (hasAdditionalProps && additionalProps !== true) {
                 if (additionalProps === false) {
                     objVHeader |= V_ADDITIONAL_PROPERTIES;
                 } else {
@@ -1412,6 +1498,24 @@ CompoundSchema.prototype.bundle = function (schemas) {
                 let pnSlot = astEdges.length;
                 astEdges.push(0); // placeholder for child node id
                 pushFrame(propNameSchema, pnChildId, LINK_EDGE, pnSlot, currentBaseUri, currentDocRoot);
+            }
+
+            // dependentSchemas: store [triggerKeyNameIdx, childNodeId] pairs
+            // astFlags bit 4 = has dependentSchemas children
+            if (hasDepSchemas) {
+                let depKeys = Object.keys(depSchemas);
+                astFlags[objNodeId] |= 16; // bit 4 = has dependentSchemas
+                astEdges.push(depKeys.length);
+                for (let i = 0; i < depKeys.length; i++) {
+                    let trigKey = depKeys[i];
+                    let trigNameIdx = propNames.length;
+                    propNames.push(trigKey);
+                    astEdges.push(trigNameIdx); // trigger key name index
+                    let depChildId = allocNode();
+                    let depSlot = astEdges.length;
+                    astEdges.push(0); // placeholder for child node id
+                    pushFrame(depSchemas[trigKey], depChildId, LINK_EDGE, depSlot, currentBaseUri, currentDocRoot);
+                }
             }
 
             // Attach validators (minProperties, maxProperties, etc.)

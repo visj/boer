@@ -7,21 +7,21 @@ import {
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
-    K_CONDITIONAL, K_DYN_ANCHOR, K_DYN_REF, K_ANY_INNER,
+    K_CONDITIONAL, K_DYN_ANCHOR, K_DYN_REF, K_UNEVALUATED, K_ANY_INNER,
     KIND_ENUM_MASK, K_VALIDATOR,
     V_MIN_LENGTH, V_MAX_LENGTH, V_PATTERN, V_FORMAT,
     V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
     V_MIN_ITEMS, V_MAX_ITEMS, V_CONTAINS, V_MIN_CONTAINS, V_MAX_CONTAINS,
     V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
-    V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED,
+    V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS,
     V_ENUM,
     popcnt16,
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
-    codepointLen, hasOwnProperty, toString
+    codepointLen, hasOwnProperty
 } from './const.js';
 import {
-    sortByKeyId, _isValue, deepEqual
+    sortByKeyId, _isValue, deepEqual,
 } from './util.js';
 
 /**
@@ -80,6 +80,91 @@ function catalog(cfg) {
     /** Global stack tracking active dynamic scope boundaries during validation. */
     const DYN_ANCHORS = new Uint32Array(512);
     let DYN_PTR = 0;
+
+    /**
+     * Evaluation tracking arena for unevaluatedProperties.
+     * TRACK_KEYS: [length, keyId0, keyId1, ...] per frame.
+     * TRACK_BITS: [unused, bit0, bit1, ...] per frame (1 = evaluated).
+     * TRACK_SNAP: snapshot buffer for branching rollback.
+     */
+    let TRACK_KEYS = new Uint32Array(256);
+    let TRACK_BITS = new Uint32Array(256);  // bit-compacted: 32 keys per word
+    let TRACK_SNAP = new Uint32Array(256);  // branch workspace; index 0 is "no snapshot" sentinel
+    /** Arena pointer; starts at 1 because 0 is the "no tracking" sentinel for trackPtr */
+    let TRACK_TAIL = 1;
+    /** Stack pointer for TRACK_SNAP — starts at 1 so snapPtr=0 always means "no snapshot" */
+    let SNAP_TAIL = 1;
+    /** Temporary storage for unknown key strings during a single validate() call */
+    let UNKNOWN_KEYS = new Array(32);
+    let UNKNOWN_TAIL = 0;
+
+    /**
+     * Resolves a string key to its tracking keyId.
+     * Known keys are found in KEY_DICT. Unknown keys were registered in UNKNOWN_KEYS
+     * during K_UNEVALUATED frame allocation with MSB set as the id.
+     * Returns undefined if the key is not in the current tracking frame.
+     * @param {string} key
+     * @returns {number|undefined}
+     */
+    function resolveTrackingKey(key) {
+        let kid = KEY_DICT.get(key);
+        if (kid !== void 0) {
+            return kid;
+        }
+        for (let i = 0; i < UNKNOWN_TAIL; i++) {
+            if (UNKNOWN_KEYS[i] === key) {
+                return (i | 0x80000000) >>> 0;
+            }
+        }
+        return void 0;
+    }
+
+    /**
+     * Marks a key as evaluated in the tracking frame.
+     * If snapPtr is 0, writes directly to TRACK_BITS (frame is committed).
+     * If snapPtr > 0, writes to TRACK_SNAP at the branch's reserved slot.
+     * @param {number} trackPtr - frame start in TRACK_KEYS/TRACK_BITS
+     * @param {number} snapPtr - 0 = commit direct, >0 = write to TRACK_SNAP[snapPtr]
+     * @param {number} keyId - the keyId to mark (may have MSB set for unknown keys)
+     */
+    function markEvaluated(trackPtr, snapPtr, keyId) {
+        let len = TRACK_KEYS[trackPtr];
+        for (let i = 0; i < len; i++) {
+            if (TRACK_KEYS[trackPtr + 1 + i] === keyId) {
+                let wordOffset = i >>> 5;
+                let bitMask = 1 << (i & 31);
+                if (snapPtr === 0) {
+                    TRACK_BITS[trackPtr + 1 + wordOffset] |= bitMask;
+                } else {
+                    TRACK_SNAP[snapPtr + wordOffset] |= bitMask;
+                }
+                return;
+            }
+        }
+    }
+
+    /**
+     * Marks array items as evaluated in the tracking frame.
+     * If snapPtr is 0, writes directly to TRACK_BITS.
+     * If snapPtr > 0, writes to TRACK_SNAP at the branch's reserved slot.
+     * @param {number} trackPtr - frame start in TRACK_KEYS/TRACK_BITS
+     * @param {number} snapPtr - 0 = commit direct, >0 = write to TRACK_SNAP[snapPtr]
+     * @param {number} startIdx - first index to mark
+     * @param {number} endIdx - one past the last index to mark
+     */
+    function markItemsEvaluated(trackPtr, snapPtr, startIdx, endIdx) {
+        let len = TRACK_KEYS[trackPtr];
+        let end = endIdx < len ? endIdx : len;
+        for (let i = startIdx; i < end; i++) {
+            let wordOffset = i >>> 5;
+            let bitMask = 1 << (i & 31);
+            if (snapPtr === 0) {
+                TRACK_BITS[trackPtr + 1 + wordOffset] |= bitMask;
+            } else {
+                TRACK_SNAP[snapPtr + wordOffset] |= bitMask;
+            }
+        }
+    }
 
     /**
      * @returns {void}
@@ -397,9 +482,11 @@ function catalog(cfg) {
      * @param {!Array<*>} data
      * @param {number} valIdx
      * @param {boolean} scratch
+     * @param {number} trackPtr
+     * @param {number} snapPtr
      * @returns {boolean}
      */
-    function runArrayValidator(data, valIdx, scratch) {
+    function runArrayValidator(data, valIdx, scratch, trackPtr, snapPtr) {
         let vals = scratch ? S_VALIDATORS : VALIDATORS;
         let vHeader = vals[valIdx] | 0;
         let base = valIdx + 1;
@@ -419,7 +506,9 @@ function catalog(cfg) {
             let length = data.length;
             for (let i = 0; i < length; i++) {
                 for (let j = i + 1; j < length; j++) {
-                    if (deepEqual(data[i], data[j])) return false;
+                    if (deepEqual(data[i], data[j])) {
+                        return false;
+                    }
                 }
             }
         }
@@ -431,8 +520,12 @@ function catalog(cfg) {
             let matchCount = 0;
             let length = data.length;
             for (let i = 0; i < length; i++) {
-                if (_validate(data[i], containsType)) {
+                if (_validate(data[i], containsType, 0, 0)) {
                     matchCount++;
+                    /** Mark matching item as evaluated by contains */
+                    if (trackPtr) {
+                        markItemsEvaluated(trackPtr, snapPtr, i, i + 1);
+                    }
                     if (matchCount > maxC) {
                         return false;
                     }
@@ -450,9 +543,11 @@ function catalog(cfg) {
      * @param {number} valIdx
      * @param {boolean} scratch
      * @param {number} ri
+     * @param {number} trackPtr - tracking frame pointer (0 = no tracking)
+     * @param {number} snapPtr
      * @returns {boolean}
      */
-    function runObjectValidator(data, valIdx, scratch, ri) {
+    function runObjectValidator(data, valIdx, scratch, ri, trackPtr, snapPtr) {
         let vals = scratch ? S_VALIDATORS : VALIDATORS;
         let regexCache = scratch ? S_REGEX_CACHE : REGEX_CACHE;
         let vHeader = vals[valIdx] | 0;
@@ -477,8 +572,14 @@ function catalog(cfg) {
                 let re = regexCache[reIdx];
                 for (let ki = 0; ki < keyCount; ki++) {
                     if (re.test(keys[ki])) {
-                        if (!_validate(data[keys[ki]], schemaType)) {
+                        if (!_validate(data[keys[ki]], schemaType, 0, 0)) {
                             return false;
+                        }
+                        if (trackPtr) {
+                            let kid = resolveTrackingKey(keys[ki]);
+                            if (kid !== void 0) {
+                                markEvaluated(trackPtr, snapPtr, kid);
+                            }
                         }
                     }
                 }
@@ -487,7 +588,7 @@ function catalog(cfg) {
         if (vHeader & V_PROPERTY_NAMES) {
             let nameSchema = vals[p++] >>> 0;
             for (let ki = 0; ki < keyCount; ki++) {
-                if (!_validate(keys[ki], nameSchema)) {
+                if (!_validate(keys[ki], nameSchema, 0, 0)) {
                     return false;
                 }
             }
@@ -508,6 +609,19 @@ function catalog(cfg) {
                     }
                 } else {
                     p += depCount;
+                }
+            }
+        }
+        if (vHeader & V_DEPENDENT_SCHEMAS) {
+            let depCount = vals[p++] | 0;
+            for (let di = 0; di < depCount; di++) {
+                let triggerKeyId = vals[p++] | 0;
+                let depSchemaType = vals[p++] >>> 0;
+                let triggerKey = KEY_INDEX.get(triggerKeyId);
+                if (triggerKey !== void 0 && data[triggerKey] !== void 0) {
+                    if (!_validate(data, depSchemaType, trackPtr, snapPtr)) {
+                        return false;
+                    }
                 }
             }
         }
@@ -541,8 +655,6 @@ function catalog(cfg) {
                     // Check if matched by patternProperties
                     let patternMatched = false;
                     if (vHeader & V_PATTERN_PROPERTIES) {
-                        // Scan pattern entries — they were already validated above,
-                        // but we need to know if this key matched any pattern
                         let pp = valIdx + 1;
                         if (vHeader & V_MIN_PROPERTIES) pp++;
                         if (vHeader & V_MAX_PROPERTIES) pp++;
@@ -560,8 +672,15 @@ function catalog(cfg) {
                         if (addType === 0) {
                             return false;
                         }
-                        if (!_validate(data[keys[ki]], addType)) {
+                        if (!_validate(data[keys[ki]], addType, 0, 0)) {
                             return false;
+                        }
+                        /** Mark property as evaluated by additionalProperties */
+                        if (trackPtr) {
+                            let markKid = resolveTrackingKey(keys[ki]);
+                            if (markKid !== void 0) {
+                                markEvaluated(trackPtr, snapPtr, markKid);
+                            }
                         }
                     }
                 }
@@ -579,7 +698,7 @@ function catalog(cfg) {
         return (
             raw === void 0 ? (type & OPTIONAL) !== 0 :
                 raw === null ? (type & NULLABLE) !== 0 :
-                    (type & COMPLEX) ? _validate(raw, type) :
+                    (type & COMPLEX) ? _validate(raw, type, 0, 0) :
                         (type & SIMPLE) ? _isValue(raw, type & PRIM_MASK) :
                             false
         );
@@ -588,9 +707,11 @@ function catalog(cfg) {
     /**
      * @param {*} data
      * @param {number} typedef
+     * @param {number} trackPtr - tracking frame pointer (0 = no tracking)
+     * @param {number} snapPtr - 0 = write direct to TRACK_BITS, >0 = write to TRACK_SNAP
      * @returns {boolean}
      */
-    function _validate(data, typedef) {
+    function _validate(data, typedef, trackPtr, snapPtr) {
         if (typedef & ANY) {
             return true;
         }
@@ -641,15 +762,15 @@ function catalog(cfg) {
                     let offset = shapes[ri * 2];
                     let length = shapes[ri * 2 + 1];
                     for (let i = 0; i < length; i++) {
-                        let key = KEY_INDEX.get(slab[offset + (i * 2)]);
+                        let keyId = slab[offset + (i * 2)];
+                        let key = KEY_INDEX.get(keyId);
                         if (key === void 0) {
                             return false;
                         }
                         let type = slab[offset + (i * 2) + 1];
                         let val = data[key];
 
-                        /** Only pay the 'hasOwnProperty' tax if it looks like a prototype leak */
-                        if (val !== void 0 && (typeof val === 'function' || key === '__proto__')) {
+                        if (val !== void 0) {
                             if (!hasOwnProperty.call(data, key)) {
                                 val = void 0;
                             }
@@ -657,9 +778,13 @@ function catalog(cfg) {
                         if (!_validateSlot(val, type)) {
                             return false;
                         }
+                        /** Mark this property as evaluated in the tracking frame */
+                        if (trackPtr && val !== void 0) {
+                            markEvaluated(trackPtr, snapPtr, keyId);
+                        }
                     }
                     if (header & K_VALIDATOR) {
-                        return runObjectValidator(data, kinds[ptr + 2], scratch, ri);
+                        return runObjectValidator(data, kinds[ptr + 2], scratch, ri, trackPtr, snapPtr);
                     }
                     return true;
                 }
@@ -684,7 +809,6 @@ function catalog(cfg) {
                                 return false;
                             }
                         }
-                        // Todo inline unique items and contains
                         let innerType = ri;
                         let length = data.length;
                         for (let i = 0; i < length; i++) {
@@ -692,8 +816,12 @@ function catalog(cfg) {
                                 return false;
                             }
                         }
+                        /** items evaluates ALL items */
+                        if (trackPtr) {
+                            markItemsEvaluated(trackPtr, snapPtr, 0, length);
+                        }
                         if (header & K_VALIDATOR) {
-                            return runArrayValidator(data, kinds[ptr + 2], scratch);
+                            return runArrayValidator(data, kinds[ptr + 2], scratch, trackPtr, snapPtr);
                         }
                     } else {
                         let innerType = ri;
@@ -703,6 +831,10 @@ function catalog(cfg) {
                                 return false;
                             }
                         }
+                        /** items evaluates ALL items */
+                        if (trackPtr) {
+                            markItemsEvaluated(trackPtr, snapPtr, 0, length);
+                        }
                     }
                     return true;
                 }
@@ -711,10 +843,11 @@ function catalog(cfg) {
                         return false;
                     }
                     let valueType = ri;
-                    let dataKeys = Object.keys(data);
-                    for (let i = 0; i < dataKeys.length; i++) {
-                        if (!_validateSlot(data[dataKeys[i]], valueType)) {
-                            return false;
+                    for (let key in data) {
+                        if (hasOwnProperty.call(data, key)) {
+                            if (!_validateSlot(data[key], valueType)) {
+                                return false;
+                            }
                         }
                     }
                     return true;
@@ -724,8 +857,46 @@ function catalog(cfg) {
                     let slab = scratch ? S_SLAB : SLAB;
                     let offset = shapes[ri * 2];
                     let count = shapes[ri * 2 + 1];
+                    if (trackPtr) {
+                        /**
+                         * Reserve-Run-Commit for anyOf:
+                         * Each branch gets a fresh TRACK_SNAP slot to write into.
+                         * Passing branches are OR'd into a merged slot.
+                         * TRACK_BITS is only touched on final commit — never mid-branch.
+                         */
+                        let keyCount = TRACK_KEYS[trackPtr];
+                        let words = (keyCount + 31) >>> 5;
+                        let snapStart = SNAP_TAIL;
+                        let mergedSnap = SNAP_TAIL;
+                        SNAP_TAIL += words;
+                        TRACK_SNAP.fill(0, mergedSnap, mergedSnap + words);
+                        let anyMatch = false;
+                        for (let i = 0; i < count; i++) {
+                            let currentSnap = SNAP_TAIL;
+                            SNAP_TAIL += words;
+                            TRACK_SNAP.fill(0, currentSnap, currentSnap + words);
+                            if (_validate(data, slab[offset + i], trackPtr, currentSnap)) {
+                                anyMatch = true;
+                                for (let w = 0; w < words; w++) {
+                                    TRACK_SNAP[mergedSnap + w] |= TRACK_SNAP[currentSnap + w];
+                                }
+                            }
+                            SNAP_TAIL = currentSnap;  // drop this branch's slot
+                        }
+                        if (anyMatch) {
+                            for (let w = 0; w < words; w++) {
+                                if (snapPtr === 0) {
+                                    TRACK_BITS[trackPtr + 1 + w] |= TRACK_SNAP[mergedSnap + w];
+                                } else {
+                                    TRACK_SNAP[snapPtr + w] |= TRACK_SNAP[mergedSnap + w];
+                                }
+                            }
+                        }
+                        SNAP_TAIL = snapStart;
+                        return anyMatch;
+                    }
                     for (let i = 0; i < count; i++) {
-                        if (_validate(data, slab[offset + i])) {
+                        if (_validate(data, slab[offset + i], 0, 0)) {
                             return true;
                         }
                     }
@@ -736,9 +907,52 @@ function catalog(cfg) {
                     let slab = scratch ? S_SLAB : SLAB;
                     let offset = shapes[ri * 2];
                     let count = shapes[ri * 2 + 1];
+                    if (trackPtr) {
+                        /**
+                         * Reserve-Run-Commit for oneOf:
+                         * Each branch gets a fresh TRACK_SNAP slot.
+                         * Failed branches are dropped (SNAP_TAIL reset).
+                         * Exactly 1 passing branch's bits are committed to destination.
+                         */
+                        let keyCount = TRACK_KEYS[trackPtr];
+                        let words = (keyCount + 31) >>> 5;
+                        let matchCount = 0;
+                        let snapStart = SNAP_TAIL;
+                        let winnerSnap = 0;
+                        for (let i = 0; i < count; i++) {
+                            let currentSnap = SNAP_TAIL;
+                            SNAP_TAIL += words;
+                            TRACK_SNAP.fill(0, currentSnap, currentSnap + words);
+                            if (_validate(data, slab[offset + i], trackPtr, currentSnap)) {
+                                matchCount++;
+                                if (matchCount === 1) {
+                                    winnerSnap = currentSnap;
+                                } else {
+                                    /** Second match — abort immediately */
+                                    SNAP_TAIL = snapStart;
+                                    return false;
+                                }
+                            } else {
+                                SNAP_TAIL = currentSnap;  // drop failed branch's slot
+                            }
+                        }
+                        if (matchCount === 1) {
+                            for (let w = 0; w < words; w++) {
+                                if (snapPtr === 0) {
+                                    TRACK_BITS[trackPtr + 1 + w] |= TRACK_SNAP[winnerSnap + w];
+                                } else {
+                                    TRACK_SNAP[snapPtr + w] |= TRACK_SNAP[winnerSnap + w];
+                                }
+                            }
+                            SNAP_TAIL = snapStart;
+                            return true;
+                        }
+                        SNAP_TAIL = snapStart;
+                        return false;
+                    }
                     let matchCount = 0;
                     for (let i = 0; i < count; i++) {
-                        if (_validate(data, slab[offset + i])) {
+                        if (_validate(data, slab[offset + i], 0, 0)) {
                             matchCount++;
                             if (matchCount > 1) {
                                 return false;
@@ -753,7 +967,7 @@ function catalog(cfg) {
                     let offset = shapes[ri * 2];
                     let count = shapes[ri * 2 + 1];
                     for (let i = 0; i < count; i++) {
-                        if (!_validate(data, slab[offset + i])) {
+                        if (!_validate(data, slab[offset + i], trackPtr, snapPtr)) {
                             return false;
                         }
                     }
@@ -773,9 +987,12 @@ function catalog(cfg) {
                         return false;
                     }
                     let valueId = KEY_DICT.get(data[discKey]);
+                    if (valueId === void 0) {
+                        return false;
+                    }
                     for (let i = 0; i < length; i++) {
                         if (slab[offset + 1 + i * 2] === valueId) {
-                            return _validate(data, slab[offset + 2 + i * 2]);
+                            return _validate(data, slab[offset + 2 + i * 2], 0, 0);
                         }
                     }
                     return false;
@@ -802,6 +1019,10 @@ function catalog(cfg) {
                             return false;
                         }
                     }
+                    /** Mark prefix items as evaluated */
+                    if (trackPtr) {
+                        markItemsEvaluated(trackPtr, snapPtr, 0, checkCount);
+                    }
                     if (hasRest) {
                         let restType = (slab[offset + count - 1] & ~REST) >>> 0;
                         for (let i = checkCount; i < data.length; i++) {
@@ -809,9 +1030,13 @@ function catalog(cfg) {
                                 return false;
                             }
                         }
+                        /** Mark rest items as evaluated */
+                        if (trackPtr) {
+                            markItemsEvaluated(trackPtr, snapPtr, checkCount, data.length);
+                        }
                     }
                     if (header & K_VALIDATOR) {
-                        return runArrayValidator(data, kinds[ptr + 2], scratch);
+                        return runArrayValidator(data, kinds[ptr + 2], scratch, trackPtr, snapPtr);
                     }
                     return true;
                 }
@@ -821,14 +1046,15 @@ function catalog(cfg) {
                     let offset = shapes[ri * 2];
                     let innerType = slab[offset];
                     let callbackIdx = slab[offset + 1];
-                    if (!_validate(data, innerType)) {
+                    if (!_validate(data, innerType, trackPtr, snapPtr)) {
                         return false;
                     }
                     let callbacks = scratch ? S_CALLBACKS : CALLBACKS;
                     return !!callbacks[callbackIdx](data);
                 }
                 case K_NOT: {
-                    return !_validate(data, ri);
+                    /** not never produces annotations per JSON Schema spec */
+                    return !_validate(data, ri, 0, 0);
                 }
                 case K_CONDITIONAL: {
                     let shapes = scratch ? S_SHAPES : SHAPES;
@@ -837,21 +1063,42 @@ function catalog(cfg) {
                     let ifType = slab[offset];
                     let thenType = slab[offset + 1];
                     let elseType = slab[offset + 2];
-                    if (_validate(data, ifType)) {
-                        return thenType === 0 ? true : _validate(data, thenType);
+                    /**
+                     * The `if` branch runs in isolation: a failed `if` must not leave
+                     * partial markings. Reserve a fresh snapPtr for it; commit only if it passes.
+                     */
+                    let ifPassed;
+                    if (trackPtr) {
+                        let words = (TRACK_KEYS[trackPtr] + 31) >>> 5;
+                        let ifSnap = SNAP_TAIL;
+                        SNAP_TAIL += words;
+                        TRACK_SNAP.fill(0, ifSnap, ifSnap + words);
+                        ifPassed = _validate(data, ifType, trackPtr, ifSnap);
+                        if (ifPassed) {
+                            for (let w = 0; w < words; w++) {
+                                if (snapPtr === 0) {
+                                    TRACK_BITS[trackPtr + 1 + w] |= TRACK_SNAP[ifSnap + w];
+                                } else {
+                                    TRACK_SNAP[snapPtr + w] |= TRACK_SNAP[ifSnap + w];
+                                }
+                            }
+                        }
+                        SNAP_TAIL = ifSnap;  // reclaim if-snap slot
                     } else {
-                        return elseType === 0 ? true : _validate(data, elseType);
+                        ifPassed = _validate(data, ifType, 0, 0);
+                    }
+                    if (ifPassed) {
+                        return thenType === 0 ? true : _validate(data, thenType, trackPtr, snapPtr);
+                    } else {
+                        return elseType === 0 ? true : _validate(data, elseType, trackPtr, snapPtr);
                     }
                 }
                 case K_DYN_ANCHOR: {
                     let shapes = scratch ? S_SHAPES : SHAPES;
                     let slab = scratch ? S_SLAB : SLAB;
                     let offset = shapes[ri * 2];
-                    // Push this scope's ri onto the dynamic anchor stack.
-                    // Use bit 31 to remember if it lives in scratch storage.
                     DYN_ANCHORS[DYN_PTR++] = scratch ? (ri | 0x80000000) : ri;
-                    let valid = _validate(data, slab[offset]);
-                    // Synchronously unwind the scope, even if validation failed
+                    let valid = _validate(data, slab[offset], trackPtr, snapPtr);
                     DYN_PTR--;
                     return valid;
                 }
@@ -889,7 +1136,165 @@ function catalog(cfg) {
                             }
                         }
                     }
-                    return _validate(data, targetType);
+                    return _validate(data, targetType, trackPtr, snapPtr);
+                }
+                case K_UNEVALUATED: {
+                    /**
+                     * K_UNEVALUATED wraps an inner type with evaluation tracking.
+                     * SLAB layout: [innerType, unevalSchemaType, mode]
+                     * mode=0: property tracking (objects)
+                     * mode=1: item tracking (arrays)
+                     *
+                     * Frame layout in TRACK_KEYS: [count, id0, id1, ...idN]
+                     * Frame layout in TRACK_BITS (Uint32, bit-compacted):
+                     *   TRACK_BITS[frameStart + 1 + (i >>> 5)] bit (1 << (i & 31)) = evaluated?
+                     *
+                     * TRACK_TAIL advances by 1 + count; bit words fit inside since
+                     * words = (count + 31) >>> 5 <= count for count >= 1.
+                     */
+                    let shapes = scratch ? S_SHAPES : SHAPES;
+                    let slab = scratch ? S_SLAB : SLAB;
+                    let offset = shapes[ri * 2];
+                    let innerType = slab[offset];
+                    let unevalType = slab[offset + 1];
+                    let unevalMode = slab[offset + 2];
+
+                    if (unevalMode === 1) {
+                        // ── Items tracking (arrays) ──
+                        if (!Array.isArray(data)) {
+                            return _validate(data, innerType, trackPtr, snapPtr);
+                        }
+                        let itemCount = data.length;
+                        let frameStart = TRACK_TAIL;
+                        let words = (itemCount + 31) >>> 5;
+                        /** Grow arena if needed */
+                        if (frameStart + 1 + itemCount > TRACK_KEYS.length) {
+                            let newLen = Math.max(TRACK_KEYS.length * 2, frameStart + 1 + itemCount + 64);
+                            let newKeys = new Uint32Array(newLen);
+                            let newBits = new Uint32Array(newLen);
+                            let newSnap = new Uint32Array(newLen);
+                            newKeys.set(TRACK_KEYS);
+                            newBits.set(TRACK_BITS);
+                            newSnap.set(TRACK_SNAP);
+                            TRACK_KEYS = newKeys;
+                            TRACK_BITS = newBits;
+                            TRACK_SNAP = newSnap;
+                        }
+                        TRACK_KEYS[frameStart] = itemCount;
+                        for (let w = 0; w < words; w++) {
+                            TRACK_BITS[frameStart + 1 + w] = 0;
+                        }
+                        TRACK_TAIL = frameStart + 1 + itemCount;
+
+                        if (!_validate(data, innerType, frameStart, 0)) {
+                            TRACK_TAIL = frameStart;
+                            return false;
+                        }
+
+                        /** Check unevaluated items via bit test */
+                        for (let i = 0; i < itemCount; i++) {
+                            if ((TRACK_BITS[frameStart + 1 + (i >>> 5)] & (1 << (i & 31))) === 0) {
+                                if (!_validate(data[i], unevalType, 0, 0)) {
+                                    TRACK_TAIL = frameStart;
+                                    return false;
+                                }
+                            }
+                        }
+
+                        /** Mark all items as evaluated in parent frame (if parent is tracking) */
+                        if (trackPtr) {
+                            markItemsEvaluated(trackPtr, snapPtr, 0, itemCount);
+                        }
+
+                        TRACK_TAIL = frameStart;
+                        return true;
+                    }
+
+                    // ── Property tracking (objects) ──
+                    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                        return _validate(data, innerType, trackPtr, snapPtr);
+                    }
+
+                    /**
+                     * Allocate tracking frame: TRACK_KEYS[frameStart] = keyCount,
+                     * then [keyId0, keyId1, ...] for each own property.
+                     * Unknown keys (not in KEY_DICT) use the MSB hack to avoid
+                     * calling lookup() — which would permanently store attacker-controlled
+                     * strings in KEY_DICT and cause unbounded memory growth.
+                     */
+                    let frameStart = TRACK_TAIL;
+                    let keyCount = 0;
+                    for (let key in data) {
+                        if (!hasOwnProperty.call(data, key)) {
+                            continue;
+                        }
+                        let kid = KEY_DICT.get(key);
+                        if (kid === void 0) {
+                            /** MSB hack: store string in UNKNOWN_KEYS, encode index with MSB set */
+                            let uIdx = UNKNOWN_TAIL++;
+                            UNKNOWN_KEYS[uIdx] = key;
+                            kid = (uIdx | 0x80000000) >>> 0;
+                        }
+                        /** Grow arena if needed (check before writing) */
+                        if (frameStart + 1 + keyCount >= TRACK_KEYS.length) {
+                            let newLen = TRACK_KEYS.length * 2;
+                            let newKeys = new Uint32Array(newLen);
+                            let newBits = new Uint32Array(newLen);
+                            let newSnap = new Uint32Array(newLen);
+                            newKeys.set(TRACK_KEYS);
+                            newBits.set(TRACK_BITS);
+                            newSnap.set(TRACK_SNAP);
+                            TRACK_KEYS = newKeys;
+                            TRACK_BITS = newBits;
+                            TRACK_SNAP = newSnap;
+                        }
+                        TRACK_KEYS[frameStart + 1 + keyCount] = kid;
+                        keyCount++;
+                    }
+                    TRACK_KEYS[frameStart] = keyCount;
+                    let words = (keyCount + 31) >>> 5;
+                    for (let w = 0; w < words; w++) {
+                        TRACK_BITS[frameStart + 1 + w] = 0;
+                    }
+                    TRACK_TAIL = frameStart + 1 + keyCount;
+
+                    /** Validate inner type with tracking enabled (snapPtr=0 → direct to TRACK_BITS) */
+                    if (!_validate(data, innerType, frameStart, 0)) {
+                        TRACK_TAIL = frameStart;
+                        return false;
+                    }
+
+                    /** Check unevaluated properties via bit test */
+                    let ki = 0;
+                    for (let key in data) {
+                        if (!hasOwnProperty.call(data, key)) {
+                            continue;
+                        }
+                        if ((TRACK_BITS[frameStart + 1 + (ki >>> 5)] & (1 << (ki & 31))) === 0) {
+                            /** This property was not evaluated by any keyword */
+                            if (!_validate(data[key], unevalType, 0, 0)) {
+                                TRACK_TAIL = frameStart;
+                                return false;
+                            }
+                        }
+                        ki++;
+                    }
+
+                    /** Mark all our keys as evaluated in parent frame (if parent is tracking) */
+                    if (trackPtr) {
+                        ki = 0;
+                        for (let key in data) {
+                            if (!hasOwnProperty.call(data, key)) {
+                                continue;
+                            }
+                            let kid = TRACK_KEYS[frameStart + 1 + ki];
+                            markEvaluated(trackPtr, snapPtr, kid);
+                            ki++;
+                        }
+                    }
+
+                    TRACK_TAIL = frameStart;
+                    return true;
                 }
                 default: {
                     return false;
@@ -913,10 +1318,15 @@ function catalog(cfg) {
         if (typeof typedef !== 'number') {
             return false;
         }
+        /** GC: null out unknown key strings BEFORE resetting the counter */
+        UNKNOWN_KEYS.fill(null, 0, UNKNOWN_TAIL);
+        // TODO I might refactor this later and send -1 so we can actually use index 0, it just makes more sense...
         DYN_PTR = 0;
+        SNAP_TAIL = 1; 
+        TRACK_TAIL = 1;
+        UNKNOWN_TAIL = 0;
         rewindPending = true;
-        let result = _validate(data, typedef);
-        return result;
+        return _validate(data, typedef, 0, 0);
     }
 
     const __heap = {
@@ -925,8 +1335,8 @@ function catalog(cfg) {
         malloc, allocValidator, lookup,
         _validate,
         BARE_ARRAY, BARE_OBJECT, BARE_RECORD,
-        setRewindPending() { rewindPending = true; },
-        rewindPending() { return rewindPending; },
+        setRewindPending: () => { rewindPending = true; },
+        rewindPending: () => { return rewindPending; },
         rewind() { rewindScratch(); },
     };
 
@@ -939,7 +1349,7 @@ export {
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
-    K_CONDITIONAL, K_DYN_ANCHOR, K_DYN_REF, K_ANY_INNER,
+    K_CONDITIONAL, K_DYN_ANCHOR, K_DYN_REF, K_UNEVALUATED, K_ANY_INNER,
     K_VALIDATOR,
 };
 

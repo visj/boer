@@ -4,17 +4,17 @@ import {
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
-    K_CONDITIONAL, K_DYN_ANCHOR, K_DYN_REF,
+    K_CONDITIONAL, K_DYN_ANCHOR, K_DYN_REF, K_UNEVALUATED,
     K_VALIDATOR, sortByKeyId,
     BARE_ARRAY, BARE_OBJECT, BARE_RECORD
 } from "./catalog.js";
 
-import { popcnt16, REST, ANY, STRING, NUMBER, INTEGER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_ENUM, V_CONTAINS, V_PROPERTY_NAMES } from "./const.js";
+import { popcnt16, REST, ANY, STRING, NUMBER, INTEGER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS, V_ENUM, V_CONTAINS, V_PROPERTY_NAMES } from "./const.js";
 
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
     N_EXCLUSIVE, N_INTERSECT, N_NOT, N_CONDITIONAL, N_TUPLE, N_REF,
-    N_BARE_ARRAY, N_BARE_OBJECT, N_DYN_ANCHOR, N_DYN_REF,
+    N_BARE_ARRAY, N_BARE_OBJECT, N_DYN_ANCHOR, N_DYN_REF, N_UNEVALUATED,
 } from "./schema.js";
 
 const KIND_MASK = 0x0FFFFFFF;
@@ -383,6 +383,15 @@ export function compile(cat, ast) {
                     // propertyNames child (bit 3)
                     if (flags & 8) {
                         stack[sp++] = astEdges[extraOff];
+                        extraOff++;
+                    }
+                    // dependentSchemas children (bit 4)
+                    if (flags & 16) {
+                        let depCount = astEdges[extraOff++];
+                        for (let i = 0; i < depCount; i++) {
+                            extraOff++; // skip trigger key name index
+                            stack[sp++] = astEdges[extraOff++]; // child id
+                        }
                     }
                     break;
                 }
@@ -441,6 +450,11 @@ export function compile(cat, ast) {
                     }
                     break;
                 }
+                case N_UNEVALUATED: {
+                    stack[sp++] = astChild0[nodeId]; // inner type
+                    stack[sp++] = astChild1[nodeId]; // unevalSchema child
+                    break;
+                }
             }
             continue;
         }
@@ -497,9 +511,23 @@ export function compile(cat, ast) {
                     extraOff++;
                 }
 
+                // dependentSchemas children (bit 4)
+                /** @type {Array<number>|null} */
+                let depSchemaPayloads = null;
+                if (objFlags & 16) {
+                    let depCount = astEdges[extraOff++];
+                    depSchemaPayloads = [depCount];
+                    for (let i = 0; i < depCount; i++) {
+                        let trigNameIdx = astEdges[extraOff++];
+                        let depChildId = astEdges[extraOff++];
+                        depSchemaPayloads.push(lookup(propNames[trigNameIdx]));
+                        depSchemaPayloads.push(astCompiled[depChildId] >>> 0);
+                    }
+                }
+
                 // Build validator — may need to inject additional sequential payloads.
                 // Write order must match runObjectValidator read order:
-                //   [fixed-slots] → [V_PAT_PROPS] → [V_PROP_NAMES] → [V_DEP_REQ] → [V_ADD_PROPS]
+                //   [fixed-slots] → [V_PAT_PROPS] → [V_PROP_NAMES] → [V_DEP_REQ] → [V_DEP_SCHEMAS] → [V_ADD_PROPS]
                 let vp = compileValidator(nodeId);
                 let finalVHeader = 0;
                 let finalPayloads = null;
@@ -507,7 +535,8 @@ export function compile(cat, ast) {
                 if (patPayloads !== null || additionalType !== 0
                     || (astVHeaders[nodeId] & V_ADDITIONAL_PROPERTIES)
                     || (astVHeaders[nodeId] & V_DEPENDENT_REQUIRED)
-                    || propertyNamesType !== 0) {
+                    || propertyNamesType !== 0
+                    || depSchemaPayloads !== null) {
                     let vHeader = astVHeaders[nodeId];
                     let off = astVOffset[nodeId];
                     let pcount = popcnt16(vHeader & 0xFFFF);
@@ -555,7 +584,15 @@ export function compile(cat, ast) {
                         }
                     }
 
-                    // 5. V_ADDITIONAL_PROPERTIES (1 slot: compiled typedef or 0)
+                    // 5. V_DEPENDENT_SCHEMAS (variable-length): [count, keyId, type, ...]
+                    if (depSchemaPayloads !== null) {
+                        vHeader |= V_DEPENDENT_SCHEMAS;
+                        for (let i = 0; i < depSchemaPayloads.length; i++) {
+                            nodePayloads.push(depSchemaPayloads[i]);
+                        }
+                    }
+
+                    // 6. V_ADDITIONAL_PROPERTIES (1 slot: compiled typedef or 0)
                     if (vHeader & V_ADDITIONAL_PROPERTIES) {
                         nodePayloads.push(additionalType);
                     }
@@ -730,6 +767,19 @@ export function compile(cat, ast) {
                     slabData[1 + i] = pairs[i];
                 }
                 astCompiled[nodeId] = malloc(K_DYN_ANCHOR, scratch, 0, slabData, pairCount, 0, null);
+                break;
+            }
+
+            case N_UNEVALUATED: {
+                let innerType = astCompiled[astChild0[nodeId]] >>> 0;
+                let unevalType = astCompiled[astChild1[nodeId]] >>> 0;
+                let unevalMode = astFlags[nodeId]; // 0=properties, 1=items
+                /** SLAB: [innerType, unevalSchemaType, mode] */
+                let slabData = new Uint32Array(3);
+                slabData[0] = innerType;
+                slabData[1] = unevalType;
+                slabData[2] = unevalMode;
+                astCompiled[nodeId] = malloc(K_UNEVALUATED, scratch, 0, slabData, 3, 0, null);
                 break;
             }
         }
