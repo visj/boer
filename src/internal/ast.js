@@ -4,7 +4,7 @@ import {
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
-    K_CONDITIONAL,
+    K_CONDITIONAL, K_DYN_ANCHOR, K_DYN_REF,
     K_VALIDATOR, sortByKeyId,
     BARE_ARRAY, BARE_OBJECT, BARE_RECORD
 } from "./catalog.js";
@@ -14,7 +14,7 @@ import { popcnt16, REST, ANY, STRING, NUMBER, INTEGER, V_PATTERN, V_PATTERN_PROP
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
     N_EXCLUSIVE, N_INTERSECT, N_NOT, N_CONDITIONAL, N_TUPLE, N_REF,
-    N_BARE_ARRAY, N_BARE_OBJECT,
+    N_BARE_ARRAY, N_BARE_OBJECT, N_DYN_ANCHOR, N_DYN_REF,
 } from "./schema.js";
 
 const KIND_MASK = 0x0FFFFFFF;
@@ -98,6 +98,11 @@ export function compile(cat, ast) {
     // Circular $ref patches: [refNodeId, targetNodeId, reservedKindPtr]
     /** @type {Array<[number, number, number]>} */
     let circularPatches = [];
+
+    // Circular $dynamicRef patches: [targetNodeId, dynRefTypedef]
+    // After compilation, we patch the fallback type in the SLAB.
+    /** @type {Array<[number, number]>} */
+    let dynRefPatches = [];
 
     // Explicit compilation stack
     let stack = new Uint32Array(MAX_DEPTH);
@@ -287,6 +292,65 @@ export function compile(cat, ast) {
             continue;
         }
 
+        // ── $dynamicRef resolution ──
+        // Like N_REF but emits a K_DYN_REF node with [anchorKeyId, fallbackType].
+        if (kind === N_DYN_REF) {
+            let targetId = astChild0[nodeId];
+
+            if (astState[nodeId] === VISITING) {
+                // Re-visit: target should be compiled by now — emit K_DYN_REF
+                if (astState[targetId] === COMPILED) {
+                    let fallbackType = astCompiled[targetId] >>> 0;
+                    let nameIdx = astChild1[nodeId];
+                    let anchorKeyId = lookup(propNames[nameIdx]);
+                    let slabData = new Uint32Array(2);
+                    slabData[0] = anchorKeyId;
+                    slabData[1] = fallbackType;
+                    astCompiled[nodeId] = malloc(K_DYN_REF, scratch, 0, slabData, 2, 0, null);
+                    astState[nodeId] = COMPILED;
+                } else {
+                    stack[sp++] = nodeId;
+                    stack[sp++] = targetId;
+                }
+                continue;
+            }
+
+            // First visit
+            if (astState[targetId] === COMPILED) {
+                let fallbackType = astCompiled[targetId] >>> 0;
+                let nameIdx = astChild1[nodeId];
+                let anchorKeyId = lookup(propNames[nameIdx]);
+                let slabData = new Uint32Array(2);
+                slabData[0] = anchorKeyId;
+                slabData[1] = fallbackType;
+                astCompiled[nodeId] = malloc(K_DYN_REF, scratch, 0, slabData, 2, 0, null);
+                astState[nodeId] = COMPILED;
+                continue;
+            }
+
+            if (astState[targetId] === VISITING || targetId === nodeId) {
+                // Circular dependency — allocate K_DYN_REF immediately with a
+                // placeholder fallback (0). We patch the fallback in the SLAB
+                // after all nodes are compiled.
+                let nameIdx = astChild1[nodeId];
+                let anchorKeyId = lookup(propNames[nameIdx]);
+                let slabData = new Uint32Array(2);
+                slabData[0] = anchorKeyId;
+                slabData[1] = 0; // placeholder fallback
+                let result = malloc(K_DYN_REF, scratch, 0, slabData, 2, 0, null);
+                astCompiled[nodeId] = result;
+                astState[nodeId] = COMPILED;
+                dynRefPatches.push([targetId, result]);
+                continue;
+            }
+
+            // Target unvisited — schedule it
+            astState[nodeId] = VISITING;
+            stack[sp++] = nodeId;
+            stack[sp++] = targetId;
+            continue;
+        }
+
         // ── Complex nodes: two-visit pattern ──
 
         if (astState[nodeId] === UNVISITED) {
@@ -366,6 +430,15 @@ export function compile(cat, ast) {
                 }
                 case N_REFINE: {
                     stack[sp++] = astChild0[nodeId]; // inner type
+                    break;
+                }
+                case N_DYN_ANCHOR: {
+                    stack[sp++] = astChild0[nodeId]; // inner type
+                    let edgeBase = astFlags[nodeId];
+                    let pairCount = astChild1[nodeId];
+                    for (let i = 0; i < pairCount; i++) {
+                        stack[sp++] = astEdges[edgeBase + i * 2 + 1]; // target node ids
+                    }
                     break;
                 }
             }
@@ -634,6 +707,31 @@ export function compile(cat, ast) {
                 astCompiled[nodeId] = result >>> 0;
                 break;
             }
+
+            case N_DYN_ANCHOR: {
+                let innerType = astCompiled[astChild0[nodeId]] >>> 0;
+                let edgeBase = astFlags[nodeId];
+                let pairCount = astChild1[nodeId];
+
+                /** Build sorted [keyId, compiledTargetType] pairs */
+                let pairs = new Array(pairCount * 2);
+                for (let i = 0; i < pairCount; i++) {
+                    let nameIdx = astEdges[edgeBase + i * 2];
+                    let targetNodeId = astEdges[edgeBase + i * 2 + 1];
+                    pairs[i * 2] = lookup(propNames[nameIdx]);
+                    pairs[i * 2 + 1] = astCompiled[targetNodeId] >>> 0;
+                }
+                sortByKeyId(pairs);
+
+                /** SLAB: [innerType, keyId0, type0, keyId1, type1, ...] */
+                let slabData = new Uint32Array(1 + pairCount * 2);
+                slabData[0] = innerType;
+                for (let i = 0; i < pairCount * 2; i++) {
+                    slabData[1 + i] = pairs[i];
+                }
+                astCompiled[nodeId] = malloc(K_DYN_ANCHOR, scratch, 0, slabData, pairCount, 0, null);
+                break;
+            }
         }
         astState[nodeId] = COMPILED;
     }
@@ -652,6 +750,18 @@ export function compile(cat, ast) {
             HEAP.KINDS[kindPtr] = HEAP.KINDS[realPtr];
             HEAP.KINDS[kindPtr + 1] = HEAP.KINDS[realPtr + 1];
         }
+    }
+
+    // ── Patch circular $dynamicRef fallback types ──
+    // Each entry is [targetNodeId, dynRefTypedef]. We patch the fallback
+    // type (SLAB[offset+1]) with the now-compiled target.
+    for (let i = 0; i < dynRefPatches.length; i++) {
+        let [targetId, dynRefType] = dynRefPatches[i];
+        let compiled = astCompiled[targetId] >>> 0;
+        let ptr = dynRefType & KIND_MASK;
+        let ri = HEAP.KINDS[ptr + 1];
+        let offset = HEAP.SHAPES[ri * 2];
+        HEAP.SLAB[offset + 1] = compiled;
     }
 
     /** @type {uvd.SchemaResource<T,R>[]} */

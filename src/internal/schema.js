@@ -9,7 +9,7 @@ import {
     V_ENUM,
     hasOwnProperty
 } from "./const.js";
-import { isObject, isString } from './util.js';
+import { isBoolean, isObject, isString } from './util.js';
 import { packValidators, PAYLOAD_QUEUE } from "./validator.js";
 import { resolve } from "uri-js";
 
@@ -66,6 +66,8 @@ export const N_INTERSECT = 9;
 export const N_NOT = 10;
 export const N_CONDITIONAL = 11;
 export const N_TUPLE = 12;
+export const N_DYN_ANCHOR = 13;
+export const N_DYN_REF = 14;
 export const N_REF = 255;
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -155,6 +157,15 @@ export function transpile(schema, dialect) {
 
     // 2. Draft 7 and older (DRAFT_7, 6, 4)
     if (dialect <= DRAFT_7) {
+        // TODO fix transpile
+        // if (isString(schema.$ref)) {
+        //     for (let key in schema) {
+        //         if (key !== '$ref') {
+        //             delete schema[key]; // Scrub everything else
+        //         }
+        //     }
+        // }
+
         // Desugar dependencies -> dependentRequired / dependentSchemas
         if (schema.dependencies !== void 0) {
             /**
@@ -257,13 +268,18 @@ function CompoundSchema(dialect) {
     this.schemas = [];
     /** @type {Array<string|null>} */
     this.names = [];
+    /** @type {number} */
     this.count = 0;
     /** @type {number} — default dialect for schemas without a $schema keyword */
     this.defaultDialect = getDialect(dialect);
+    /** @type {Array<string>} */
+    this.baseUris = [];
     /** @type {Map<string, JSONSchema>} — Maps Absolute URI → Raw JS Schema Object */
     this.uriRegistry = new Map();
     /** @type {Map<string, Set<string>>} — Maps $dynamicAnchor name → Set of Absolute URIs */
     this.dynamicAnchors = new Map();
+    /** @type {Map<string, Map<string, string>>} — Maps resource URI → Map of anchorName → anchor base URI */
+    this.dynamicAnchorsByResource = new Map();
 }
 
 /**
@@ -273,14 +289,24 @@ function CompoundSchema(dialect) {
  * runPreScan — this method only stores the schema and name.
  *
  * @param {JSONSchema} schema
+ * @param {string=} id
  * @param {string=} name
  * @returns {number} index in this.schemas (pass to bundle() to request compilation)
  */
-CompoundSchema.prototype.add = function (schema, name) {
-    const index = this.count++;
-    this.schemas[index] = schema;
-    this.names[index] = name || null;
-    return index;
+CompoundSchema.prototype.add = function (schema, id, name) {
+    if (isBoolean(schema) || isObject(schema)) {
+        const index = this.count++;
+        if (isString(id)) {
+            this.uriRegistry.set(id, schema);
+            this.baseUris[index] = id;
+        } else {
+            this.baseUris[index] = '';
+        }
+        this.schemas[index] = schema;
+        this.names[index] = name || null;
+        return index;
+    }
+    throw new Error('Invalid schema');
 };
 
 // parseJsonSchema(schema) → FlatAst
@@ -356,11 +382,12 @@ CompoundSchema.prototype.add = function (schema, name) {
 /**
  * Depth-first recursive walker used by runPreScan.
  * @param {CompoundSchema} compound
- * @param {any} obj
+ * @param {JSONSchema} obj
  * @param {string} baseUri — absolute URI context inherited from parent scope
  * @param {number} dialect — DRAFT_* constant inherited from parent scope
+ * @param {string} resourceUri — absolute URI of the nearest ancestor schema resource ($id)
  */
-function walkSchema(compound, obj, baseUri, dialect) {
+function walkSchema(compound, obj, baseUri, dialect, resourceUri) {
     if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
         return;
     }
@@ -380,6 +407,7 @@ function walkSchema(compound, obj, baseUri, dialect) {
     const id = obj.$id;
     if (id) {
         baseUri = resolve(baseUri, id);
+        resourceUri = baseUri;
         compound.uriRegistry.set(baseUri, obj);
     }
 
@@ -388,7 +416,8 @@ function walkSchema(compound, obj, baseUri, dialect) {
         compound.uriRegistry.set(baseUri + '#' + obj.$anchor, obj);
     }
 
-    // $dynamicAnchor registers the anchor name in the dynamic scope map.
+    // $dynamicAnchor registers the anchor name in the dynamic scope map
+    // and associates it with the owning schema resource for bookending checks.
     if (obj.$dynamicAnchor) {
         compound.uriRegistry.set(baseUri + '#' + obj.$dynamicAnchor, obj);
         let uriSet = compound.dynamicAnchors.get(obj.$dynamicAnchor);
@@ -397,6 +426,14 @@ function walkSchema(compound, obj, baseUri, dialect) {
             compound.dynamicAnchors.set(obj.$dynamicAnchor, uriSet);
         }
         uriSet.add(baseUri);
+
+        // Track which resource owns this dynamic anchor
+        let resMap = compound.dynamicAnchorsByResource.get(resourceUri);
+        if (resMap === void 0) {
+            resMap = new Map();
+            compound.dynamicAnchorsByResource.set(resourceUri, resMap);
+        }
+        resMap.set(obj.$dynamicAnchor, baseUri);
     }
 
     // Recurse into every child value that is an object or an array of objects.
@@ -405,10 +442,10 @@ function walkSchema(compound, obj, baseUri, dialect) {
         if (typeof val === 'object' && val !== null) {
             if (Array.isArray(val)) {
                 for (let i = 0; i < val.length; i++) {
-                    walkSchema(compound, val[i], baseUri, dialect);
+                    walkSchema(compound, val[i], baseUri, dialect, resourceUri);
                 }
             } else {
-                walkSchema(compound, val, baseUri, dialect);
+                walkSchema(compound, val, baseUri, dialect, resourceUri);
             }
         }
     }
@@ -421,6 +458,9 @@ function walkSchema(compound, obj, baseUri, dialect) {
  * @returns {string}
  */
 function resolveUri(baseUri, refString) {
+    if (baseUri === '') {
+        return refString;
+    }
     // TODO we will drop this dependency in the future
     return resolve(baseUri, refString);
 }
@@ -464,7 +504,8 @@ function resolvePointer(rootObj, fragment) {
  */
 function runPreScan(compound) {
     for (let si = 0; si < compound.count; si++) {
-        walkSchema(compound, compound.schemas[si], '', compound.defaultDialect);
+        const baseUri = compound.baseUris[si];
+        walkSchema(compound, compound.schemas[si], baseUri, compound.defaultDialect, '');
     }
 }
 
@@ -678,6 +719,13 @@ CompoundSchema.prototype.bundle = function (schemas) {
      */
     let compiledUris = new Map();
 
+    /**
+     * Set of node IDs that are "inner" nodes of a N_DYN_ANCHOR wrapper.
+     * These must not be re-wrapped when the parser encounters their $id.
+     * @type {Set<number>}
+     */
+    let dynAnchorInnerSet = new Set();
+
     // Phase 1: Iterative depth-first parse
 
     while (tail > 0) {
@@ -714,22 +762,82 @@ CompoundSchema.prototype.bundle = function (schemas) {
         let currentBaseUri = frameBaseUri[tail];
         let currentDocRoot = frameDocRoot[tail];
         if (isString(schema.$id)) {
-            currentBaseUri = resolveUri(currentBaseUri, schema.$id);
+            let nextBaseUri = resolveUri(currentBaseUri, schema.$id);
+            
+            // 1. Structural traversal: Resolving the $id against the parent's base URI
+            // perfectly matches the canonical URI registered by walkSchema.
+            if (this.uriRegistry.get(nextBaseUri) === schema) {
+                currentBaseUri = nextBaseUri;
+            } 
+            // 2. $ref traversal: We jumped here directly via a $ref, meaning 
+            // currentBaseUri was passed in by pushFrame and is ALREADY the canonical URI!
+            else if (this.uriRegistry.get(currentBaseUri) === schema) {
+                // Do nothing to currentBaseUri. We prevent the double resolution!
+            } 
+            // 3. Fallback safeguard
+            else {
+                currentBaseUri = nextBaseUri;
+            }
             currentDocRoot = schema;
         }
+
+        // ── N_DYN_ANCHOR wrapping ──
+        // If this schema resource ($id) owns dynamic anchors, wrap it in a
+        // N_DYN_ANCHOR node that will push a scope boundary at runtime.
+        if (isString(schema.$id) && !dynAnchorInnerSet.has(nodeId)) {
+            let anchorMap = this.dynamicAnchorsByResource.get(currentBaseUri);
+            if (anchorMap !== void 0 && anchorMap.size > 0) {
+                astKinds[nodeId] = N_DYN_ANCHOR;
+                let innerId = allocNode();
+                dynAnchorInnerSet.add(innerId);
+                astChild0[nodeId] = innerId;
+
+                let edgeBase = astEdges.length;
+                let pairCount = 0;
+                for (let [anchorName, anchorBaseUri] of anchorMap) {
+                    let anchorUri = anchorBaseUri + '#' + anchorName;
+                    let anchorSchema = this.uriRegistry.get(anchorUri);
+                    if (anchorSchema === void 0) {
+                        continue;
+                    }
+                    let targetId = compiledUris.get(anchorUri);
+                    if (targetId === void 0) {
+                        targetId = allocNode();
+                        compiledUris.set(anchorUri, targetId);
+                        // Prevent the anchor target from being re-wrapped as N_DYN_ANCHOR
+                        // (it may be the same schema object as the resource root)
+                        dynAnchorInnerSet.add(targetId);
+                        pushFrame(anchorSchema, targetId, LINK_DEF, 0, anchorBaseUri, currentDocRoot);
+                    }
+                    let nameIdx = virtualLookup(anchorName);
+                    astEdges.push(nameIdx);
+                    astEdges.push(targetId);
+                    pairCount++;
+                }
+                astChild1[nodeId] = pairCount;
+                astFlags[nodeId] = edgeBase;
+
+                // Re-parse this same schema object as the inner node
+                pushFrame(schema, innerId, LINK_CHILD0, nodeId, currentBaseUri, currentDocRoot);
+                continue;
+            }
+        }
+
         let refStr = schema.$ref;
         const hasRef = isString(refStr);
+        let dynRefStr = schema.$dynamicRef;
+        const hasDynRef = isString(dynRefStr);
         let allOf = schema.allOf;
         let anyOf = schema.anyOf;
         let oneOf = schema.oneOf;
         let notSchema = schema.not;
         let ifSchema = schema.if;
         let hasComposition = allOf !== void 0 || anyOf !== void 0 || oneOf !== void 0
-            || notSchema !== void 0 || ifSchema !== void 0 || hasRef;
+            || notSchema !== void 0 || ifSchema !== void 0 || hasRef || hasDynRef;
         // Count how many composition keywords are present
         let compositionCount = (allOf !== void 0 ? 1 : 0) + (anyOf !== void 0 ? 1 : 0)
             + (oneOf !== void 0 ? 1 : 0) + (notSchema !== void 0 ? 1 : 0)
-            + (ifSchema !== void 0 ? 1 : 0) + (hasRef ? 1 : 0);
+            + (ifSchema !== void 0 ? 1 : 0) + (hasRef ? 1 : 0) + (hasDynRef ? 1 : 0);
 
         // ── Type + validators + structural keywords ──
 
@@ -923,6 +1031,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
 
             // Each composition keyword becomes its own sub-schema
             if (hasRef) parts.push({ $ref: refStr });
+            if (hasDynRef) parts.push({ $dynamicRef: dynRefStr });
             if (allOf !== void 0) parts.push({ allOf });
             if (anyOf !== void 0) parts.push({ anyOf });
             if (oneOf !== void 0) parts.push({ oneOf });
@@ -1026,53 +1135,158 @@ CompoundSchema.prototype.bundle = function (schemas) {
             let absoluteUri = resolveUri(currentBaseUri, refStr);
             let targetId = compiledUris.get(absoluteUri);
 
-            astKinds[nodeId] = N_REF;
-
             // ── JIT Lazy Compilation ──
             if (targetId === void 0) {
-                // 2. ONLY fallback to JSON Pointer if it's not a registered named anchor
-                if (targetId === void 0) {
-                    // Pre-split the URI to separate the Base Context from the Fragment
-                    let hashIdx = absoluteUri.indexOf('#');
-                    let baseDocUri = hashIdx !== -1 ? absoluteUri.substring(0, hashIdx) : absoluteUri;
-                    let fragment = hashIdx !== -1 ? absoluteUri.substring(hashIdx + 1) : "";
+                // Pre-split the URI to separate the Base Context from the Fragment
+                let hashIdx = absoluteUri.indexOf('#');
+                let baseDocUri = hashIdx !== -1 ? absoluteUri.substring(0, hashIdx) : absoluteUri;
+                let fragment = hashIdx !== -1 ? absoluteUri.substring(hashIdx + 1) : "";
 
-                    // 1. Check for registered named anchors first (e.g., #items)
-                    let targetObj = this.uriRegistry.get(absoluteUri);
-                    let targetDocRoot;
+                // 1. Check for registered named anchors first (e.g., #items)
+                let targetObj = this.uriRegistry.get(absoluteUri);
+                let targetDocRoot;
 
-                    // 2. Resolve the owning document root for this target
-                    if (baseDocUri === currentBaseUri) {
-                        targetDocRoot = currentDocRoot;
+                // 2. Resolve the owning document root for this target
+                if (baseDocUri === currentBaseUri) {
+                    targetDocRoot = currentDocRoot;
+                } else {
+                    targetDocRoot = this.uriRegistry.get(baseDocUri);
+                    if (targetDocRoot === void 0) {
+                        throw new Error("Unresolvable $ref base: " + baseDocUri);
+                    }
+                }
+
+                // 3. Fallback to JSON Pointer if it wasn't a named anchor
+                if (targetObj === void 0) {
+                    if (fragment === "") {
+                        targetObj = targetDocRoot;
                     } else {
-                        targetDocRoot = this.uriRegistry.get(baseDocUri);
-                        if (targetDocRoot === void 0) {
-                            throw new Error("Unresolvable $ref base: " + baseDocUri);
+                        // SPEC: A fragment cannot point inside a boolean schema
+                        if (typeof targetDocRoot !== 'object' || targetDocRoot === null) {
+                            throw new Error("Cannot resolve fragment '" + fragment + "' inside boolean schema: " + baseDocUri);
                         }
+                        targetObj = resolvePointer(targetDocRoot, fragment);
                     }
-
-                    // 3. Fallback to JSON Pointer if it wasn't a named anchor
                     if (targetObj === void 0) {
-                        if (fragment === "") {
-                            targetObj = targetDocRoot;
-                        } else {
-                            // SPEC: A fragment cannot point inside a boolean schema
-                            if (typeof targetDocRoot !== 'object' || targetDocRoot === null) {
-                                throw new Error("Cannot resolve fragment '" + fragment + "' inside boolean schema: " + baseDocUri);
-                            }
-                            targetObj = resolvePointer(targetDocRoot, fragment);
-                        }
-                        if (targetObj === void 0) {
-                            throw new Error("Unresolvable $ref pointer: " + absoluteUri);
-                        }
+                        throw new Error("Unresolvable $ref pointer: " + absoluteUri);
                     }
+                }
 
-                    targetId = allocNode();
-                    compiledUris.set(absoluteUri, targetId);
-                    pushFrame(targetObj, targetId, LINK_DEF, 0, baseDocUri, targetDocRoot);
+                targetId = allocNode();
+                compiledUris.set(absoluteUri, targetId);
+                pushFrame(targetObj, targetId, LINK_DEF, 0, baseDocUri, targetDocRoot);
+            }
+
+            // ── Dynamic scope injection ──
+            // When a $ref crosses into a schema resource that has $dynamicAnchors,
+            // and the target is NOT the resource root (which already has a wrapper),
+            // we must wrap this $ref in N_DYN_ANCHOR to push the resource's scope.
+            let refHashIdx = absoluteUri.indexOf('#');
+            let refBaseDocUri = refHashIdx !== -1 ? absoluteUri.substring(0, refHashIdx) : absoluteUri;
+            let refFragment = refHashIdx !== -1 ? absoluteUri.substring(refHashIdx + 1) : "";
+            let refResourceAnchors = this.dynamicAnchorsByResource.get(refBaseDocUri);
+
+            if (refResourceAnchors !== void 0 && refResourceAnchors.size > 0
+                && refFragment !== "" && refBaseDocUri !== currentBaseUri) {
+                // This $ref enters a resource with dynamic anchors via a sub-schema.
+                // Wrap as N_DYN_ANCHOR so the resource's anchors are on the scope stack.
+                astKinds[nodeId] = N_DYN_ANCHOR;
+                let refInnerId = allocNode();
+                dynAnchorInnerSet.add(refInnerId);
+                astKinds[refInnerId] = N_REF;
+                astChild0[refInnerId] = targetId;
+                astChild0[nodeId] = refInnerId;
+
+                let edgeBase = astEdges.length;
+                let pairCount = 0;
+                for (let [anchorName, anchorBaseUri] of refResourceAnchors) {
+                    let anchorUri = anchorBaseUri + '#' + anchorName;
+                    let anchorSchema = this.uriRegistry.get(anchorUri);
+                    if (anchorSchema === void 0) {
+                        continue;
+                    }
+                    let anchorTargetId = compiledUris.get(anchorUri);
+                    if (anchorTargetId === void 0) {
+                        anchorTargetId = allocNode();
+                        compiledUris.set(anchorUri, anchorTargetId);
+                        dynAnchorInnerSet.add(anchorTargetId);
+                        pushFrame(anchorSchema, anchorTargetId, LINK_DEF, 0, anchorBaseUri, currentDocRoot);
+                    }
+                    let nameIdx = virtualLookup(anchorName);
+                    astEdges.push(nameIdx);
+                    astEdges.push(anchorTargetId);
+                    pairCount++;
+                }
+                astChild1[nodeId] = pairCount;
+                astFlags[nodeId] = edgeBase;
+                continue;
+            }
+
+            astKinds[nodeId] = N_REF;
+            astChild0[nodeId] = targetId;
+            continue;
+        }
+
+        if (hasDynRef) {
+            let absoluteUri = resolveUri(currentBaseUri, dynRefStr);
+            let hashIdx = absoluteUri.indexOf('#');
+            let fragment = hashIdx !== -1 ? absoluteUri.substring(hashIdx + 1) : "";
+            let baseDocUri = hashIdx !== -1 ? absoluteUri.substring(0, hashIdx) : absoluteUri;
+
+            // Determine if this is truly dynamic or should collapse to plain $ref.
+            // A JSON Pointer fragment (starts with /) or empty fragment is never dynamic.
+            // The bookending rule: dynamic resolution only activates if the target
+            // resource contains a matching $dynamicAnchor.
+            let isDynamic = false;
+            if (fragment.length > 0 && fragment.charCodeAt(0) !== 47) {
+                let targetResourceAnchors = this.dynamicAnchorsByResource.get(baseDocUri);
+                if (targetResourceAnchors !== void 0 && targetResourceAnchors.has(fragment)) {
+                    isDynamic = true;
                 }
             }
-            astChild0[nodeId] = targetId;
+
+            // Resolve the fallback target exactly like $ref
+            let targetId = compiledUris.get(absoluteUri);
+            if (targetId === void 0) {
+                let targetObj = this.uriRegistry.get(absoluteUri);
+                let targetDocRoot;
+
+                if (baseDocUri === currentBaseUri) {
+                    targetDocRoot = currentDocRoot;
+                } else {
+                    targetDocRoot = this.uriRegistry.get(baseDocUri);
+                    if (targetDocRoot === void 0) {
+                        throw new Error("Unresolvable $dynamicRef base: " + baseDocUri);
+                    }
+                }
+
+                if (targetObj === void 0) {
+                    if (fragment === "") {
+                        targetObj = targetDocRoot;
+                    } else {
+                        if (typeof targetDocRoot !== 'object' || targetDocRoot === null) {
+                            throw new Error("Cannot resolve fragment '" + fragment + "' inside boolean schema: " + baseDocUri);
+                        }
+                        targetObj = resolvePointer(targetDocRoot, fragment);
+                    }
+                    if (targetObj === void 0) {
+                        throw new Error("Unresolvable $dynamicRef pointer: " + absoluteUri);
+                    }
+                }
+
+                targetId = allocNode();
+                compiledUris.set(absoluteUri, targetId);
+                pushFrame(targetObj, targetId, LINK_DEF, 0, baseDocUri, targetDocRoot);
+            }
+
+            if (isDynamic) {
+                astKinds[nodeId] = N_DYN_REF;
+                astChild0[nodeId] = targetId;
+                astChild1[nodeId] = virtualLookup(fragment);
+            } else {
+                astKinds[nodeId] = N_REF;
+                astChild0[nodeId] = targetId;
+            }
             continue;
         }
 

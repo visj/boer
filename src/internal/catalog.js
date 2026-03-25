@@ -7,7 +7,7 @@ import {
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
-    K_CONDITIONAL, K_ANY_INNER,
+    K_CONDITIONAL, K_DYN_ANCHOR, K_DYN_REF, K_ANY_INNER,
     KIND_ENUM_MASK, K_VALIDATOR,
     V_MIN_LENGTH, V_MAX_LENGTH, V_PATTERN, V_FORMAT,
     V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
@@ -76,6 +76,10 @@ function catalog(cfg) {
     HEAP.KIND_PTR = 3;
 
     let rewindPending = false;
+
+    /** Global stack tracking active dynamic scope boundaries during validation. */
+    const DYN_ANCHORS = new Uint32Array(512);
+    let DYN_PTR = 0;
 
     /**
      * @returns {void}
@@ -839,6 +843,54 @@ function catalog(cfg) {
                         return elseType === 0 ? true : _validate(data, elseType);
                     }
                 }
+                case K_DYN_ANCHOR: {
+                    let shapes = scratch ? S_SHAPES : SHAPES;
+                    let slab = scratch ? S_SLAB : SLAB;
+                    let offset = shapes[ri * 2];
+                    // Push this scope's ri onto the dynamic anchor stack.
+                    // Use bit 31 to remember if it lives in scratch storage.
+                    DYN_ANCHORS[DYN_PTR++] = scratch ? (ri | 0x80000000) : ri;
+                    let valid = _validate(data, slab[offset]);
+                    // Synchronously unwind the scope, even if validation failed
+                    DYN_PTR--;
+                    return valid;
+                }
+                case K_DYN_REF: {
+                    let shapes = scratch ? S_SHAPES : SHAPES;
+                    let slab = scratch ? S_SLAB : SLAB;
+                    let offset = shapes[ri * 2];
+                    let anchorKeyId = slab[offset];
+                    let targetType = slab[offset + 1];
+                    // Search the scope stack outermost (0) to innermost (DYN_PTR - 1).
+                    // The first match wins per Draft 2020-12 spec.
+                    scan: for (let i = 0; i < DYN_PTR; i++) {
+                        let entry = DYN_ANCHORS[i];
+                        let scopeScratch = (entry & 0x80000000) !== 0;
+                        let scopeRi = entry & 0x7FFFFFFF;
+                        let scopeShapes = scopeScratch ? S_SHAPES : SHAPES;
+                        let scopeSlab = scopeScratch ? S_SLAB : SLAB;
+                        let scopeOffset = scopeShapes[scopeRi * 2];
+                        let count = scopeShapes[scopeRi * 2 + 1];
+                        // Binary search the sorted [anchorKeyId, targetType] pairs.
+                        // Skip SLAB[scopeOffset] which is the innerType.
+                        let lo = 0;
+                        let hi = count - 1;
+                        while (lo <= hi) {
+                            let mid = (lo + hi) >>> 1;
+                            let currentKey = scopeSlab[scopeOffset + 1 + mid * 2];
+                            if (currentKey === anchorKeyId) {
+                                targetType = scopeSlab[scopeOffset + 1 + mid * 2 + 1];
+                                break scan;
+                            }
+                            if (currentKey < anchorKeyId) {
+                                lo = mid + 1;
+                            } else {
+                                hi = mid - 1;
+                            }
+                        }
+                    }
+                    return _validate(data, targetType);
+                }
                 default: {
                     return false;
                 }
@@ -861,6 +913,7 @@ function catalog(cfg) {
         if (typeof typedef !== 'number') {
             return false;
         }
+        DYN_PTR = 0;
         rewindPending = true;
         let result = _validate(data, typedef);
         return result;
@@ -886,8 +939,8 @@ export {
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
-    K_CONDITIONAL, K_ANY_INNER,
-    K_VALIDATOR as HAS_VALIDATOR,
+    K_CONDITIONAL, K_DYN_ANCHOR, K_DYN_REF, K_ANY_INNER,
+    K_VALIDATOR,
 };
 
 export * from './const.js';

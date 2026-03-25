@@ -44,6 +44,15 @@ function isString(value) {
 }
 
 /**
+ * 
+ * @param {*} value 
+ * @returns {value is boolean}
+ */
+function isBoolean(value) {
+    return typeof value === 'boolean';
+}
+
+/**
  *
  * @param {*} value
  * @returns {value is number}
@@ -339,7 +348,8 @@ function deepEqual(a, b) {
 }
 
 export {
-    nullable, optional, isNumber, isString, isObject,
+    nullable, optional,
+    isNumber, isString, isObject, isBoolean,
     deepEqual, sortByKeyId, parseValue,
     _isValue, describeType,
 }
