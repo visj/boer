@@ -19,3 +19,5 @@ export {
     notAllocator, $notAllocator,
     whenAllocator, $whenAllocator
 } from './internal/allocate.js';
+export { compile } from './internal/ast.js';
+export { CompoundSchema } from './internal/schema.js';

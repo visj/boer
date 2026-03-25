@@ -125,24 +125,23 @@ const V_MAX_CONTAINS = 1 << 11;
 // Object payload flags
 const V_MIN_PROPERTIES = 1 << 12;
 const V_MAX_PROPERTIES = 1 << 13;
-const V_UNEVALUATED_ITEMS = 1 << 14;
-const V_UNEVALUATED_PROPERTIES = 1 << 15;
 // Object variable-length payload flags (sequential p++ only, NOT popcount-compatible).
 // These are only used by K_OBJECT (catalog API), never by K_PRIMITIVE (JSON Schema).
-// Payloads must be written and read in ascending bit order after the single-payload flags.
 const V_DEPENDENT_REQUIRED = 1 << 16;
 const V_PATTERN_PROPERTIES = 1 << 17;
 const V_PROPERTY_NAMES = 1 << 18;
 const V_DEPENDENT_SCHEMAS = 1 << 19;
+const V_UNEVALUATED_ITEMS = 1 << 20;
+const V_UNEVALUATED_PROPERTIES = 1 << 21;
 /**
  * V_ENUM: variable-length enum membership payload for K_PRIMITIVE validators.
- * Bit 20 — sequential, never co-occurs with bits 16–19 (those are K_OBJECT only).
+ * Bit 22 — sequential, never co-occurs with bits 16–21 (those are K_OBJECT only).
  * Payload layout (after fixed-slot payloads at base + popcnt16(vHeader & 0xFFFF)):
  *   If primBits & STRING: [ strCount, sortedKeyId0, ..., sortedKeyIdN ]
  *   If primBits & (NUMBER|INTEGER): [ numCount, sortedNum0, ..., sortedNumM ]
  *   If both: string segment first, then number segment.
  */
-const V_ENUM = 1 << 20;
+const V_ENUM = 1 << 22;
 
 // Boolean modifier flags (no payload)
 const V_EXCLUSIVE_MINIMUM = 1 << 28;
