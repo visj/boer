@@ -600,11 +600,12 @@ function catalog(cfg) {
                 let triggerKeyId = vals[p++] | 0;
                 let depCount = vals[p++] | 0;
                 let triggerKey = KEY_INDEX.get(triggerKeyId);
-                if (triggerKey !== void 0 && data[triggerKey] !== void 0) {
+                // Use hasOwnProperty so that null/false/0 values still count as "present".
+                if (triggerKey !== void 0 && hasOwnProperty.call(data, triggerKey)) {
                     for (let di = 0; di < depCount; di++) {
                         let depKeyId = vals[p++] | 0;
                         let depKey = KEY_INDEX.get(depKeyId);
-                        if (depKey === void 0 || data[depKey] === void 0) {
+                        if (depKey === void 0 || !hasOwnProperty.call(data, depKey)) {
                             return false;
                         }
                     }

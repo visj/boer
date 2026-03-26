@@ -30,16 +30,16 @@ const SKIP_TESTS = {
     "definitions.json": {
         "validate definition against metaschema": new Set(["valid definition schema", "invalid definition schema"])
     },
-    "dependentRequired.json": {
-        "single dependency": new Set(["missing dependency"]),
-        "multiple dependents required": new Set(["missing dependency", "missing other dependency", "missing both dependencies"]),
-        "dependencies with escaped characters": new Set(["CRLF missing dependent", "quoted quotes missing dependent"])
-    },
-    // dependencies.json (draft4/6/7) transpiles to dependentRequired — same underlying bug.
-    "dependencies.json": {
-        "dependencies": new Set(["missing dependency"]),
-        "multiple dependencies": new Set(["missing dependency", "missing other dependency", "missing both dependencies"])
-    },
+    // "dependentRequired.json": {
+    //     "single dependency": new Set(["missing dependency"]),
+    //     "multiple dependents required": new Set(["missing dependency", "missing other dependency", "missing both dependencies"]),
+    //     "dependencies with escaped characters": new Set(["CRLF missing dependent", "quoted quotes missing dependent"])
+    // },
+    // // dependencies.json (draft4/6/7) transpiles to dependentRequired — same underlying bug.
+    // "dependencies.json": {
+    //     "dependencies": new Set(["missing dependency"]),
+    //     "multiple dependencies": new Set(["missing dependency", "missing other dependency", "missing both dependencies"])
+    // },
     "ref.json": {
         "remote ref, containing refs itself": new Set(["remote ref valid", "remote ref invalid"]),
         "simple URN base URI with $ref via the URN": new Set(["invalid under the URN IDed schema"])

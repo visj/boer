@@ -1080,6 +1080,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
         let containsSchema = schema.contains;
         let propNameSchema = schema.propertyNames;
         let depSchemas = schema.dependentSchemas;
+        const hasDependentRequired = schema.dependentRequired !== void 0;
         const hasProps = props !== void 0 || required !== void 0;
         const hasItems = items !== void 0;
         const hasAdditionalProps = additionalProps !== void 0;
@@ -1498,8 +1499,8 @@ CompoundSchema.prototype.bundle = function (schemas) {
         // The node id where the "inner type" is written.
         let typeNodeId = nodeId;
 
-        // ── Object structural node (properties / required / additionalProperties / patternProperties / propertyNames / dependentSchemas) ──
-        if (hasProps || hasAdditionalProps || hasPatternProps || hasPropNames || hasDepSchemas) {
+        // ── Object structural node (properties / required / additionalProperties / patternProperties / propertyNames / dependentSchemas / dependentRequired) ──
+        if (hasProps || hasAdditionalProps || hasPatternProps || hasPropNames || hasDepSchemas || hasDependentRequired) {
             let propObj = props || Object.create(null);
             let propKeys = Object.keys(propObj);
             let requiredSet = required ? new Set(required) : new Set();
