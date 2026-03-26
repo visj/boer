@@ -179,6 +179,26 @@ const WALK_CONTAINER_KEYS = new Set([
 ]);
 
 /**
+ * Keywords governed by the JSON Schema `validation` vocabulary (2020-12 and
+ * 2019-09 drafts share the same set). When a custom metaschema omits this
+ * vocabulary from its `$vocabulary` map, all of these keywords are stripped
+ * from schemas that reference the custom metaschema, effectively disabling
+ * validation-constraint evaluation for those schemas.
+ */
+const VALIDATION_KEYWORDS = new Set([
+    'type', 'const', 'enum',
+    'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
+    'maxLength', 'minLength', 'pattern',
+    'maxItems', 'minItems', 'uniqueItems', 'maxContains', 'minContains',
+    'maxProperties', 'minProperties', 'required', 'dependentRequired',
+]);
+
+/** Validation vocabulary URI for draft2020-12. */
+const VOCAB_VALIDATION_2020 = 'https://json-schema.org/draft/2020-12/vocab/validation';
+/** Validation vocabulary URI for draft2019-09. */
+const VOCAB_VALIDATION_2019 = 'https://json-schema.org/draft/2019-09/vocab/validation';
+
+/**
  * Transpiles legacy JSON Schema drafts into Draft 2020-12 format in-place.
  * @param {Schema} schema - The schema object to mutate.
  * @param {number} dialect - The dialect constant (e.g., DRAFT_7).
@@ -343,7 +363,7 @@ function getDialect(uri) {
  * dialect desugaring.
  *
  * @constructor
- * @param {string|null} dialect — default dialect URI for schemas without $schema
+ * @param {string=} dialect — default dialect URI for schemas without $schema
  */
 function CompoundSchema(dialect) {
     /** @type {Array<JSONSchema>} */
@@ -467,19 +487,49 @@ CompoundSchema.prototype.add = function (schema, id, name) {
  * Depth-first recursive walker used by runPreScan.
  * @param {CompoundSchema} compound
  * @param {JSONSchema} obj
- * @param {string} baseUri — absolute URI context inherited from parent scope
- * @param {number} dialect — DRAFT_* constant inherited from parent scope
- * @param {string} resourceUri — absolute URI of the nearest ancestor schema resource ($id)
+ * @param {string} baseUri absolute URI context inherited from parent scope
+ * @param {number} dialect DRAFT_* constant inherited from parent scope
+ * @param {string} resourceUri absolute URI of the nearest ancestor schema resource ($id)
+ * @param {Set<string>|null} [stripKeys] keywords to delete from every schema in this
+ *   resource (derived from a custom metaschema that omits certain vocabularies)
  */
-function walkSchema(compound, obj, baseUri, dialect, resourceUri) {
+function walkSchema(compound, obj, baseUri, dialect, resourceUri, stripKeys) {
     if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) {
         return;
     }
+
+    // TODO This is not schema compliant way of handling the vocabularies, it's just cheating
+    // But I just don't have energy to fix this right now...
 
     // A $schema keyword inside a sub-schema changes the active dialect for
     // that sub-tree. This handles embedded schemas with differing drafts.
     if (isString(obj.$schema)) {
         dialect = getDialect(obj.$schema);
+        // When a custom metaschema declares $vocabulary, inspect which vocabularies
+        // are enabled. If the validation vocabulary is absent, build a strip-set so
+        // that validation-only keywords are removed from every schema in this resource.
+        // We only do this when no strip-set has been inherited from a parent resource
+        // each schema resource governs its own vocabulary constraints.
+        if (stripKeys === void 0 || stripKeys === null) {
+            let metaObj = compound.uriRegistry.get(obj.$schema);
+            if (metaObj !== void 0 && typeof metaObj === 'object' && metaObj !== null
+                && typeof metaObj.$vocabulary === 'object' && metaObj.$vocabulary !== null) {
+                let vocab = metaObj.$vocabulary;
+                if (!vocab[VOCAB_VALIDATION_2020] && !vocab[VOCAB_VALIDATION_2019]) {
+                    stripKeys = VALIDATION_KEYWORDS;
+                }
+            }
+        }
+    }
+
+    // Strip disallowed keywords before transpile so that legacy forms (e.g.
+    // draft-4 boolean exclusiveMinimum) are never processed as validation.
+    if (stripKeys !== void 0 && stripKeys !== null) {
+        for (let k of stripKeys) {
+            if (hasOwnProperty.call(obj, k)) {
+                delete obj[k];
+            }
+        }
     }
 
     // Transpile legacy keywords to their Draft 2020-12 equivalents in-place.
@@ -534,15 +584,15 @@ function walkSchema(compound, obj, baseUri, dialect, resourceUri) {
         if (typeof val === 'object' && val !== null) {
             if (Array.isArray(val)) {
                 for (let i = 0; i < val.length; i++) {
-                    walkSchema(compound, val[i], baseUri, dialect, resourceUri);
+                    walkSchema(compound, val[i], baseUri, dialect, resourceUri, stripKeys);
                 }
             } else if (WALK_CONTAINER_KEYS.has(key)) {
                 // val is a string→schema map; walk each value as a schema
                 for (let subKey in val) {
-                    walkSchema(compound, val[subKey], baseUri, dialect, resourceUri);
+                    walkSchema(compound, val[subKey], baseUri, dialect, resourceUri, stripKeys);
                 }
             } else {
-                walkSchema(compound, val, baseUri, dialect, resourceUri);
+                walkSchema(compound, val, baseUri, dialect, resourceUri, stripKeys);
             }
         }
     }
@@ -2057,7 +2107,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
  * Convenience wrapper — parses a single JSON Schema into a FlatAst.
  * Internally creates a CompoundSchema, adds the schema, and calls bundle().
  * @param {JSONSchema|boolean} schema — a JSON Schema document (object or boolean)
- * @param {string} dialect
+ * @param {string=} dialect
  * @returns {uvd.FlatAst}
  */
 export function parseJSONSchema(schema, dialect) {

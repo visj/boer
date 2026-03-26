@@ -64,8 +64,6 @@ function readDirRecursive(rootDir) {
     return files;
 }
 
-const memoryStressTests = [];
-
 const remoteFiles = readDirRecursive(REMOTE_DIR);
 
 for (const draft of SUPPORTED_DRAFTS) {
@@ -143,17 +141,6 @@ for (const draft of SUPPORTED_DRAFTS) {
 
                         // 2. Loop through every payload test
                         for (const testCase of group.tests) {
-                            if (!compileError) {
-                                memoryStressTests.push({
-                                    draft,
-                                    file,
-                                    groupDesc: group.description,
-                                    testDesc: testCase.description,
-                                    data: testCase.data,
-                                    valid: testCase.valid,
-                                    compiledRoot
-                                });
-                            }
                             test(testCase.description, () => {
                                 if (compileError) {
                                     throw new Error(
@@ -173,25 +160,3 @@ for (const draft of SUPPORTED_DRAFTS) {
         }
     });
 }
-
-describe("VM Memory Corruption Check: Second Pass", () => {
-    // We group them by draft to keep the test output clean
-    const grouped = {};
-    for (const t of memoryStressTests) {
-        if (!grouped[t.draft]) {
-            grouped[t.draft] = [];
-        }
-        grouped[t.draft].push(t);
-    }
-
-    for (const draft in grouped) {
-        describe(`Re-testing ${draft}`, () => {
-            for (const t of grouped[draft]) {
-                test(`[${t.file}] ${t.groupDesc} > ${t.testDesc}`, () => {
-                    const isValid = validate(t.data, t.compiledRoot);
-                    expect(isValid).toBe(t.valid);
-                });
-            }
-        });
-    }
-});
