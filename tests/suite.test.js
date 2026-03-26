@@ -11,7 +11,7 @@ const { validate } = cat;
 
 const __dirname = import.meta.dir;
 
-const SUPPORTED_DRAFTS = ["draft2020-12", "draft2019-09", "draft-07", "draft-06", "draft-04"];
+const SUPPORTED_DRAFTS = ["draft-04", "draft-06", "draft-07", "draft2019-09", "draft2020-12"];
 
 const SUITE_DIR = path.resolve(__dirname, "suite/tests");
 const REMOTE_DIR = path.resolve(__dirname, "suite/remotes");
@@ -64,7 +64,9 @@ function readDirRecursive(rootDir) {
     return files;
 }
 
-const REMOTE_FILES = readDirRecursive(REMOTE_DIR);
+const memoryStressTests = [];
+
+const remoteFiles = readDirRecursive(REMOTE_DIR);
 
 for (const draft of SUPPORTED_DRAFTS) {
     const draftFolder = getTestFolder(draft);
@@ -76,9 +78,6 @@ for (const draft of SUPPORTED_DRAFTS) {
     }
 
     const allFiles = fs.readdirSync(suiteDir).filter(f => f.endsWith('.json'));
-    
-    const draftRemoteDir = path.resolve(REMOTE_DIR, draftFolder)
-
 
     let vocabSchemas = [];
 
@@ -123,16 +122,16 @@ for (const draft of SUPPORTED_DRAFTS) {
                         // 1. Compile the schema ONCE per group
                         try {
                             const compound = new CompoundSchema(draft);
-                            compound.add(rootMetaSchema, rootMetaUri);
+                            compound.add(structuredClone(rootMetaSchema), rootMetaUri);
                             for (const vocab of vocabSchemas) {
-                                compound.add(vocab.schema, vocab.uri);
+                                compound.add(structuredClone(vocab.schema), vocab.uri);
                             }
 
                             // Inject all remotes into this specific compound instance
-                            for (const remoteFile of REMOTE_FILES) {
+                            for (const remoteFile of remoteFiles) {
                                 const uriPath = remoteFile.path.split(path.sep).join('/');
                                 const uri = `http://localhost:1234/${uriPath}`;
-                                compound.add(remoteFile.schema, uri);
+                                compound.add(structuredClone(remoteFile.schema), uri);
                             }
                             const ref = compound.add(group.schema);
                             const ast = compound.bundle(ref);
@@ -144,6 +143,17 @@ for (const draft of SUPPORTED_DRAFTS) {
 
                         // 2. Loop through every payload test
                         for (const testCase of group.tests) {
+                            if (!compileError) {
+                                memoryStressTests.push({
+                                    draft,
+                                    file,
+                                    groupDesc: group.description,
+                                    testDesc: testCase.description,
+                                    data: testCase.data,
+                                    valid: testCase.valid,
+                                    compiledRoot
+                                });
+                            }
                             test(testCase.description, () => {
                                 if (compileError) {
                                     throw new Error(
@@ -163,3 +173,25 @@ for (const draft of SUPPORTED_DRAFTS) {
         }
     });
 }
+
+describe("VM Memory Corruption Check: Second Pass", () => {
+    // We group them by draft to keep the test output clean
+    const grouped = {};
+    for (const t of memoryStressTests) {
+        if (!grouped[t.draft]) {
+            grouped[t.draft] = [];
+        }
+        grouped[t.draft].push(t);
+    }
+
+    for (const draft in grouped) {
+        describe(`Re-testing ${draft}`, () => {
+            for (const t of grouped[draft]) {
+                test(`[${t.file}] ${t.groupDesc} > ${t.testDesc}`, () => {
+                    const isValid = validate(t.data, t.compiledRoot);
+                    expect(isValid).toBe(t.valid);
+                });
+            }
+        });
+    }
+});

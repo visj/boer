@@ -36,6 +36,17 @@ const SCHEMA_PURE_MASK = V_MIN_LENGTH | V_MAX_LENGTH | V_PATTERN
     | V_MIN_ITEMS | V_MAX_ITEMS | V_MIN_CONTAINS | V_MAX_CONTAINS | V_UNIQUE_ITEMS
     | V_MIN_PROPERTIES | V_MAX_PROPERTIES | V_DEPENDENT_REQUIRED;
 
+/**
+ * Scalar-type validators: apply to strings, numbers, and arrays regardless of
+ * whether the schema also has object structural keywords (properties, etc.).
+ * When a schema mixes these with structural keywords but has no explicit
+ * `type: "object"`, we split them into a separate N_PRIM branch so they fire
+ * for any data type, not just objects.
+ */
+const PRIM_ONLY_V = V_MIN_LENGTH | V_MAX_LENGTH | V_PATTERN
+    | V_MINIMUM | V_MAXIMUM | V_MULTIPLE_OF | V_EXCLUSIVE_MINIMUM | V_EXCLUSIVE_MAXIMUM
+    | V_MIN_ITEMS | V_MAX_ITEMS | V_MIN_CONTAINS | V_MAX_CONTAINS | V_UNIQUE_ITEMS;
+
 // ────────────────────────────────────────────────────────────────────────────
 // AST Node Kinds
 // ────────────────────────────────────────────────────────────────────────────
@@ -153,6 +164,19 @@ const DRAFT_2020 = 4;
 
 /** Keywords whose values are data payloads, not sub-schemas. Never recurse into these. */
 const WALK_SKIP_KEYS = new Set(['const', 'enum', 'default', 'examples', '$vocabulary']);
+
+/**
+ * Keywords whose values are string → schema maps (property containers).
+ * When walkSchema encounters one of these, it must iterate the container's
+ * VALUES as schemas rather than walking the container object itself.
+ * Walking the container directly would call transpile() on it, which would
+ * mistake the property names (e.g. "dependencies") for schema keywords.
+ */
+const WALK_CONTAINER_KEYS = new Set([
+    'properties', 'patternProperties',
+    '$defs', 'definitions',
+    'dependentSchemas',
+]);
 
 /**
  * Transpiles legacy JSON Schema drafts into Draft 2020-12 format in-place.
@@ -355,8 +379,10 @@ CompoundSchema.prototype.add = function (schema, id, name) {
     if (isBoolean(schema) || isObject(schema)) {
         const index = this.count++;
         if (isString(id)) {
-            this.uriRegistry.set(id, schema);
-            this.baseUris[index] = id;
+            // Strip a trailing bare `#` so registry lookups by base document URI work.
+            let normalizedId = normalizeUri(id);
+            this.uriRegistry.set(normalizedId, schema);
+            this.baseUris[index] = normalizedId;
         } else {
             this.baseUris[index] = '';
         }
@@ -464,7 +490,7 @@ function walkSchema(compound, obj, baseUri, dialect, resourceUri) {
     // After transpile, $id is canonical (Draft 4 `id` has been renamed to $id).
     const id = obj.$id;
     if (isString(id)) {
-        baseUri = resolve(baseUri, id);
+        baseUri = normalizeUri(resolve(baseUri, id));
         resourceUri = baseUri;
         compound.uriRegistry.set(baseUri, obj);
     }
@@ -496,6 +522,10 @@ function walkSchema(compound, obj, baseUri, dialect, resourceUri) {
 
     // Recurse into every child value that is an object or an array of objects.
     // Skip data-value keywords whose contents are user data, not sub-schemas.
+    // For container keywords (properties, $defs, etc.) iterate the VALUES as schemas
+    // rather than walking the container object itself. This prevents transpile() from
+    // being called on the container, where user-chosen property names (e.g. "dependencies")
+    // could be mistaken for schema keywords and corrupted.
     for (let key in obj) {
         if (WALK_SKIP_KEYS.has(key)) {
             continue;
@@ -505,6 +535,11 @@ function walkSchema(compound, obj, baseUri, dialect, resourceUri) {
             if (Array.isArray(val)) {
                 for (let i = 0; i < val.length; i++) {
                     walkSchema(compound, val[i], baseUri, dialect, resourceUri);
+                }
+            } else if (WALK_CONTAINER_KEYS.has(key)) {
+                // val is a string→schema map; walk each value as a schema
+                for (let subKey in val) {
+                    walkSchema(compound, val[subKey], baseUri, dialect, resourceUri);
                 }
             } else {
                 walkSchema(compound, val, baseUri, dialect, resourceUri);
@@ -525,6 +560,22 @@ function resolveUri(baseUri, refString) {
     }
     // TODO we will drop this dependency in the future
     return resolve(baseUri, refString);
+}
+
+/**
+ * Strips a trailing bare `#` from a URI string.
+ * Draft 4/6/7 meta-schemas use `$id` / `id` values ending in `#`
+ * (e.g. `"http://json-schema.org/draft-07/schema#"`). After normalization
+ * all stored URIs are fragment-free, so lookup by the base document URI
+ * (`absoluteUri.substring(0, hashIdx)`) always succeeds.
+ * @param {string} uri
+ * @returns {string}
+ */
+function normalizeUri(uri) {
+    if (uri.length > 0 && uri.charCodeAt(uri.length - 1) === 35 /* '#' */) {
+        return uri.slice(0, -1);
+    }
+    return uri;
 }
 
 /**
@@ -586,7 +637,7 @@ function resolvePointerTracked(rootObj, fragment, rootBaseUri) {
         }
         // Track $id changes at each step — each $id defines a new schema resource boundary.
         if (isString(current.$id)) {
-            baseUri = resolve(baseUri, current.$id);
+            baseUri = normalizeUri(resolve(baseUri, current.$id));
         }
     }
     return { obj: current, baseUri: baseUri };
@@ -858,7 +909,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
         let currentBaseUri = frameBaseUri[tail];
         let currentDocRoot = frameDocRoot[tail];
         if (isString(schema.$id)) {
-            let nextBaseUri = resolveUri(currentBaseUri, schema.$id);
+            let nextBaseUri = normalizeUri(resolveUri(currentBaseUri, schema.$id));
 
             // 1. Structural traversal: Resolving the $id against the parent's base URI
             // perfectly matches the canonical URI registered by walkSchema.
@@ -1071,7 +1122,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
 
         let typeVal = schema.type;
         const hasType = typeVal !== void 0;
-        const hasVHeader = vHeader !== 0;
+        let hasVHeader = vHeader !== 0;
 
         let props = schema.properties;
         let required = schema.required;
@@ -1501,6 +1552,64 @@ CompoundSchema.prototype.bundle = function (schemas) {
         // The node id where the "inner type" is written.
         let typeNodeId = nodeId;
 
+        // Whether the schema has an explicit type: "object" constraint.
+        let isExplicitObject = typeStr === 'object';
+
+        // ── Prim-split: scalar validators + object structural keywords, no explicit object type ──
+        // When a schema mixes scalar validators (minimum, minLength, etc.) with object
+        // structural keywords (properties, additionalProperties, etc.) but has no explicit
+        // type: "object", the scalar validators must fire for ALL data types, not only objects.
+        // We split into N_INTERSECT: [N_PRIM(scalar validators), N_CONDITIONAL→N_OBJECT(obj)].
+        // runPrimValidator is already type-aware — it skips V_MINIMUM for non-numeric data,
+        // V_MIN_LENGTH for non-strings, etc. — so N_PRIM passes through incompatible types.
+        if (!isExplicitObject && (vHeader & PRIM_ONLY_V) !== 0
+            && (hasProps || hasAdditionalProps || hasPatternProps || hasPropNames || hasDepSchemas || hasDependentRequired)) {
+            let primVHeader = vHeader & PRIM_ONLY_V;
+            // Strip prim-only bits from vHeader so the object structural path
+            // only receives object-relevant validators (minProperties etc.).
+            vHeader = (vHeader & ~PRIM_ONLY_V) >>> 0;
+
+            // Split fixed-slot payloads (bits 0–15) by PRIM_ONLY_V membership.
+            // Payloads appear in ascending bit order — one slot per set flag.
+            let primPayload = [];
+            let objPayload = [];
+            let pi = 0;
+            for (let bit = 0; bit < 16; bit++) {
+                let flag = 1 << bit;
+                if (primVHeader & flag) {
+                    primPayload.push(vPayloadArr[pi++]);
+                } else if (vHeader & flag) {
+                    objPayload.push(vPayloadArr[pi++]);
+                }
+            }
+            // Sequential payloads (V_DEPENDENT_REQUIRED etc.) are always object-only
+            while (pi < vPayloadArr.length) {
+                objPayload.push(vPayloadArr[pi++]);
+            }
+            vPayloadArr = objPayload;
+
+            // Allocate the two N_INTERSECT children
+            let primNodeId = allocNode();
+            let condNodeId = allocNode();
+
+            // Wire N_INTERSECT at the original nodeId
+            let edgeBase = astEdges.length;
+            astEdges.push(primNodeId, condNodeId);
+            astKinds[nodeId] = N_INTERSECT;
+            astChild0[nodeId] = edgeBase;
+            astChild1[nodeId] = 2;
+
+            // N_PRIM branch: scalar validators fire for any data type.
+            // The runtime skips irrelevant checks (e.g. minimum on a string).
+            astKinds[primNodeId] = N_PRIM;
+            astFlags[primNodeId] = (ANY | NULLABLE) >>> 0;
+            writeValidators(primNodeId, primVHeader, primPayload);
+
+            // Redirect all subsequent structural compilation to condNodeId.
+            typeNodeId = condNodeId;
+            hasVHeader = vHeader !== 0;
+        }
+
         // ── Object structural node (properties / required / additionalProperties / patternProperties / propertyNames / dependentSchemas / dependentRequired) ──
         if (hasProps || hasAdditionalProps || hasPatternProps || hasPropNames || hasDepSchemas || hasDependentRequired) {
             let propObj = props || Object.create(null);
@@ -1517,7 +1626,6 @@ CompoundSchema.prototype.bundle = function (schemas) {
                 }
             }
 
-            let isExplicitObject = typeStr === 'object';
             let objNodeId;
 
             if (isExplicitObject) {
