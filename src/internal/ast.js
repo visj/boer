@@ -9,12 +9,13 @@ import {
     BARE_ARRAY, BARE_OBJECT, BARE_RECORD
 } from "./catalog.js";
 
-import { popcnt16, REST, ANY, STRING, NUMBER, INTEGER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS, V_ENUM, V_CONTAINS, V_PROPERTY_NAMES } from "./const.js";
+import { popcnt16, REST, ANY, STRING, NUMBER, INTEGER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS, V_ENUM, V_CONTAINS, V_PROPERTY_NAMES, K_HAS_ITEMS } from "./const.js";
 
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
     N_EXCLUSIVE, N_INTERSECT, N_NOT, N_CONDITIONAL, N_TUPLE, N_REF,
     N_BARE_ARRAY, N_BARE_OBJECT, N_DYN_ANCHOR, N_DYN_REF, N_UNEVALUATED,
+    AST_FLAG_HAS_REST, AST_FLAG_HAS_CONTAINS
 } from "./schema.js";
 
 const KIND_MASK = 0x0FFFFFFF;
@@ -431,9 +432,13 @@ export function compile(cat, ast) {
                     for (let i = 0; i < count; i++) {
                         stack[sp++] = astEdges[offset + i];
                     }
+                    let extraOffset = offset + count;
                     // rest type child (bit 0)
-                    if (astFlags[nodeId] & 1) {
-                        stack[sp++] = astEdges[offset + count];
+                    if (astFlags[nodeId] & AST_FLAG_HAS_REST) {
+                        stack[sp++] = astEdges[extraOffset++];
+                    }
+                    if (astFlags[nodeId] & AST_FLAG_HAS_CONTAINS) {
+                        stack[sp++] = astEdges[extraOffset];
                     }
                     break;
                 }
@@ -639,6 +644,10 @@ export function compile(cat, ast) {
                 }
 
                 let kindHeader = (vp !== null) ? (K_ARRAY | K_VALIDATOR) : K_ARRAY;
+                if (astFlags[nodeId] & 4) {
+                    kindHeader |= K_HAS_ITEMS;
+                }
+
                 /** K_ARRAY inline = elemType (KINDS slot 1); no SHAPES entry. */
                 astCompiled[nodeId] = malloc(kindHeader, scratch, elemType >>> 0,
                     null, 0, vp !== null ? vp.vHeader : 0, vp !== null ? vp.nodePayloads : null);
@@ -714,16 +723,39 @@ export function compile(cat, ast) {
                 let offset = astChild0[nodeId];
                 let count = astChild1[nodeId];
                 /** Append restType | REST as extra slab element when present */
-                let hasRestElem = (astFlags[nodeId] & 1) !== 0;
+                let hasRestElem = (astFlags[nodeId] & AST_FLAG_HAS_REST) !== 0;
+                let hasContainsElem = (astFlags[nodeId] & AST_FLAG_HAS_CONTAINS) !== 0;
                 let totalCount = hasRestElem ? count + 1 : count;
                 let types = new Array(totalCount);
                 for (let i = 0; i < count; i++) {
                     types[i] = astCompiled[astEdges[offset + i]];
                 }
+                let extraOffset = offset + count;
                 if (hasRestElem) {
-                    types[count] = (astCompiled[astEdges[offset + count]] | REST) >>> 0;
+                    types[count] = (astCompiled[astEdges[extraOffset++]] | REST) >>> 0;
                 }
                 let vp = compileValidator(nodeId);
+                // NEW: Inject V_CONTAINS payload if present
+                if (hasContainsElem) {
+                    let containsType = astCompiled[astEdges[extraOffset++]] >>> 0;
+                    if (vp === null) {
+                        vp = { vHeader: V_CONTAINS, nodePayloads: [containsType] };
+                    } else {
+                        // Insert at the correct bit-order position
+                        let insertAt = popcnt16(vp.vHeader & (V_CONTAINS - 1));
+                        let old = vp.nodePayloads;
+                        let neo = new Array(old.length + 1);
+                        for (let i = 0; i < insertAt; i++) {
+                            neo[i] = old[i];
+                        }
+                        neo[insertAt] = containsType;
+                        for (let i = insertAt; i < old.length; i++) {
+                            neo[i + 1] = old[i];
+                        }
+                        vp.nodePayloads = neo;
+                        vp.vHeader |= V_CONTAINS;
+                    }
+                }
                 let kindHeader = (vp !== null) ? (K_TUPLE | K_VALIDATOR) : K_TUPLE;
                 astCompiled[nodeId] = malloc(kindHeader, scratch, 0,
                     types, totalCount, vp !== null ? vp.vHeader : 0, vp !== null ? vp.nodePayloads : null);

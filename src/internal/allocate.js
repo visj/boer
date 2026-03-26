@@ -15,6 +15,7 @@ import {
     V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
     V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED,
     V_ENUM,
+    K_HAS_ITEMS,
 } from './const.js';
 import {
     assertIsNumber, assertIsObject,
@@ -414,7 +415,7 @@ function arrayImpl(ctx, elemType, scratch, opts) {
         payloads = result.slice(1);
     }
     /** K_ARRAY stores elemType as inline (KINDS slot 1); no SLAB or SHAPES entry. */
-    let kindHeader = hasVal ? (K_ARRAY | K_VALIDATOR) : K_ARRAY;
+    let kindHeader = (hasVal ? (K_ARRAY | K_VALIDATOR) : K_ARRAY) | K_HAS_ITEMS;
     return ctx.malloc(kindHeader, scratch, elemType >>> 0, null, 0, vHeader, payloads);
 }
 

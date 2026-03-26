@@ -18,7 +18,8 @@ import {
     popcnt16,
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
-    codepointLen, hasOwnProperty
+    codepointLen, hasOwnProperty,
+    K_HAS_ITEMS
 } from './const.js';
 import {
     sortByKeyId, _isValue, deepEqual,
@@ -792,49 +793,22 @@ function catalog(cfg) {
                     if (!Array.isArray(data)) {
                         return false;
                     }
+                    let hasItems = (header & K_HAS_ITEMS) !== 0;
+                    if (hasItems) {
+                        let innerType = ri;
+                        let length = data.length;
+                        for (let i = 0; i < length; i++) {
+                            if (!_validateSlot(data[i], innerType)) {
+                                return false;
+                            }
+                        }
+                        /** items evaluates ALL items */
+                        if (trackPtr) {
+                            markItemsEvaluated(trackPtr, snapPtr, 0, length);
+                        }
+                    }
                     if (header & K_VALIDATOR) {
-                        let valIdx = kinds[ptr + 2];
-                        let vals = scratch ? S_VALIDATORS : VALIDATORS;
-                        let vHeader = vals[valIdx] | 0;
-                        let base = valIdx + 1;
-                        if (vHeader & V_MIN_ITEMS) {
-                            let p = base + popcnt16(vHeader & (V_MIN_ITEMS - 1));
-                            if (data.length < vals[p]) {
-                                return false;
-                            }
-                        }
-                        if (vHeader & V_MAX_ITEMS) {
-                            let p = base + popcnt16(vHeader & (V_MAX_ITEMS - 1));
-                            if (data.length > vals[p]) {
-                                return false;
-                            }
-                        }
-                        let innerType = ri;
-                        let length = data.length;
-                        for (let i = 0; i < length; i++) {
-                            if (!_validateSlot(data[i], innerType)) {
-                                return false;
-                            }
-                        }
-                        /** items evaluates ALL items */
-                        if (trackPtr) {
-                            markItemsEvaluated(trackPtr, snapPtr, 0, length);
-                        }
-                        if (header & K_VALIDATOR) {
-                            return runArrayValidator(data, kinds[ptr + 2], scratch, trackPtr, snapPtr);
-                        }
-                    } else {
-                        let innerType = ri;
-                        let length = data.length;
-                        for (let i = 0; i < length; i++) {
-                            if (!_validateSlot(data[i], innerType)) {
-                                return false;
-                            }
-                        }
-                        /** items evaluates ALL items */
-                        if (trackPtr) {
-                            markItemsEvaluated(trackPtr, snapPtr, 0, length);
-                        }
+                        return runArrayValidator(data, kinds[ptr + 2], scratch, trackPtr, snapPtr);
                     }
                     return true;
                 }

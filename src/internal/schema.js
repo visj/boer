@@ -6,7 +6,7 @@ import {
     V_MIN_ITEMS, V_MAX_ITEMS, V_MIN_CONTAINS, V_MAX_CONTAINS, V_UNIQUE_ITEMS,
     V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_DEPENDENT_REQUIRED,
     V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES,
-    V_ENUM,
+    V_ENUM, K_HAS_ITEMS,
     hasOwnProperty
 } from "./const.js";
 import { isBoolean, isObject, isString } from './util.js';
@@ -70,6 +70,17 @@ export const N_DYN_ANCHOR = 13;
 export const N_DYN_REF = 14;
 export const N_UNEVALUATED = 15;
 export const N_REF = 255;
+
+export const AST_FLAG_HAS_ADDITIONAL_PROPS = 1 << 0; // bit 0: has additionalProperties child (N_OBJECT)
+export const AST_FLAG_HAS_PATTERN_PROPS = 1 << 1; // bit 1: has patternProperties children (N_OBJECT)
+export const AST_FLAG_HAS_PROPERTY_NAMES = 1 << 3; // bit 3: has propertyNames child (N_OBJECT)
+export const AST_FLAG_HAS_DEPENDENT_SCHEMAS = 1 << 4; // bit 4: has dependentSchemas children (N_OBJECT)
+
+export const AST_FLAG_HAS_REST = 1 << 0; // bit 0: has items (rest type) child (N_TUPLE)
+export const AST_FLAG_HAS_CONTAINS = 1 << 1; // bit 1: has contains child (N_ARRAY)
+export const AST_FLAG_HAS_ITEMS = 1 << 2; // bit 2: has explicit items keyword (N_ARRAY)
+
+export const AST_FLAG_UNEVAL_MODE_ITEMS = 1 << 0; // bit 0: mode 1 = items (N_UNEVALUATED)
 
 // ────────────────────────────────────────────────────────────────────────────
 // Stack Link Types
@@ -764,17 +775,17 @@ CompoundSchema.prototype.bundle = function (schemas) {
         let currentDocRoot = frameDocRoot[tail];
         if (isString(schema.$id)) {
             let nextBaseUri = resolveUri(currentBaseUri, schema.$id);
-            
+
             // 1. Structural traversal: Resolving the $id against the parent's base URI
             // perfectly matches the canonical URI registered by walkSchema.
             if (this.uriRegistry.get(nextBaseUri) === schema) {
                 currentBaseUri = nextBaseUri;
-            } 
+            }
             // 2. $ref traversal: We jumped here directly via a $ref, meaning 
             // currentBaseUri was passed in by pushFrame and is ALREADY the canonical URI!
             else if (this.uriRegistry.get(currentBaseUri) === schema) {
                 // Do nothing to currentBaseUri. We prevent the double resolution!
-            } 
+            }
             // 3. Fallback safeguard
             else {
                 currentBaseUri = nextBaseUri;
@@ -1452,7 +1463,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
                  * unevaluatedProperties is present in a parent/ancestor schema.
                  */
                 objVHeader |= V_ADDITIONAL_PROPERTIES;
-                astFlags[objNodeId] |= 1; // bit 0 = has additionalProperties child
+                astFlags[objNodeId] |= AST_FLAG_HAS_ADDITIONAL_PROPS; // bit 0 = has additionalProperties child
                 let addChildId = allocNode();
                 astKinds[addChildId] = N_PRIM;
                 astFlags[addChildId] = (ANY | NULLABLE) >>> 0;
@@ -1463,7 +1474,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
                 } else {
                     // Schema → compile it, store as extra edge after properties
                     objVHeader |= V_ADDITIONAL_PROPERTIES;
-                    astFlags[objNodeId] |= 1; // bit 0 = has additionalProperties child
+                    astFlags[objNodeId] |= AST_FLAG_HAS_ADDITIONAL_PROPS; // bit 0 = has additionalProperties child
                     let addChildId = allocNode();
                     let addSlot = astEdges.length;
                     astEdges.push(0); // placeholder
@@ -1475,7 +1486,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
             // astFlags bit 1 = has patternProperties children
             if (hasPatternProps) {
                 let patKeys = Object.keys(patternProps);
-                astFlags[objNodeId] |= 2; // bit 1 = has patternProperties
+                astFlags[objNodeId] |= AST_FLAG_HAS_PATTERN_PROPS; // bit 1 = has patternProperties
                 // Store pattern count then [patternString, childNodeId] pairs
                 astEdges.push(patKeys.length);
                 for (let i = 0; i < patKeys.length; i++) {
@@ -1493,7 +1504,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
             // propertyNames: compile child schema, store node id after patternProperties edges
             // astFlags bit 3 = has propertyNames child
             if (hasPropNames) {
-                astFlags[objNodeId] |= 8; // bit 3 = has propertyNames child
+                astFlags[objNodeId] |= AST_FLAG_HAS_PROPERTY_NAMES; // bit 3 = has propertyNames child
                 let pnChildId = allocNode();
                 let pnSlot = astEdges.length;
                 astEdges.push(0); // placeholder for child node id
@@ -1504,7 +1515,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
             // astFlags bit 4 = has dependentSchemas children
             if (hasDepSchemas) {
                 let depKeys = Object.keys(depSchemas);
-                astFlags[objNodeId] |= 16; // bit 4 = has dependentSchemas
+                astFlags[objNodeId] |= AST_FLAG_HAS_DEPENDENT_SCHEMAS; // bit 4 = has dependentSchemas
                 astEdges.push(depKeys.length);
                 for (let i = 0; i < depKeys.length; i++) {
                     let trigKey = depKeys[i];
@@ -1560,12 +1571,20 @@ CompoundSchema.prototype.bundle = function (schemas) {
             // items alongside prefixItems → rest type
             // JSON Schema: no `items` means any additional items are allowed (implicit ANY)
             if (hasItems) {
-                astFlags[tupleNodeId] |= 1; // bit 0 = has rest type child
+                astFlags[tupleNodeId] |= AST_FLAG_HAS_REST; // bit 0 = has rest type child
                 let restSlot = astEdges.length;
                 astEdges.push(0);
                 let restChildId = allocNode();
                 pushFrame(items, restChildId, LINK_EDGE, restSlot, currentBaseUri, currentDocRoot);
-            } 
+            }
+
+            if (hasContains) {
+                astFlags[tupleNodeId] |= AST_FLAG_HAS_CONTAINS;
+                let containsSlot = astEdges.length;
+                astEdges.push(0);
+                let containsChildId = allocNode();
+                pushFrame(containsSchema, containsChildId, LINK_EDGE, containsSlot, currentBaseUri, currentDocRoot);
+            }
 
             if (hasVHeader) {
                 writeValidators(tupleNodeId, vHeader, vPayloadArr);
@@ -1600,7 +1619,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
             astFlags[anyElemId] = (ANY | NULLABLE) >>> 0;
             astKinds[arrNodeId] = N_ARRAY;
             astChild0[arrNodeId] = anyElemId;
-            astFlags[arrNodeId] |= 2; // bit 1 = has contains child
+            astFlags[arrNodeId] |= AST_FLAG_HAS_CONTAINS; // bit 1 = has contains child
             let containsChildId = allocNode();
             astChild1[arrNodeId] = containsChildId;
             pushFrame(containsSchema, containsChildId, LINK_CHILD1, arrNodeId, currentBaseUri, currentDocRoot);
@@ -1632,13 +1651,14 @@ CompoundSchema.prototype.bundle = function (schemas) {
 
             // Write N_ARRAY on arrNodeId
             let elemId = allocNode();
+            astFlags[arrNodeId] |= AST_FLAG_HAS_ITEMS;
             astKinds[arrNodeId] = N_ARRAY;
             astChild0[arrNodeId] = elemId;
             pushFrame(items, elemId, LINK_CHILD0, arrNodeId, currentBaseUri, currentDocRoot);
 
             // Wire contains child into astChild1 when both items and contains are present
             if (hasContains) {
-                astFlags[arrNodeId] |= 2; // bit 1 = has contains child
+                astFlags[arrNodeId] |= AST_FLAG_HAS_CONTAINS; // bit 1 = has contains child
                 let containsChildId = allocNode();
                 astChild1[arrNodeId] = containsChildId;
                 pushFrame(containsSchema, containsChildId, LINK_CHILD1, arrNodeId, currentBaseUri, currentDocRoot);

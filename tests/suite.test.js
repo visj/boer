@@ -11,7 +11,7 @@ const { validate } = cat;
 
 const __dirname = import.meta.dir;
 
-const SUPPORTED_DRAFTS = ["draft2020-12"];
+const SUPPORTED_DRAFTS = ["draft2020-12", "draft2019-09", "draft7", "draft6", "draft4"];
 
 const SUITE_DIR = path.resolve(__dirname, "suite/tests");
 const REMOTE_DIR = path.resolve(__dirname, "suite/remotes");
@@ -21,29 +21,6 @@ const REMOTE_DIR = path.resolve(__dirname, "suite/remotes");
 // It maps "Group Descriptions" to a Set of specific failing test descriptions.
 const TODO_TESTS = {
     // ── HARD: Tier 3 Dynamic Tracking & External Linking ──
-    // "unevaluatedItems.json": {
-    //     "unevaluatedItems false": new Set(["with unevaluated items"]),
-    //     "unevaluatedItems as schema": new Set(["with invalid unevaluated items"]),
-    //     "unevaluatedItems with tuple": new Set(["with unevaluated items"]),
-    //     "unevaluatedItems with nested tuple": new Set(["with unevaluated items"]),
-    //     "unevaluatedItems with nested items": new Set(["with invalid additional item"]),
-    //     "unevaluatedItems with anyOf": new Set(["when one schema matches and has unevaluated items", "when two schemas match and has unevaluated items"]),
-    //     "unevaluatedItems with oneOf": new Set(["with unevaluated items"]),
-    //     "unevaluatedItems with not": new Set(["with unevaluated items"]),
-    //     "unevaluatedItems with if/then/else": new Set(["when if matches and it has unevaluated items", "when if doesn't match and it has unevaluated items"]),
-    //     "unevaluatedItems with boolean schemas": new Set(["with unevaluated items"]),
-    //     "unevaluatedItems with $ref": new Set(["with unevaluated items"]),
-    //     "unevaluatedItems before $ref": new Set(["with unevaluated items"]),
-    //     "unevaluatedItems with $dynamicRef": new Set(["with unevaluated items"]),
-    //     "unevaluatedItems can't see inside cousins": new Set(["always fails"]),
-    //     "item is evaluated in an uncle schema to unevaluatedItems": new Set(["uncle keyword evaluation is not significant"]),
-    //     "unevaluatedItems depends on adjacent contains": new Set(["contains fails, second item is not evaluated", "contains passes, second item is not evaluated"]),
-    //     "unevaluatedItems depends on multiple nested contains": new Set(["7 not evaluated, fails unevaluatedItems"]),
-    //     "unevaluatedItems and contains interact to control item dependency relationship": new Set(["only b's are invalid", "only c's are invalid", "only b's and c's are invalid", "only a's and c's are invalid"]),
-    //     "unevaluatedItems with minContains = 0": new Set(["no items evaluated by contains", "some but not all items evaluated by contains"]),
-    //     "unevaluatedItems can see annotations from if without then and else": new Set(["invalid in case if is evaluated"]),
-    //     "Evaluated items collection needs to consider instance location": new Set(["with an unevaluated item that exists at another location"])
-    // },
     "defs.json": {
         "validate definition against metaschema": new Set(["valid definition schema", "invalid definition schema"])
     },
@@ -54,8 +31,6 @@ const TODO_TESTS = {
     },
     "ref.json": {
         "remote ref, containing refs itself": new Set(["remote ref valid", "remote ref invalid"]),
-        "ref creates new scope when adjacent to keywords": new Set(["referenced subschema doesn't see annotations from properties"]),
-        "order of evaluation: $id and $ref on nested schema": new Set(["data is valid against nested sibling", "data is invalid against nested sibling"]),
         "simple URN base URI with $ref via the URN": new Set(["invalid under the URN IDed schema"])
     },
     "vocabulary.json": {
