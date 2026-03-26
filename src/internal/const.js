@@ -78,6 +78,8 @@ const K_VALIDATOR = (1 << 31) >>> 0;
  */
 const K_ANY_INNER = 1 << 30;
 
+const K_STRICT = 1 << 27;
+
 // ── Complex KINDS enum (bits 0-3, values 0-11) ──
 // The KINDS vtable header stores the enum in the lower 4 bits,
 // followed by HAS_VALIDATOR at bit 4 and K_ANY_INNER at bit 8.
@@ -212,7 +214,7 @@ export {
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
     K_CONDITIONAL, K_DYN_ANCHOR, K_DYN_REF, K_UNEVALUATED, K_ANY_INNER,
-    KIND_ENUM_MASK, K_VALIDATOR,
+    KIND_ENUM_MASK, K_VALIDATOR, K_STRICT,
     V_MIN_LENGTH, V_MAX_LENGTH, V_PATTERN, V_FORMAT,
     V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
     V_MIN_ITEMS, V_MAX_ITEMS, V_CONTAINS, V_MIN_CONTAINS, V_MAX_CONTAINS,

@@ -1565,13 +1565,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
                 astEdges.push(0);
                 let restChildId = allocNode();
                 pushFrame(items, restChildId, LINK_EDGE, restSlot, currentBaseUri, currentDocRoot);
-            } else {
-                astFlags[tupleNodeId] |= 1;
-                let anyRestId = allocNode();
-                astKinds[anyRestId] = N_PRIM;
-                astFlags[anyRestId] = (ANY | NULLABLE) >>> 0;
-                astEdges.push(anyRestId);
-            }
+            } 
 
             if (hasVHeader) {
                 writeValidators(tupleNodeId, vHeader, vPayloadArr);

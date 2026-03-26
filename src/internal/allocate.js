@@ -8,7 +8,7 @@ import {
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
     K_CONDITIONAL, K_ANY_INNER,
-    K_VALIDATOR,
+    K_VALIDATOR, K_STRICT,
     V_MIN_LENGTH, V_MAX_LENGTH, V_PATTERN, V_FORMAT,
     V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
     V_MIN_ITEMS, V_MAX_ITEMS, V_CONTAINS, V_MIN_CONTAINS, V_MAX_CONTAINS,
@@ -127,7 +127,7 @@ function refineImpl(ctx, typedef, fn, scratch) {
  * @returns {number}
  */
 function tupleArrayImpl(ctx, types, scratch) {
-    return ctx.malloc(K_TUPLE, scratch, 0, types, types.length, 0, null);
+    return ctx.malloc(K_TUPLE | K_STRICT, scratch, 0, types, types.length, 0, null);
 }
 
 /**

@@ -14,7 +14,7 @@ import {
     V_MIN_ITEMS, V_MAX_ITEMS, V_CONTAINS, V_MIN_CONTAINS, V_MAX_CONTAINS,
     V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
     V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS,
-    V_ENUM,
+    V_ENUM, K_STRICT,
     popcnt16,
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
@@ -1007,13 +1007,18 @@ function catalog(cfg) {
                     let count = shapes[ri * 2 + 1];
                     let hasRest = count > 0 && (slab[offset + count - 1] & REST) !== 0;
                     let fixedCount = hasRest ? count - 1 : count;
-                    if (!hasRest && data.length !== fixedCount) {
-                        return false;
+
+                    let isStrict = (header & K_STRICT) !== 0;
+                    let length = data.length;
+                    if (isStrict) {
+                        if (
+                            length < fixedCount ||
+                            (!hasRest && length > fixedCount)
+                        ) {
+                            return false;
+                        }
                     }
-                    // When hasRest is true, only validate the prefix elements that are actually
-                    // present (JSON Schema allows fewer items than prefixItems). When !hasRest
-                    // we have already asserted data.length === fixedCount above.
-                    let checkCount = (hasRest && data.length < fixedCount) ? data.length : fixedCount;
+                    let checkCount = length < fixedCount ? length : fixedCount;
                     for (let i = 0; i < checkCount; i++) {
                         if (!_validateSlot(data[i], slab[offset + i])) {
                             return false;
@@ -1025,14 +1030,14 @@ function catalog(cfg) {
                     }
                     if (hasRest) {
                         let restType = (slab[offset + count - 1] & ~REST) >>> 0;
-                        for (let i = checkCount; i < data.length; i++) {
+                        for (let i = checkCount; i < length; i++) {
                             if (!_validateSlot(data[i], restType)) {
                                 return false;
                             }
                         }
                         /** Mark rest items as evaluated */
-                        if (trackPtr) {
-                            markItemsEvaluated(trackPtr, snapPtr, checkCount, data.length);
+                        if (trackPtr && length > checkCount) {
+                            markItemsEvaluated(trackPtr, snapPtr, checkCount, length);
                         }
                     }
                     if (header & K_VALIDATOR) {
@@ -1322,7 +1327,7 @@ function catalog(cfg) {
         UNKNOWN_KEYS.fill(null, 0, UNKNOWN_TAIL);
         // TODO I might refactor this later and send -1 so we can actually use index 0, it just makes more sense...
         DYN_PTR = 0;
-        SNAP_TAIL = 1; 
+        SNAP_TAIL = 1;
         TRACK_TAIL = 1;
         UNKNOWN_TAIL = 0;
         rewindPending = true;
