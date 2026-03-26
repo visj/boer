@@ -151,33 +151,78 @@ const DRAFT_7 = 2;
 const DRAFT_2019 = 3;
 const DRAFT_2020 = 4;
 
+/** Keywords whose values are data payloads, not sub-schemas. Never recurse into these. */
+const WALK_SKIP_KEYS = new Set(['const', 'enum', 'default', 'examples']);
+
 /**
  * Transpiles legacy JSON Schema drafts into Draft 2020-12 format in-place.
- * * @param {Schema} schema - The schema object to mutate.
+ * @param {Schema} schema - The schema object to mutate.
  * @param {number} dialect - The dialect constant (e.g., DRAFT_7).
  */
 export function transpile(schema, dialect) {
     // 1. Draft 2019-09 and older (DRAFT_2019, 7, 6, 4)
     // Desugar array tuples: `items` (array) + `additionalItems` -> `prefixItems` + `items`
+    // When additionalItems is absent, we omit `items` entirely so that extra items
+    // remain "unevaluated" — allowing `unevaluatedItems: false` to reject them.
     if (dialect <= DRAFT_2019) {
         if (Array.isArray(schema.items)) {
             schema.prefixItems = schema.items;
-            schema.items = schema.additionalItems !== void 0 ? schema.additionalItems : true;
+            schema.items = schema.additionalItems !== void 0 ? schema.additionalItems : void 0;
             schema.additionalItems = void 0;
         }
     }
 
-    // 2. Draft 7 and older (DRAFT_7, 6, 4)
-    if (dialect <= DRAFT_7) {
-        // TODO fix transpile
-        // if (isString(schema.$ref)) {
-        //     for (let key in schema) {
-        //         if (key !== '$ref') {
-        //             delete schema[key]; // Scrub everything else
-        //         }
-        //     }
-        // }
+    // 1.5. Draft 2019-09 only: translate $recursiveRef/$recursiveAnchor to
+    // $dynamicRef/$dynamicAnchor so the 2020-12 compiler handles them.
+    // $recursiveAnchor: true  → $dynamicAnchor: "recursive" (fixed name).
+    // $recursiveRef: "#"      → $dynamicRef: "#recursive" so the fragment
+    //   is non-empty and non-pointer, making isDynamic = true in the bundler.
+    //   An empty fragment ("#") would set isDynamic = false and degrade to a
+    //   plain root $ref, losing all recursive-anchor semantics.
+    if (dialect === DRAFT_2019) {
+        if (schema.$recursiveAnchor === true) {
+            schema.$dynamicAnchor = 'recursive';
+            schema.$recursiveAnchor = void 0;
+        } else if (schema.$recursiveAnchor === false) {
+            schema.$recursiveAnchor = void 0;
+        }
+        if (isString(schema.$recursiveRef)) {
+            // $recursiveRef is always "#" per spec — map to "#recursive" so the
+            // named fragment triggers dynamic lookup against $dynamicAnchor: "recursive".
+            schema.$dynamicRef = '#recursive';
+            schema.$recursiveRef = void 0;
+        }
+    }
 
+    // 2. $ref path rewriting and sibling stripping.
+    // Path rewrites: /definitions/ → /$defs/ and /items/N → /prefixItems/N in $ref fragments.
+    // Sibling stripping (draft7 and older only): in these drafts, $ref overrides all siblings.
+    if (isString(schema.$ref)) {
+        let ref = schema.$ref;
+        let hashIdx = ref.indexOf('#');
+        if (hashIdx !== -1) {
+            let fragment = ref.slice(hashIdx + 1);
+            if (dialect <= DRAFT_7) {
+                // /definitions/ → /$defs/ since definitions was renamed
+                fragment = fragment.replace(/\/definitions\//g, '/$defs/');
+            }
+            // /items/N → /prefixItems/N since array-form items was renamed to prefixItems
+            fragment = fragment.replace(/\/items\/(\d+)/g, '/prefixItems/$1');
+            schema.$ref = ref.slice(0, hashIdx + 1) + fragment;
+        }
+        if (dialect <= DRAFT_7) {
+            // In draft7 and older, $ref completely ignores sibling keywords.
+            for (let key in schema) {
+                if (key !== '$ref') {
+                    delete schema[key];
+                }
+            }
+            return;
+        }
+    }
+
+    // 3. Draft 7 and older (DRAFT_7, 6, 4) — only reached when no $ref early-return above.
+    if (dialect <= DRAFT_7) {
         // Desugar dependencies -> dependentRequired / dependentSchemas
         if (schema.dependencies !== void 0) {
             /**
@@ -216,7 +261,7 @@ export function transpile(schema, dialect) {
         }
     }
 
-    // 3. Draft 4 only (DRAFT_4)
+    // 4. Draft 4 only (DRAFT_4)
     if (dialect === DRAFT_4) {
         // Rename id -> $id
         // @ts-ignore
@@ -245,7 +290,6 @@ export function transpile(schema, dialect) {
             schema.exclusiveMaximum = void 0;
         }
     }
-    schema.$schema = "https://json-schema.org/draft/2020-12/schema";
 }
 
 /**
@@ -256,9 +300,9 @@ export function transpile(schema, dialect) {
  */
 function getDialect(uri) {
     if (!uri) return DRAFT_2020;
-    if (uri.indexOf('draft-07') !== -1) return DRAFT_7;
-    if (uri.indexOf('draft-06') !== -1) return DRAFT_6;
-    if (uri.indexOf('draft-04') !== -1) return DRAFT_4;
+    if (uri === 'draft7' || uri.indexOf('draft-07') !== -1) return DRAFT_7;
+    if (uri === 'draft6' || uri.indexOf('draft-06') !== -1) return DRAFT_6;
+    if (uri === 'draft4' || uri.indexOf('draft-04') !== -1) return DRAFT_4;
     if (uri.indexOf('2019-09') !== -1) return DRAFT_2019;
     return DRAFT_2020;
 }
@@ -449,7 +493,11 @@ function walkSchema(compound, obj, baseUri, dialect, resourceUri) {
     }
 
     // Recurse into every child value that is an object or an array of objects.
+    // Skip data-value keywords whose contents are user data, not sub-schemas.
     for (let key in obj) {
+        if (WALK_SKIP_KEYS.has(key)) {
+            continue;
+        }
         let val = obj[key];
         if (typeof val === 'object' && val !== null) {
             if (Array.isArray(val)) {
@@ -506,6 +554,40 @@ function resolvePointer(rootObj, fragment) {
     }
 
     return current;
+}
+
+/**
+ * Like resolvePointer, but also tracks any $id changes encountered along the
+ * pointer path so the effective base URI for the target schema is returned.
+ * This is necessary when a JSON Pointer traverses through a sub-schema that
+ * carries its own $id (a schema resource boundary), because relative $refs
+ * inside the target must be resolved against that sub-resource's base URI.
+ * @param {JSONSchema} rootObj
+ * @param {string} fragment
+ * @param {string} rootBaseUri
+ * @returns {{obj: JSONSchema | undefined, baseUri: string}}
+ */
+function resolvePointerTracked(rootObj, fragment, rootBaseUri) {
+    let path = fragment.charCodeAt(0) === 47 ? fragment.slice(1) : fragment;
+    if (path === "") {
+        return { obj: rootObj, baseUri: rootBaseUri };
+    }
+    let parts = path.split('/');
+    /** @type {Record<string, any>} */
+    let current = rootObj;
+    let baseUri = rootBaseUri;
+    for (let i = 0; i < parts.length; i++) {
+        let key = decodeURIComponent(parts[i].replace(/~1/g, '/').replace(/~0/g, '~'));
+        current = current[key];
+        if (current == null) {
+            return { obj: void 0, baseUri: baseUri };
+        }
+        // Track $id changes at each step — each $id defines a new schema resource boundary.
+        if (isString(current.$id)) {
+            baseUri = resolve(baseUri, current.$id);
+        }
+    }
+    return { obj: current, baseUri: baseUri };
 }
 
 /**
@@ -1242,6 +1324,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
                 }
 
                 // 3. Fallback to JSON Pointer if it wasn't a named anchor
+                let effectiveBaseUri = baseDocUri;
                 if (targetObj === void 0) {
                     if (fragment === "") {
                         targetObj = targetDocRoot;
@@ -1250,7 +1333,13 @@ CompoundSchema.prototype.bundle = function (schemas) {
                         if (typeof targetDocRoot !== 'object' || targetDocRoot === null) {
                             throw new Error("Cannot resolve fragment '" + fragment + "' inside boolean schema: " + baseDocUri);
                         }
-                        targetObj = resolvePointer(targetDocRoot, fragment);
+                        // Use tracked resolution so that $id changes along the pointer
+                        // path shift the effective base URI for the target schema. This
+                        // matters when a sub-schema has its own $id (resource boundary)
+                        // and the target contains relative $refs.
+                        let tracked = resolvePointerTracked(targetDocRoot, fragment, baseDocUri);
+                        targetObj = tracked.obj;
+                        effectiveBaseUri = tracked.baseUri;
                     }
                     if (targetObj === void 0) {
                         throw new Error("Unresolvable $ref pointer: " + absoluteUri);
@@ -1259,7 +1348,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
 
                 targetId = allocNode();
                 compiledUris.set(absoluteUri, targetId);
-                pushFrame(targetObj, targetId, LINK_DEF, 0, baseDocUri, targetDocRoot);
+                pushFrame(targetObj, targetId, LINK_DEF, 0, effectiveBaseUri, targetDocRoot);
             }
 
             // ── Dynamic scope injection ──
@@ -1352,7 +1441,19 @@ CompoundSchema.prototype.bundle = function (schemas) {
                         if (typeof targetDocRoot !== 'object' || targetDocRoot === null) {
                             throw new Error("Cannot resolve fragment '" + fragment + "' inside boolean schema: " + baseDocUri);
                         }
-                        targetObj = resolvePointer(targetDocRoot, fragment);
+                        // Named fragment (no leading /) — walk as JSON pointer first.
+                        // If that fails, fall back to document root. This handles the
+                        // draft2019-09 $recursiveRef: "#" → $dynamicRef: "#recursive"
+                        // translation: when the target resource has no matching
+                        // $dynamicAnchor the ref still resolves to the resource root.
+                        if (fragment.charCodeAt(0) !== 47) {
+                            targetObj = targetDocRoot;
+                        } else {
+                            targetObj = resolvePointer(targetDocRoot, fragment);
+                            if (targetObj === void 0) {
+                                throw new Error("Unresolvable $dynamicRef pointer: " + absoluteUri);
+                            }
+                        }
                     }
                     if (targetObj === void 0) {
                         throw new Error("Unresolvable $dynamicRef pointer: " + absoluteUri);

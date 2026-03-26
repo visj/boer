@@ -76,7 +76,7 @@ function catalog(cfg) {
     KINDS[2] = K_RECORD | K_ANY_INNER;
     HEAP.KIND_PTR = 3;
 
-    let rewindPending = false;
+    let REWIND_PENDING = false;
 
     /** Global stack tracking active dynamic scope boundaries during validation. */
     const DYN_ANCHORS = new Uint32Array(512);
@@ -177,7 +177,7 @@ function catalog(cfg) {
         SCR_HEAP.VAL_PTR = 0;
         S_REGEX_CACHE.length = 0;
         S_CALLBACKS.length = 0;
-        rewindPending = false;
+        REWIND_PENDING = false;
     }
 
     /**
@@ -1304,8 +1304,16 @@ function catalog(cfg) {
         SNAP_TAIL = 1;
         TRACK_TAIL = 1;
         UNKNOWN_TAIL = 0;
-        rewindPending = true;
+        REWIND_PENDING = true;
         return _validate(data, typedef, 0, 0);
+    }
+
+    function setRewindPending() {
+        REWIND_PENDING = true;
+    }
+
+    function rewindPending() {
+        return REWIND_PENDING;
     }
 
     const __heap = {
@@ -1314,9 +1322,9 @@ function catalog(cfg) {
         malloc, allocValidator, lookup,
         _validate,
         BARE_ARRAY, BARE_OBJECT, BARE_RECORD,
-        setRewindPending: () => { rewindPending = true; },
-        rewindPending: () => { return rewindPending; },
-        rewind() { rewindScratch(); },
+        setRewindPending,
+        rewindPending,
+        rewind: rewindScratch,
     };
 
     return { validate, __heap };
