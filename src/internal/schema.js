@@ -179,24 +179,105 @@ const WALK_CONTAINER_KEYS = new Set([
 ]);
 
 /**
- * Keywords governed by the JSON Schema `validation` vocabulary (2020-12 and
- * 2019-09 drafts share the same set). When a custom metaschema omits this
- * vocabulary from its `$vocabulary` map, all of these keywords are stripped
- * from schemas that reference the custom metaschema, effectively disabling
- * validation-constraint evaluation for those schemas.
+ * Vocabulary groups for draft2020-12 and draft2019-09.
+ *
+ * Each entry has:
+ *   uris — all known vocabulary URIs (across drafts) that represent this logical
+ *          vocabulary. If ANY of them appears as a key in a metaschema's $vocabulary
+ *          (regardless of value — true/false both mean "present"), the vocabulary is
+ *          considered enabled and its keywords are NOT stripped.
+ *   keys — keywords defined by this vocabulary.
+ *
+ * The `core` vocabulary ($id, $ref, $defs, …) is intentionally excluded: the spec
+ * mandates that implementations always assume core, so its keywords must never be
+ * stripped even from schemas with a custom metaschema.
+ *
+ * `unevaluatedItems`/`unevaluatedProperties` moved from applicator (2019-09) to a
+ * separate `unevaluated` vocabulary in 2020-12.  We cover both placements by listing
+ * both the 2020-12 `unevaluated` URI *and* the 2019-09 `applicator` URI under the
+ * unevaluated group.  That way, a 2019-09 metaschema that includes applicator still
+ * protects those keywords from being stripped.
+ *
+ * format-annotation and format-assertion are mutually-exclusive alternatives for the
+ * `format` keyword.  All three URIs (2020 annotation, 2020 assertion, 2019 format) are
+ * listed under one group so that including *any* of them prevents `format` from being
+ * stripped.
  */
-const VALIDATION_KEYWORDS = new Set([
-    'type', 'const', 'enum',
-    'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
-    'maxLength', 'minLength', 'pattern',
-    'maxItems', 'minItems', 'uniqueItems', 'maxContains', 'minContains',
-    'maxProperties', 'minProperties', 'required', 'dependentRequired',
-]);
-
-/** Validation vocabulary URI for draft2020-12. */
-const VOCAB_VALIDATION_2020 = 'https://json-schema.org/draft/2020-12/vocab/validation';
-/** Validation vocabulary URI for draft2019-09. */
-const VOCAB_VALIDATION_2019 = 'https://json-schema.org/draft/2019-09/vocab/validation';
+const VOCAB_GROUPS = [
+    {
+        uris: [
+            'https://json-schema.org/draft/2020-12/vocab/applicator',
+            'https://json-schema.org/draft/2019-09/vocab/applicator',
+        ],
+        keys: new Set([
+            // 2020-12 and 2019-09 shared applicator keywords
+            'items', 'contains',
+            'additionalProperties', 'properties', 'patternProperties',
+            'dependentSchemas', 'propertyNames',
+            'if', 'then', 'else',
+            'allOf', 'anyOf', 'oneOf', 'not',
+            // 2020-12 only (prefixItems replaces array-form items)
+            'prefixItems',
+            // 2019-09 only
+            'additionalItems',
+        ]),
+    },
+    {
+        // unevaluatedItems/unevaluatedProperties moved out of applicator in 2020-12.
+        // The 2019-09 applicator URI is also listed so that a 2019-09 metaschema
+        // that declares applicator implicitly covers these keywords.
+        uris: [
+            'https://json-schema.org/draft/2020-12/vocab/unevaluated',
+            'https://json-schema.org/draft/2019-09/vocab/applicator',
+        ],
+        keys: new Set([
+            'unevaluatedItems', 'unevaluatedProperties',
+        ]),
+    },
+    {
+        uris: [
+            'https://json-schema.org/draft/2020-12/vocab/validation',
+            'https://json-schema.org/draft/2019-09/vocab/validation',
+        ],
+        keys: new Set([
+            'type', 'const', 'enum',
+            'multipleOf', 'maximum', 'exclusiveMaximum', 'minimum', 'exclusiveMinimum',
+            'maxLength', 'minLength', 'pattern',
+            'maxItems', 'minItems', 'uniqueItems', 'maxContains', 'minContains',
+            'maxProperties', 'minProperties', 'required', 'dependentRequired',
+        ]),
+    },
+    {
+        uris: [
+            'https://json-schema.org/draft/2020-12/vocab/meta-data',
+            'https://json-schema.org/draft/2019-09/vocab/meta-data',
+        ],
+        keys: new Set([
+            'title', 'description', 'deprecated', 'readOnly', 'writeOnly',
+            // 'default' and 'examples' live in WALK_SKIP_KEYS and are never compiled,
+            // so stripping them here is a no-op — but correct per spec.
+        ]),
+    },
+    {
+        // format-annotation (2020-12), format-assertion (2020-12) and format (2019-09)
+        // are all alternatives for the same keyword.  Any one of them counts.
+        uris: [
+            'https://json-schema.org/draft/2020-12/vocab/format-annotation',
+            'https://json-schema.org/draft/2020-12/vocab/format-assertion',
+            'https://json-schema.org/draft/2019-09/vocab/format',
+        ],
+        keys: new Set(['format']),
+    },
+    {
+        uris: [
+            'https://json-schema.org/draft/2020-12/vocab/content',
+            'https://json-schema.org/draft/2019-09/vocab/content',
+        ],
+        keys: new Set([
+            'contentEncoding', 'contentMediaType', 'contentSchema',
+        ]),
+    },
+];
 
 /**
  * Transpiles legacy JSON Schema drafts into Draft 2020-12 format in-place.
@@ -490,7 +571,7 @@ CompoundSchema.prototype.add = function (schema, id, name) {
  * @param {string} baseUri absolute URI context inherited from parent scope
  * @param {number} dialect DRAFT_* constant inherited from parent scope
  * @param {string} resourceUri absolute URI of the nearest ancestor schema resource ($id)
- * @param {Set<string>|null} [stripKeys] keywords to delete from every schema in this
+ * @param {Set<string>|null} stripKeys keywords to delete from every schema in this
  *   resource (derived from a custom metaschema that omits certain vocabularies)
  */
 function walkSchema(compound, obj, baseUri, dialect, resourceUri, stripKeys) {
@@ -498,28 +579,50 @@ function walkSchema(compound, obj, baseUri, dialect, resourceUri, stripKeys) {
         return;
     }
 
-    // TODO This is not schema compliant way of handling the vocabularies, it's just cheating
-    // But I just don't have energy to fix this right now...
-
     // A $schema keyword inside a sub-schema changes the active dialect for
     // that sub-tree. This handles embedded schemas with differing drafts.
     if (isString(obj.$schema)) {
         dialect = getDialect(obj.$schema);
-        // When a custom metaschema declares $vocabulary, inspect which vocabularies
-        // are enabled. If the validation vocabulary is absent, build a strip-set so
-        // that validation-only keywords are removed from every schema in this resource.
-        // We only do this when no strip-set has been inherited from a parent resource
-        // each schema resource governs its own vocabulary constraints.
-        if (stripKeys === void 0 || stripKeys === null) {
-            let metaObj = compound.uriRegistry.get(obj.$schema);
-            if (metaObj !== void 0 && typeof metaObj === 'object' && metaObj !== null
-                && typeof metaObj.$vocabulary === 'object' && metaObj.$vocabulary !== null) {
-                let vocab = metaObj.$vocabulary;
-                if (!vocab[VOCAB_VALIDATION_2020] && !vocab[VOCAB_VALIDATION_2019]) {
-                    stripKeys = VALIDATION_KEYWORDS;
+        // Each schema resource with a $schema declaration starts fresh: recompute
+        // the strip-set from scratch, overwriting any set inherited from a parent.
+        // This is correct per spec §8.1.2.2 — vocabularies are non-inheritable.
+        //
+        // Algorithm:
+        //   1. Find the metaschema in the registry (it must be a pre-registered remote).
+        //   2. If it has a $vocabulary map, walk VOCAB_GROUPS.
+        //   3. For each group, if NONE of its vocabulary URIs appears as a key in the
+        //      $vocabulary map (regardless of the boolean value — both true and false
+        //      mean "this vocabulary is in use"), add all of the group's keywords to
+        //      the strip set so they are deleted before compilation.
+        //   4. If no $vocabulary is found (or the metaschema is not in the registry),
+        //      assume full vocabulary — set stripKeys to null (no stripping).
+        let newStripKeys = null;
+        let metaObj = compound.uriRegistry.get(obj.$schema);
+        if (metaObj !== void 0 && typeof metaObj === 'object' && metaObj !== null
+            && typeof metaObj.$vocabulary === 'object' && metaObj.$vocabulary !== null) {
+            let vocab = metaObj.$vocabulary;
+            for (let gi = 0; gi < VOCAB_GROUPS.length; gi++) {
+                let group = VOCAB_GROUPS[gi];
+                // Check whether ANY of this group's URIs is declared in $vocabulary.
+                let present = false;
+                for (let ui = 0; ui < group.uris.length; ui++) {
+                    if (group.uris[ui] in vocab) {
+                        present = true;
+                        break;
+                    }
+                }
+                if (!present) {
+                    // This logical vocabulary is absent → strip all its keywords.
+                    if (newStripKeys === null) {
+                        newStripKeys = new Set();
+                    }
+                    for (let k of group.keys) {
+                        newStripKeys.add(k);
+                    }
                 }
             }
         }
+        stripKeys = newStripKeys;
     }
 
     // Strip disallowed keywords before transpile so that legacy forms (e.g.
