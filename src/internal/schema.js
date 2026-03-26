@@ -152,7 +152,7 @@ const DRAFT_2019 = 3;
 const DRAFT_2020 = 4;
 
 /** Keywords whose values are data payloads, not sub-schemas. Never recurse into these. */
-const WALK_SKIP_KEYS = new Set(['const', 'enum', 'default', 'examples']);
+const WALK_SKIP_KEYS = new Set(['const', 'enum', 'default', 'examples', '$vocabulary']);
 
 /**
  * Transpiles legacy JSON Schema drafts into Draft 2020-12 format in-place.
@@ -299,11 +299,13 @@ export function transpile(schema, dialect) {
  * @returns {number}
  */
 function getDialect(uri) {
-    if (!uri) return DRAFT_2020;
-    if (uri === 'draft7' || uri.indexOf('draft-07') !== -1) return DRAFT_7;
-    if (uri === 'draft6' || uri.indexOf('draft-06') !== -1) return DRAFT_6;
-    if (uri === 'draft4' || uri.indexOf('draft-04') !== -1) return DRAFT_4;
-    if (uri.indexOf('2019-09') !== -1) return DRAFT_2019;
+    if (!isString(uri) || uri.length === 0) {
+        return DRAFT_2020;
+    }
+    if (uri.includes('draft7') || uri.includes('draft-07')) return DRAFT_7;
+    if (uri.includes('draft6') || uri.includes('draft-06')) return DRAFT_6;
+    if (uri.includes('draft4') || uri.includes('draft-04')) return DRAFT_4;
+    if (uri.includes('2019-09')) return DRAFT_2019;
     return DRAFT_2020;
 }
 
@@ -450,7 +452,7 @@ function walkSchema(compound, obj, baseUri, dialect, resourceUri) {
 
     // A $schema keyword inside a sub-schema changes the active dialect for
     // that sub-tree. This handles embedded schemas with differing drafts.
-    if (obj.$schema) {
+    if (isString(obj.$schema)) {
         dialect = getDialect(obj.$schema);
     }
 
@@ -461,20 +463,20 @@ function walkSchema(compound, obj, baseUri, dialect, resourceUri) {
 
     // After transpile, $id is canonical (Draft 4 `id` has been renamed to $id).
     const id = obj.$id;
-    if (id) {
+    if (isString(id)) {
         baseUri = resolve(baseUri, id);
         resourceUri = baseUri;
         compound.uriRegistry.set(baseUri, obj);
     }
 
     // $anchor creates a plain-name fragment — store as baseUri#anchorName.
-    if (obj.$anchor) {
+    if (isString(obj.$anchor)) {
         compound.uriRegistry.set(baseUri + '#' + obj.$anchor, obj);
     }
 
     // $dynamicAnchor registers the anchor name in the dynamic scope map
     // and associates it with the owning schema resource for bookending checks.
-    if (obj.$dynamicAnchor) {
+    if (isString(obj.$dynamicAnchor)) {
         compound.uriRegistry.set(baseUri + '#' + obj.$dynamicAnchor, obj);
         let uriSet = compound.dynamicAnchors.get(obj.$dynamicAnchor);
         if (uriSet === void 0) {

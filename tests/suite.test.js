@@ -11,43 +11,32 @@ const { validate } = cat;
 
 const __dirname = import.meta.dir;
 
-const SUPPORTED_DRAFTS = ["draft2020-12", "draft2019-09", "draft7", "draft6", "draft4"];
+const SUPPORTED_DRAFTS = ["draft2020-12", "draft2019-09", "draft-07", "draft-06", "draft-04"];
 
 const SUITE_DIR = path.resolve(__dirname, "suite/tests");
 const REMOTE_DIR = path.resolve(__dirname, "suite/remotes");
 
+const SPECS_DIR = path.resolve(__dirname, "specs");
 
 /**
- * These tests are still failing for known reasons. They are planned features, we are not addressing them right now.
+ * 
+ * @param {string} draft 
  */
-const SKIP_TESTS = {
-    // ── HARD: Tier 3 Dynamic Tracking & External Linking ──
-    "defs.json": {
-        "validate definition against metaschema": new Set(["valid definition schema", "invalid definition schema"])
-    },
-    // definitions.json uses $ref to external metaschema (e.g. http://json-schema.org/draft-07/schema#)
-    // which requires live HTTP fetching — impossible with current architecture.
-    "definitions.json": {
-        "validate definition against metaschema": new Set(["valid definition schema", "invalid definition schema"])
-    },
-    // "dependentRequired.json": {
-    //     "single dependency": new Set(["missing dependency"]),
-    //     "multiple dependents required": new Set(["missing dependency", "missing other dependency", "missing both dependencies"]),
-    //     "dependencies with escaped characters": new Set(["CRLF missing dependent", "quoted quotes missing dependent"])
-    // },
-    // // dependencies.json (draft4/6/7) transpiles to dependentRequired — same underlying bug.
-    // "dependencies.json": {
-    //     "dependencies": new Set(["missing dependency"]),
-    //     "multiple dependencies": new Set(["missing dependency", "missing other dependency", "missing both dependencies"])
-    // },
-    "ref.json": {
-        "remote ref, containing refs itself": new Set(["remote ref valid", "remote ref invalid"]),
-        "simple URN base URI with $ref via the URN": new Set(["invalid under the URN IDed schema"])
-    },
-    "vocabulary.json": {
-        "schema that uses custom metaschema with with no validation vocabulary": new Set(["no validation: invalid number, but it still validates"])
+function getTestFolder(draft) {
+    switch (draft) {
+        case "draft2020-12":
+            return "draft2020-12";
+        case "draft2019-09":
+            return "draft2019-09";
+        case "draft-07":
+            return "draft7";
+        case "draft-06":
+            return "draft6";
+        case "draft-04":
+            return "draft4";
     }
-};
+    throw new Error("Not implemented");
+}
 
 /**
  * Recursively reads all JSON files in a directory.
@@ -78,22 +67,52 @@ function readDirRecursive(rootDir) {
 const REMOTE_FILES = readDirRecursive(REMOTE_DIR);
 
 for (const draft of SUPPORTED_DRAFTS) {
-    const suiteDir = path.join(SUITE_DIR, draft);
-    
+    const draftFolder = getTestFolder(draft);
+
+    const suiteDir = path.join(SUITE_DIR, draftFolder);
+
     if (!fs.existsSync(suiteDir)) {
-        console.warn(`⚠️ Skipping ${draft} - test folder not found.`);
-        continue;
+        throw new Error(`${draft} - test folder not found.`);
     }
 
     const allFiles = fs.readdirSync(suiteDir).filter(f => f.endsWith('.json'));
+    
+    const draftRemoteDir = path.resolve(REMOTE_DIR, draftFolder)
+
+
+    let vocabSchemas = [];
+
+    const specDir = path.join(SPECS_DIR, draft);
+    const rootSchemaPath = path.join(specDir, "schema.json");
+
+    const rootMetaSchema = JSON.parse(fs.readFileSync(rootSchemaPath, "utf8"));
+    let rootMetaUri = rootMetaSchema.$id || rootMetaSchema.id || `https://json-schema.org/${draft}/schema`;
+
+    // Look at the allOf clause to figure out which meta schemas to load
+    if (Array.isArray(rootMetaSchema.allOf)) {
+        for (const branch of rootMetaSchema.allOf) {
+            // Look for relative refs like "meta/core" or "meta/validation"
+            if (branch.$ref && branch.$ref.startsWith("meta/")) {
+                const vocabFileName = branch.$ref.replace("meta/", "") + ".json";
+                const vocabPath = path.join(specDir, "meta", vocabFileName);
+
+                if (fs.existsSync(vocabPath)) {
+                    const vocabSchema = JSON.parse(fs.readFileSync(vocabPath, "utf8"));
+                    const vocabUri = vocabSchema.$id || vocabSchema.id;
+                    if (vocabUri) {
+                        vocabSchemas.push({ schema: vocabSchema, uri: vocabUri });
+                    }
+                } else {
+                    console.warn(`⚠️ Missing vocabulary file: ${vocabPath}`);
+                }
+            }
+        }
+    }
 
     describe(`JSON Schema: ${draft}`, () => {
         for (const file of allFiles) {
             const filePath = path.join(suiteDir, file);
             const testGroups = JSON.parse(fs.readFileSync(filePath, "utf8"));
-            
-            const fileSkips = SKIP_TESTS[file];
-            const skipWholeFile = fileSkips === null;
 
             describe(`File: ${file}`, () => {
                 for (const group of testGroups) {
@@ -104,14 +123,17 @@ for (const draft of SUPPORTED_DRAFTS) {
                         // 1. Compile the schema ONCE per group
                         try {
                             const compound = new CompoundSchema(draft);
-                            
+                            compound.add(rootMetaSchema, rootMetaUri);
+                            for (const vocab of vocabSchemas) {
+                                compound.add(vocab.schema, vocab.uri);
+                            }
+
                             // Inject all remotes into this specific compound instance
                             for (const remoteFile of REMOTE_FILES) {
                                 const uriPath = remoteFile.path.split(path.sep).join('/');
                                 const uri = `http://localhost:1234/${uriPath}`;
                                 compound.add(remoteFile.schema, uri);
                             }
-                            
                             const ref = compound.add(group.schema);
                             const ast = compound.bundle(ref);
                             const compiled = compile(cat, ast);
@@ -122,14 +144,7 @@ for (const draft of SUPPORTED_DRAFTS) {
 
                         // 2. Loop through every payload test
                         for (const testCase of group.tests) {
-                            let isTodo = skipWholeFile;
-                            if (!isTodo && fileSkips && fileSkips[group.description]) {
-                                isTodo = fileSkips[group.description].has(testCase.description);
-                            }
-
-                            const testFn = isTodo ? test.todo : test;
-
-                            testFn(testCase.description, () => {
+                            test(testCase.description, () => {
                                 if (compileError) {
                                     throw new Error(
                                         `Parser/Compiler failed: ${compileError.message}\n` +

@@ -25,7 +25,7 @@
   ],
   "scripts": {
     "make": "node scripts/build.js",
-    "inspect": "bun test --expose-gc --inspect-brk --sourcemap=inline ./tests/schema_draft2019.test.js"
+    "inspect": "bun test --expose-gc --inspect-brk --sourcemap=inline ./tests/suite.test.js"
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.34.48",
