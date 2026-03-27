@@ -228,6 +228,20 @@ group('Building schema (Setup time)', () => {
 
 group('Pure Parsing (Setup Time Excluded)', () => {
 
+    bench('AJV + TypeBox (Theoretical Max)', function* () {
+        yield {
+            [0]() { return JSON.parse(jsonStr); },
+            bench(data) { ajvValidate(data); }
+        };
+    });
+
+    bench('Valibot', function* () {
+        yield {
+            [0]() { return JSON.parse(jsonStr); },
+            bench(data) { v.parse(ValibotOrder, data); }
+        };
+    });
+
     bench('Zod', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
@@ -244,17 +258,38 @@ group('Pure Parsing (Setup Time Excluded)', () => {
         };
     });
 
+ 
+});
+
+group('Pure Parsing (Second time after JIT is warmed up)', () => {
+
+    bench('Zod', function* () {
+        yield {
+            [0]() { return JSON.parse(jsonStr); },
+            bench(data) { return ZodOrder.safeParse(data).success; }
+        };
+    });
+
     bench('Valibot', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { v.parse(ValibotOrder, data); }
+            bench(data) { return v.safeParse(ValibotOrder, data).success; }
         };
     });
 
     bench('AJV + TypeBox (Theoretical Max)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { ajvValidate(data); }
+            bench(data) { return ajvValidate(data); }
+        };
+    });
+
+    bench('uvd (In-Place Bitwise)', function* () {
+        yield {
+            [0]() { return JSON.parse(jsonStr); },
+            bench(data) { 
+                return validate(data, UvdOrder);
+            }
         };
     });
 });

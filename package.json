@@ -47,6 +47,7 @@
   "author": "Vilhelm Sjölund",
   "license": "Apache-2.0",
   "dependencies": {
+    "@mitata/counters": "^0.0.8",
     "uri-js": "^4.4.1"
   }
 }

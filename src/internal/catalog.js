@@ -705,27 +705,6 @@ function catalog(cfg) {
     }
 
     /**
-     * Validates data against an inline MOD_ENUM typedef.
-     * Encoding: primBits(3-7) | MODIFIER(8) | MOD_ENUM(9-10) | isSet(11) | index(12-29)
-     * @param {*} data
-     * @param {number} typedef
-     * @returns {boolean}
-     */
-    function _validateModEnum(data, typedef) {
-        let primBits = typedef & PRIM_MASK;
-        // Check base type matches (skip for ANY)
-        if (primBits & VALUE) {
-            if (!_isValue(data, primBits)) return false;
-        }
-        let isSet = (typedef >>> 11) & 1;
-        let idx = (typedef >>> 12) & 0x3FFFF; // 18 bits
-        if (isSet) {
-            return ENUMS[idx].has(data);
-        }
-        return CONSTANTS[idx] === data;
-    }
-
-    /**
      * Validates data against an inline typedef (COMPLEX=0, typedef > 0xFF).
      * Handles MOD_ARRAY, MOD_RECORD, MOD_ENUM modifiers, and inline
      * primitive validators (STRING with minLength/maxLength/pattern,
@@ -749,7 +728,17 @@ function catalog(cfg) {
 
             if (modType === 2) {
                 /** MOD_ENUM: exact-match against CONSTANTS or ENUMS arena */
-                return _validateModEnum(data, typedef);
+                let primBits = typedef & PRIM_MASK;
+                // Check base type matches (skip for ANY)
+                if (primBits & VALUE) {
+                    if (!_isValue(data, primBits)) return false;
+                }
+                let isSet = (typedef >>> 11) & 1;
+                let idx = (typedef >>> 12) & 0x3FFFF; // 18 bits
+                if (isSet) {
+                    return ENUMS[idx].has(data);
+                }
+                return CONSTANTS[idx] === data;
             }
 
             if (modType === 0) {
@@ -912,6 +901,12 @@ function catalog(cfg) {
         return false;
     }
 
+    /**
+     * 
+     * @param {*} raw 
+     * @param {number} type 
+     * @returns {boolean}
+     */
     function _validateSlot(raw, type) {
         if (raw === void 0) return (type & OPTIONAL) !== 0;
         if (raw === null) return (type & NULLABLE) !== 0 || _primitiveAcceptsNull(type);
@@ -975,708 +970,710 @@ function catalog(cfg) {
              * Inlined _validateSlot and _isValue avoid function call overhead.
              */
             if (ct === K_OBJECT) {
-                    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-                        return false;
-                    }
-                    let shapes = SHAPES;
-                    let slab = SLAB;
-                    let offset = shapes[ri * 2];
-                    let length = shapes[ri * 2 + 1];
+                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                    return false;
+                }
+                let shapes = SHAPES;
+                let slab = SLAB;
+                let offset = shapes[ri * 2];
+                let length = shapes[ri * 2 + 1];
 
-                    if (header & K_ALL_REQUIRED) {
-                        /**
-                         * K_ALL_REQUIRED fast path: all properties are required.
-                         * No OPTIONAL checks needed — any missing property is an immediate failure.
-                         * We still need hasOwnProperty to guard against prototype keys like __proto__.
-                         */
-                        for (let i = 0; i < length; i++) {
-                            let keyId = slab[offset + (i * 2)];
-                            let key = KEY_INDEX[keyId];
-                            let type = slab[offset + (i * 2) + 1];
-                            if (!hasOwnProperty.call(data, key)) {
-                                return false;
-                            }
-                            let val = data[key];
-
-                            if (val === null) {
-                                if ((type & NULLABLE) || ((type & COMPLEX) === 0 && (type & ANY) !== 0)) {
-                                    if (trackPtr) {
-                                        markEvaluated(trackPtr, snapPtr, keyId);
-                                    }
-                                    continue;
-                                }
-                                return false;
-                            }
-                            /** Dispatch on type encoding — inlined _isValue for bare primitives */
-                            if (type & COMPLEX) {
-                                if (!_validate(val, type, 0, 0)) {
-                                    return false;
-                                }
-                            } else if (type < 256) {
-                                let mask = type & PRIM_MASK;
-                                if (!(mask & ANY)) {
-                                    let jt = typeof val;
-                                    if (!(
-                                        jt === 'string' ? (mask & STRING) :
-                                        jt === 'number' ? ((mask & NUMBER) || ((mask & INTEGER) && Number.isInteger(val))) :
-                                        jt === 'boolean' ? (mask & BOOLEAN) :
-                                        false
-                                    )) {
-                                        return false;
-                                    }
-                                }
-                            } else {
-                                if (!_validateInline(val, type)) {
-                                    return false;
-                                }
-                            }
-                            if (trackPtr) {
-                                markEvaluated(trackPtr, snapPtr, keyId);
-                            }
+                if (header & K_ALL_REQUIRED) {
+                    /**
+                     * K_ALL_REQUIRED fast path: all properties are required.
+                     * No OPTIONAL checks needed — any missing property is an immediate failure.
+                     * We still need hasOwnProperty to guard against prototype keys like __proto__.
+                     */
+                    for (let i = 0; i < length; i++) {
+                        let keyId = slab[offset + (i * 2)];
+                        let key = KEY_INDEX[keyId];
+                        let type = slab[offset + (i * 2) + 1];
+                        if (!hasOwnProperty.call(data, key)) {
+                            return false;
                         }
-                    } else {
-                        /**
-                         * General path: some properties may be optional.
-                         * Need hasOwnProperty + OPTIONAL checks.
-                         */
-                        for (let i = 0; i < length; i++) {
-                            let keyId = slab[offset + (i * 2)];
-                            let key = KEY_INDEX[keyId];
-                            let type = slab[offset + (i * 2) + 1];
-                            let hasProp = hasOwnProperty.call(data, key);
-                            let val = hasProp ? data[key] : void 0;
+                        let val = data[key];
 
-                            if (val === void 0) {
-                                if (type & OPTIONAL) {
-                                    if (trackPtr && hasProp) {
-                                        markEvaluated(trackPtr, snapPtr, keyId);
-                                    }
-                                    continue;
+                        if (val === null) {
+                            if ((type & NULLABLE) || ((type & COMPLEX) === 0 && (type & ANY) !== 0)) {
+                                if (trackPtr) {
+                                    markEvaluated(trackPtr, snapPtr, keyId);
                                 }
-                                return false;
+                                continue;
                             }
-                            if (val === null) {
-                                if ((type & NULLABLE) || ((type & COMPLEX) === 0 && (type & ANY) !== 0)) {
-                                    if (trackPtr) {
-                                        markEvaluated(trackPtr, snapPtr, keyId);
-                                    }
-                                    continue;
-                                }
-                                return false;
-                            }
-                            if (type & COMPLEX) {
-                                if (!_validate(val, type, 0, 0)) {
-                                    return false;
-                                }
-                            } else if (type < 256) {
-                                let mask = type & PRIM_MASK;
-                                if (!(mask & ANY)) {
-                                    let jt = typeof val;
-                                    if (!(
-                                        jt === 'string' ? (mask & STRING) :
-                                        jt === 'number' ? ((mask & NUMBER) || ((mask & INTEGER) && Number.isInteger(val))) :
-                                        jt === 'boolean' ? (mask & BOOLEAN) :
-                                        false
-                                    )) {
-                                        return false;
-                                    }
-                                }
-                            } else {
-                                if (!_validateInline(val, type)) {
-                                    return false;
-                                }
-                            }
-                            if (trackPtr) {
-                                markEvaluated(trackPtr, snapPtr, keyId);
-                            }
+                            return false;
                         }
-                    }
-                    if (header & K_VALIDATOR) {
-                        return runObjectValidator(data, kinds[ptr + 2], ri, trackPtr, snapPtr);
-                    }
-                    return true;
-            } else if (ct === K_ARRAY) {
-                    if (!Array.isArray(data)) {
-                        return false;
-                    }
-                    let hasItems = (header & K_HAS_ITEMS) !== 0;
-                    if (hasItems) {
-                        let innerType = ri;
-                        let length = data.length;
-                        /**
-                         * Inlined _validateSlot for array items: avoids function
-                         * call overhead per element. Pre-compute the dispatch route
-                         * once since innerType is constant across all elements.
-                         */
-                        if (innerType & COMPLEX) {
-                            /** Complex inner type: full _validate per element */
-                            for (let i = 0; i < length; i++) {
-                                let el = data[i];
-                                if (el === void 0) {
-                                    if (!(innerType & OPTIONAL)) {
-                                        return false;
-                                    }
-                                } else if (el === null) {
-                                    if (!(innerType & NULLABLE)) {
-                                        return false;
-                                    }
-                                } else if (!_validate(el, innerType, 0, 0)) {
-                                    return false;
-                                }
+                        /** Dispatch on type encoding — inlined _isValue for bare primitives */
+                        if (type & COMPLEX) {
+                            if (!_validate(val, type, 0, 0)) {
+                                return false;
                             }
-                        } else if (innerType < 256) {
-                            /**
-                             * Bare primitive inner type: inlined _isValue with typeof dispatch.
-                             * Pre-compute bitmask once since innerType is constant.
-                             */
-                            let mask = innerType & PRIM_MASK;
-                            let acceptsAny = (mask & ANY) !== 0;
-                            for (let i = 0; i < length; i++) {
-                                let el = data[i];
-                                if (el === void 0) {
-                                    if (!(innerType & OPTIONAL)) {
-                                        return false;
-                                    }
-                                } else if (el === null) {
-                                    if (!(innerType & NULLABLE) && !acceptsAny) {
-                                        return false;
-                                    }
-                                } else if (!acceptsAny) {
-                                    let jt = typeof el;
-                                    if (!(
-                                        jt === 'string' ? (mask & STRING) :
-                                        jt === 'number' ? ((mask & NUMBER) || ((mask & INTEGER) && Number.isInteger(el))) :
-                                        jt === 'boolean' ? (mask & BOOLEAN) :
-                                        false
-                                    )) {
-                                        return false;
-                                    }
+                        } else if (type < 256) {
+                            let mask = type & PRIM_MASK;
+                            if (!(mask & ANY)) {
+                                let jt = typeof val;
+                                if (!(
+                                    jt === 'string' ? (mask & STRING) :
+                                        jt === 'number' ? ((mask & NUMBER) || ((mask & INTEGER) && Number.isInteger(val))) :
+                                            jt === 'boolean' ? (mask & BOOLEAN) :
+                                                false
+                                )) {
+                                    return false;
                                 }
                             }
                         } else {
-                            /** MOD_ENUM inner type */
-                            for (let i = 0; i < length; i++) {
-                                let el = data[i];
-                                if (el === void 0) {
-                                    if (!(innerType & OPTIONAL)) {
-                                        return false;
-                                    }
-                                } else if (el === null) {
-                                    if (!(innerType & NULLABLE)) {
-                                        return false;
-                                    }
-                                } else if (!_validateInline(el, innerType)) {
+                            if (!_validateInline(val, type)) {
+                                return false;
+                            }
+                        }
+                        if (trackPtr) {
+                            markEvaluated(trackPtr, snapPtr, keyId);
+                        }
+                    }
+                } else {
+                    /**
+                     * General path: some properties may be optional.
+                     * Need hasOwnProperty + OPTIONAL checks.
+                     */
+                    for (let i = 0; i < length; i++) {
+                        let keyId = slab[offset + (i * 2)];
+                        let key = KEY_INDEX[keyId];
+                        let type = slab[offset + (i * 2) + 1];
+                        let hasProp = hasOwnProperty.call(data, key);
+                        let val = hasProp ? data[key] : void 0;
+
+                        if (val === void 0) {
+                            if (type & OPTIONAL) {
+                                if (trackPtr && hasProp) {
+                                    markEvaluated(trackPtr, snapPtr, keyId);
+                                }
+                                continue;
+                            }
+                            return false;
+                        }
+                        if (val === null) {
+                            if ((type & NULLABLE) || ((type & COMPLEX) === 0 && (type & ANY) !== 0)) {
+                                if (trackPtr) {
+                                    markEvaluated(trackPtr, snapPtr, keyId);
+                                }
+                                continue;
+                            }
+                            return false;
+                        }
+                        if (type & COMPLEX) {
+                            if (!_validate(val, type, 0, 0)) {
+                                return false;
+                            }
+                        } else if (type < 256) {
+                            let mask = type & PRIM_MASK;
+                            if (!(mask & ANY)) {
+                                let jt = typeof val;
+                                if (!(
+                                    jt === 'string' ? (mask & STRING) :
+                                        jt === 'number' ? ((mask & NUMBER) || ((mask & INTEGER) && Number.isInteger(val))) :
+                                            jt === 'boolean' ? (mask & BOOLEAN) :
+                                                false
+                                )) {
+                                    return false;
+                                }
+                            }
+                        } else {
+                            if (!_validateInline(val, type)) {
+                                return false;
+                            }
+                        }
+                        if (trackPtr) {
+                            markEvaluated(trackPtr, snapPtr, keyId);
+                        }
+                    }
+                }
+                if (header & K_VALIDATOR) {
+                    return runObjectValidator(data, kinds[ptr + 2], ri, trackPtr, snapPtr);
+                }
+                return true;
+            } else if (ct === K_ARRAY) {
+                if (!Array.isArray(data)) {
+                    return false;
+                }
+                let hasItems = (header & K_HAS_ITEMS) !== 0;
+                if (hasItems) {
+                    let innerType = ri;
+                    let length = data.length;
+                    /**
+                     * Inlined _validateSlot for array items: avoids function
+                     * call overhead per element. Pre-compute the dispatch route
+                     * once since innerType is constant across all elements.
+                     */
+                    if (innerType & COMPLEX) {
+                        /** Complex inner type: full _validate per element */
+                        for (let i = 0; i < length; i++) {
+                            let el = data[i];
+                            if (el === void 0) {
+                                if (!(innerType & OPTIONAL)) {
+                                    return false;
+                                }
+                            } else if (el === null) {
+                                if (!(innerType & NULLABLE)) {
+                                    return false;
+                                }
+                            } else if (!_validate(el, innerType, 0, 0)) {
+                                return false;
+                            }
+                        }
+                    } else if (innerType < 256) {
+                        /**
+                         * Bare primitive inner type: inlined _isValue with typeof dispatch.
+                         * Pre-compute bitmask once since innerType is constant.
+                         */
+                        let mask = innerType & PRIM_MASK;
+                        let acceptsAny = (mask & ANY) !== 0;
+                        for (let i = 0; i < length; i++) {
+                            let el = data[i];
+                            if (el === void 0) {
+                                if (!(innerType & OPTIONAL)) {
+                                    return false;
+                                }
+                            } else if (el === null) {
+                                if (!(innerType & NULLABLE) && !acceptsAny) {
+                                    return false;
+                                }
+                            } else if (!acceptsAny) {
+                                let jt = typeof el;
+                                if (!(
+                                    jt === 'string' ? (mask & STRING) :
+                                        jt === 'number' ? ((mask & NUMBER) || ((mask & INTEGER) && Number.isInteger(el))) :
+                                            jt === 'boolean' ? (mask & BOOLEAN) :
+                                                false
+                                )) {
                                     return false;
                                 }
                             }
                         }
-                        /** items evaluates ALL items */
-                        if (trackPtr) {
-                            markItemsEvaluated(trackPtr, snapPtr, 0, length);
-                        }
-                    }
-                    if (header & K_VALIDATOR) {
-                        return runArrayValidator(data, kinds[ptr + 2], trackPtr, snapPtr);
-                    }
-                    return true;
-            } else if (ct === K_PRIMITIVE) {
-                    let primBits = header & SIMPLE;
-                    /**
-                     * K_ANY_INNER means the type included ANY — skip the _isValue type check.
-                     * We still run the validator (minimum, pattern etc.) if K_VALIDATOR is set.
-                     */
-                    if (!(header & K_ANY_INNER)) {
-                        /** Inlined _isValue: direct typeof dispatch */
-                        if (!(primBits & ANY)) {
-                            let jt = typeof data;
-                            if (!(
-                                jt === 'string' ? (primBits & STRING) :
-                                jt === 'number' ? ((primBits & NUMBER) || ((primBits & INTEGER) && Number.isInteger(data))) :
-                                jt === 'boolean' ? (primBits & BOOLEAN) :
-                                false
-                            )) {
+                    } else {
+                        /** MOD_ENUM inner type */
+                        for (let i = 0; i < length; i++) {
+                            let el = data[i];
+                            if (el === void 0) {
+                                if (!(innerType & OPTIONAL)) {
+                                    return false;
+                                }
+                            } else if (el === null) {
+                                if (!(innerType & NULLABLE)) {
+                                    return false;
+                                }
+                            } else if (!_validateInline(el, innerType)) {
                                 return false;
                             }
                         }
                     }
-                    if (header & K_VALIDATOR) {
-                        return runPrimValidator(data, primBits, ri);
+                    /** items evaluates ALL items */
+                    if (trackPtr) {
+                        markItemsEvaluated(trackPtr, snapPtr, 0, length);
                     }
-                    return true;
-            } else if (ct === K_INTERSECT) {
-                    let shapes = SHAPES;
-                    let slab = SLAB;
-                    let offset = shapes[ri * 2];
-                    let count = shapes[ri * 2 + 1];
-                    for (let i = 0; i < count; i++) {
-                        if (!_validate(data, slab[offset + i], trackPtr, snapPtr)) {
+                }
+                if (header & K_VALIDATOR) {
+                    return runArrayValidator(data, kinds[ptr + 2], trackPtr, snapPtr);
+                }
+                return true;
+            } else if (ct === K_PRIMITIVE) {
+                let primBits = header & SIMPLE;
+                /**
+                 * K_ANY_INNER means the type included ANY — skip the _isValue type check.
+                 * We still run the validator (minimum, pattern etc.) if K_VALIDATOR is set.
+                 */
+                if (!(header & K_ANY_INNER)) {
+                    /** Inlined _isValue: direct typeof dispatch */
+                    if (!(primBits & ANY)) {
+                        let jt = typeof data;
+                        if (!(
+                            jt === 'string' ? (primBits & STRING) :
+                                jt === 'number' ? ((primBits & NUMBER) || ((primBits & INTEGER) && Number.isInteger(data))) :
+                                    jt === 'boolean' ? (primBits & BOOLEAN) :
+                                        false
+                        )) {
                             return false;
                         }
                     }
-                    return true;
-            } else { switch (ct) {
-                case K_RECORD: {
-                    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                }
+                if (header & K_VALIDATOR) {
+                    return runPrimValidator(data, primBits, ri);
+                }
+                return true;
+            } else if (ct === K_INTERSECT) {
+                let shapes = SHAPES;
+                let slab = SLAB;
+                let offset = shapes[ri * 2];
+                let count = shapes[ri * 2 + 1];
+                for (let i = 0; i < count; i++) {
+                    if (!_validate(data, slab[offset + i], trackPtr, snapPtr)) {
                         return false;
                     }
-                    let valueType = ri;
-                    for (let key in data) {
-                        if (hasOwnProperty.call(data, key)) {
-                            if (!_validateSlot(data[key], valueType)) {
-                                return false;
-                            }
-                        }
-                    }
-                    return true;
                 }
-                case K_OR: {
-                    let shapes = SHAPES;
-                    let slab = SLAB;
-                    let offset = shapes[ri * 2];
-                    let count = shapes[ri * 2 + 1];
-                    if (trackPtr) {
-                        /**
-                         * Reserve-Run-Commit for anyOf:
-                         * Each branch gets a fresh TRACK_SNAP slot to write into.
-                         * Passing branches are OR'd into a merged slot.
-                         * TRACK_BITS is only touched on final commit — never mid-branch.
-                         */
-                        let keyCount = TRACK_KEYS[trackPtr];
-                        let words = (keyCount + 31) >>> 5;
-                        let snapStart = SNAP_TAIL;
-                        let mergedSnap = SNAP_TAIL;
-                        SNAP_TAIL += words;
-                        TRACK_SNAP.fill(0, mergedSnap, mergedSnap + words);
-                        let anyMatch = false;
-                        for (let i = 0; i < count; i++) {
-                            let currentSnap = SNAP_TAIL;
-                            SNAP_TAIL += words;
-                            TRACK_SNAP.fill(0, currentSnap, currentSnap + words);
-                            if (_validate(data, slab[offset + i], trackPtr, currentSnap)) {
-                                anyMatch = true;
-                                for (let w = 0; w < words; w++) {
-                                    TRACK_SNAP[mergedSnap + w] |= TRACK_SNAP[currentSnap + w];
-                                }
-                            }
-                            SNAP_TAIL = currentSnap;  // drop this branch's slot
+                return true;
+            } else {
+                switch (ct) {
+                    case K_RECORD: {
+                        if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                            return false;
                         }
-                        if (anyMatch) {
-                            for (let w = 0; w < words; w++) {
-                                if (snapPtr === 0) {
-                                    TRACK_BITS[trackPtr + 1 + w] |= TRACK_SNAP[mergedSnap + w];
-                                } else {
-                                    TRACK_SNAP[snapPtr + w] |= TRACK_SNAP[mergedSnap + w];
-                                }
-                            }
-                        }
-                        SNAP_TAIL = snapStart;
-                        return anyMatch;
-                    }
-                    for (let i = 0; i < count; i++) {
-                        if (_validate(data, slab[offset + i], 0, 0)) {
-                            return true;
-                        }
-                    }
-                    return false;
-                }
-                case K_EXCLUSIVE: {
-                    let shapes = SHAPES;
-                    let slab = SLAB;
-                    let offset = shapes[ri * 2];
-                    let count = shapes[ri * 2 + 1];
-                    if (trackPtr) {
-                        /**
-                         * Reserve-Run-Commit for oneOf:
-                         * Each branch gets a fresh TRACK_SNAP slot.
-                         * Failed branches are dropped (SNAP_TAIL reset).
-                         * Exactly 1 passing branch's bits are committed to destination.
-                         */
-                        let keyCount = TRACK_KEYS[trackPtr];
-                        let words = (keyCount + 31) >>> 5;
-                        let matchCount = 0;
-                        let snapStart = SNAP_TAIL;
-                        let winnerSnap = 0;
-                        for (let i = 0; i < count; i++) {
-                            let currentSnap = SNAP_TAIL;
-                            SNAP_TAIL += words;
-                            TRACK_SNAP.fill(0, currentSnap, currentSnap + words);
-                            if (_validate(data, slab[offset + i], trackPtr, currentSnap)) {
-                                matchCount++;
-                                if (matchCount === 1) {
-                                    winnerSnap = currentSnap;
-                                } else {
-                                    /** Second match — abort immediately */
-                                    SNAP_TAIL = snapStart;
+                        let valueType = ri;
+                        for (let key in data) {
+                            if (hasOwnProperty.call(data, key)) {
+                                if (!_validateSlot(data[key], valueType)) {
                                     return false;
                                 }
-                            } else {
-                                SNAP_TAIL = currentSnap;  // drop failed branch's slot
                             }
                         }
-                        if (matchCount === 1) {
-                            for (let w = 0; w < words; w++) {
-                                if (snapPtr === 0) {
-                                    TRACK_BITS[trackPtr + 1 + w] |= TRACK_SNAP[winnerSnap + w];
-                                } else {
-                                    TRACK_SNAP[snapPtr + w] |= TRACK_SNAP[winnerSnap + w];
+                        return true;
+                    }
+                    case K_OR: {
+                        let shapes = SHAPES;
+                        let slab = SLAB;
+                        let offset = shapes[ri * 2];
+                        let count = shapes[ri * 2 + 1];
+                        if (trackPtr) {
+                            /**
+                             * Reserve-Run-Commit for anyOf:
+                             * Each branch gets a fresh TRACK_SNAP slot to write into.
+                             * Passing branches are OR'd into a merged slot.
+                             * TRACK_BITS is only touched on final commit — never mid-branch.
+                             */
+                            let keyCount = TRACK_KEYS[trackPtr];
+                            let words = (keyCount + 31) >>> 5;
+                            let snapStart = SNAP_TAIL;
+                            let mergedSnap = SNAP_TAIL;
+                            SNAP_TAIL += words;
+                            TRACK_SNAP.fill(0, mergedSnap, mergedSnap + words);
+                            let anyMatch = false;
+                            for (let i = 0; i < count; i++) {
+                                let currentSnap = SNAP_TAIL;
+                                SNAP_TAIL += words;
+                                TRACK_SNAP.fill(0, currentSnap, currentSnap + words);
+                                if (_validate(data, slab[offset + i], trackPtr, currentSnap)) {
+                                    anyMatch = true;
+                                    for (let w = 0; w < words; w++) {
+                                        TRACK_SNAP[mergedSnap + w] |= TRACK_SNAP[currentSnap + w];
+                                    }
+                                }
+                                SNAP_TAIL = currentSnap;  // drop this branch's slot
+                            }
+                            if (anyMatch) {
+                                for (let w = 0; w < words; w++) {
+                                    if (snapPtr === 0) {
+                                        TRACK_BITS[trackPtr + 1 + w] |= TRACK_SNAP[mergedSnap + w];
+                                    } else {
+                                        TRACK_SNAP[snapPtr + w] |= TRACK_SNAP[mergedSnap + w];
+                                    }
                                 }
                             }
                             SNAP_TAIL = snapStart;
-                            return true;
+                            return anyMatch;
                         }
-                        SNAP_TAIL = snapStart;
-                        return false;
-                    }
-                    let matchCount = 0;
-                    for (let i = 0; i < count; i++) {
-                        if (_validate(data, slab[offset + i], 0, 0)) {
-                            matchCount++;
-                            if (matchCount > 1) {
-                                return false;
+                        for (let i = 0; i < count; i++) {
+                            if (_validate(data, slab[offset + i], 0, 0)) {
+                                return true;
                             }
                         }
-                    }
-                    return matchCount === 1;
-                }
-                case K_INTERSECT: {
-                    let shapes = SHAPES;
-                    let slab = SLAB;
-                    let offset = shapes[ri * 2];
-                    let count = shapes[ri * 2 + 1];
-                    for (let i = 0; i < count; i++) {
-                        if (!_validate(data, slab[offset + i], trackPtr, snapPtr)) {
-                            return false;
-                        }
-                    }
-                    return true;
-                }
-                case K_UNION: {
-                    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                         return false;
                     }
-                    let shapes = SHAPES;
-                    let slab = SLAB;
-                    let offset = shapes[ri * 2];
-                    let length = shapes[ri * 2 + 1];
-                    // slab[offset] is the discriminator key id; variants follow at offset+1
-                    let discKey = KEY_INDEX[slab[offset]];
-                    let valueId = KEY_DICT.get(data[discKey]);
-                    if (valueId === void 0) {
-                        return false;
-                    }
-                    for (let i = 0; i < length; i++) {
-                        if (slab[offset + 1 + i * 2] === valueId) {
-                            return _validate(data, slab[offset + 2 + i * 2], 0, 0);
-                        }
-                    }
-                    return false;
-                }
-                case K_TUPLE: {
-                    if (!Array.isArray(data)) {
-                        return false;
-                    }
-                    let shapes = SHAPES;
-                    let slab = SLAB;
-                    let offset = shapes[ri * 2];
-                    let count = shapes[ri * 2 + 1];
-                    let hasRest = (header & K_HAS_REST) !== 0;
-                    let fixedCount = hasRest ? count - 1 : count;
-
-                    let isStrict = (header & K_STRICT) !== 0;
-                    let length = data.length;
-                    if (isStrict) {
-                        if (
-                            length < fixedCount ||
-                            (!hasRest && length > fixedCount)
-                        ) {
-                            return false;
-                        }
-                    }
-                    let checkCount = length < fixedCount ? length : fixedCount;
-                    for (let i = 0; i < checkCount; i++) {
-                        if (!_validateSlot(data[i], slab[offset + i])) {
-                            return false;
-                        }
-                    }
-                    /** Mark prefix items as evaluated */
-                    if (trackPtr) {
-                        markItemsEvaluated(trackPtr, snapPtr, 0, checkCount);
-                    }
-                    if (hasRest) {
-                        let restType = slab[offset + count - 1];
-                        for (let i = checkCount; i < length; i++) {
-                            if (!_validateSlot(data[i], restType)) {
-                                return false;
-                            }
-                        }
-                        /** Mark rest items as evaluated */
-                        if (trackPtr && length > checkCount) {
-                            markItemsEvaluated(trackPtr, snapPtr, checkCount, length);
-                        }
-                    }
-                    if (header & K_VALIDATOR) {
-                        return runArrayValidator(data, kinds[ptr + 2], trackPtr, snapPtr);
-                    }
-                    return true;
-                }
-                case K_REFINE: {
-                    let shapes = SHAPES;
-                    let slab = SLAB;
-                    let offset = shapes[ri * 2];
-                    let innerType = slab[offset];
-                    let callbackIdx = slab[offset + 1];
-                    if (!_validate(data, innerType, trackPtr, snapPtr)) {
-                        return false;
-                    }
-                    let callbacks = CALLBACKS;
-                    return !!callbacks[callbackIdx](data);
-                }
-                case K_NOT: {
-                    /** not never produces annotations per JSON Schema spec */
-                    return !_validate(data, ri, 0, 0);
-                }
-                case K_CONDITIONAL: {
-                    let shapes = SHAPES;
-                    let slab = SLAB;
-                    let offset = shapes[ri * 2];
-                    let ifType = slab[offset];
-                    let thenType = slab[offset + 1];
-                    let elseType = slab[offset + 2];
-                    /**
-                     * The `if` branch runs in isolation: a failed `if` must not leave
-                     * partial markings. Reserve a fresh snapPtr for it; commit only if it passes.
-                     */
-                    let ifPassed;
-                    if (trackPtr) {
-                        let words = (TRACK_KEYS[trackPtr] + 31) >>> 5;
-                        let ifSnap = SNAP_TAIL;
-                        SNAP_TAIL += words;
-                        TRACK_SNAP.fill(0, ifSnap, ifSnap + words);
-                        ifPassed = _validate(data, ifType, trackPtr, ifSnap);
-                        if (ifPassed) {
-                            for (let w = 0; w < words; w++) {
-                                if (snapPtr === 0) {
-                                    TRACK_BITS[trackPtr + 1 + w] |= TRACK_SNAP[ifSnap + w];
+                    case K_EXCLUSIVE: {
+                        let shapes = SHAPES;
+                        let slab = SLAB;
+                        let offset = shapes[ri * 2];
+                        let count = shapes[ri * 2 + 1];
+                        if (trackPtr) {
+                            /**
+                             * Reserve-Run-Commit for oneOf:
+                             * Each branch gets a fresh TRACK_SNAP slot.
+                             * Failed branches are dropped (SNAP_TAIL reset).
+                             * Exactly 1 passing branch's bits are committed to destination.
+                             */
+                            let keyCount = TRACK_KEYS[trackPtr];
+                            let words = (keyCount + 31) >>> 5;
+                            let matchCount = 0;
+                            let snapStart = SNAP_TAIL;
+                            let winnerSnap = 0;
+                            for (let i = 0; i < count; i++) {
+                                let currentSnap = SNAP_TAIL;
+                                SNAP_TAIL += words;
+                                TRACK_SNAP.fill(0, currentSnap, currentSnap + words);
+                                if (_validate(data, slab[offset + i], trackPtr, currentSnap)) {
+                                    matchCount++;
+                                    if (matchCount === 1) {
+                                        winnerSnap = currentSnap;
+                                    } else {
+                                        /** Second match — abort immediately */
+                                        SNAP_TAIL = snapStart;
+                                        return false;
+                                    }
                                 } else {
-                                    TRACK_SNAP[snapPtr + w] |= TRACK_SNAP[ifSnap + w];
+                                    SNAP_TAIL = currentSnap;  // drop failed branch's slot
+                                }
+                            }
+                            if (matchCount === 1) {
+                                for (let w = 0; w < words; w++) {
+                                    if (snapPtr === 0) {
+                                        TRACK_BITS[trackPtr + 1 + w] |= TRACK_SNAP[winnerSnap + w];
+                                    } else {
+                                        TRACK_SNAP[snapPtr + w] |= TRACK_SNAP[winnerSnap + w];
+                                    }
+                                }
+                                SNAP_TAIL = snapStart;
+                                return true;
+                            }
+                            SNAP_TAIL = snapStart;
+                            return false;
+                        }
+                        let matchCount = 0;
+                        for (let i = 0; i < count; i++) {
+                            if (_validate(data, slab[offset + i], 0, 0)) {
+                                matchCount++;
+                                if (matchCount > 1) {
+                                    return false;
                                 }
                             }
                         }
-                        SNAP_TAIL = ifSnap;  // reclaim if-snap slot
-                    } else {
-                        ifPassed = _validate(data, ifType, 0, 0);
+                        return matchCount === 1;
                     }
-                    if (ifPassed) {
-                        return _validate(data, thenType, trackPtr, snapPtr);
-                    } else {
-                        return _validate(data, elseType, trackPtr, snapPtr);
-                    }
-                }
-                case K_DYN_ANCHOR: {
-                    let shapes = SHAPES;
-                    let slab = SLAB;
-                    let offset = shapes[ri * 2];
-                    DYN_ANCHORS[DYN_PTR++] = ri;
-                    let valid = _validate(data, slab[offset], trackPtr, snapPtr);
-                    DYN_PTR--;
-                    return valid;
-                }
-                case K_DYN_REF: {
-                    let shapes = SHAPES;
-                    let slab = SLAB;
-                    let offset = shapes[ri * 2];
-                    let anchorKeyId = slab[offset];
-                    let targetType = slab[offset + 1];
-                    // Search the scope stack outermost (0) to innermost (DYN_PTR - 1).
-                    // The first match wins per Draft 2020-12 spec.
-                    scan: for (let i = 0; i < DYN_PTR; i++) {
-                        let scopeRi = DYN_ANCHORS[i];
-                        let scopeShapes = SHAPES;
-                        let scopeSlab = SLAB;
-                        let scopeOffset = scopeShapes[scopeRi * 2];
-                        let count = scopeShapes[scopeRi * 2 + 1];
-                        // Binary search the sorted [anchorKeyId, targetType] pairs.
-                        // Skip SLAB[scopeOffset] which is the innerType.
-                        let lo = 0;
-                        let hi = count - 1;
-                        while (lo <= hi) {
-                            let mid = (lo + hi) >>> 1;
-                            let currentKey = scopeSlab[scopeOffset + 1 + mid * 2];
-                            if (currentKey === anchorKeyId) {
-                                targetType = scopeSlab[scopeOffset + 1 + mid * 2 + 1];
-                                break scan;
-                            }
-                            if (currentKey < anchorKeyId) {
-                                lo = mid + 1;
-                            } else {
-                                hi = mid - 1;
+                    case K_INTERSECT: {
+                        let shapes = SHAPES;
+                        let slab = SLAB;
+                        let offset = shapes[ri * 2];
+                        let count = shapes[ri * 2 + 1];
+                        for (let i = 0; i < count; i++) {
+                            if (!_validate(data, slab[offset + i], trackPtr, snapPtr)) {
+                                return false;
                             }
                         }
+                        return true;
                     }
-                    return _validate(data, targetType, trackPtr, snapPtr);
-                }
-                case K_UNEVALUATED: {
-                    /**
-                     * K_UNEVALUATED wraps an inner type with evaluation tracking.
-                     * SLAB layout: [innerType, unevalSchemaType, mode]
-                     * mode=0: property tracking (objects)
-                     * mode=1: item tracking (arrays)
-                     *
-                     * Frame layout in TRACK_KEYS: [count, id0, id1, ...idN]
-                     * Frame layout in TRACK_BITS (Uint32, bit-compacted):
-                     *   TRACK_BITS[frameStart + 1 + (i >>> 5)] bit (1 << (i & 31)) = evaluated?
-                     *
-                     * TRACK_TAIL advances by 1 + count; bit words fit inside since
-                     * words = (count + 31) >>> 5 <= count for count >= 1.
-                     */
-                    let shapes = SHAPES;
-                    let slab = SLAB;
-                    let offset = shapes[ri * 2];
-                    let innerType = slab[offset];
-                    let unevalType = slab[offset + 1];
-                    let unevalMode = slab[offset + 2];
-
-                    if (unevalMode === 1) {
-                        // ── Items tracking (arrays) ──
+                    case K_UNION: {
+                        if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                            return false;
+                        }
+                        let shapes = SHAPES;
+                        let slab = SLAB;
+                        let offset = shapes[ri * 2];
+                        let length = shapes[ri * 2 + 1];
+                        // slab[offset] is the discriminator key id; variants follow at offset+1
+                        let discKey = KEY_INDEX[slab[offset]];
+                        let valueId = KEY_DICT.get(data[discKey]);
+                        if (valueId === void 0) {
+                            return false;
+                        }
+                        for (let i = 0; i < length; i++) {
+                            if (slab[offset + 1 + i * 2] === valueId) {
+                                return _validate(data, slab[offset + 2 + i * 2], 0, 0);
+                            }
+                        }
+                        return false;
+                    }
+                    case K_TUPLE: {
                         if (!Array.isArray(data)) {
+                            return false;
+                        }
+                        let shapes = SHAPES;
+                        let slab = SLAB;
+                        let offset = shapes[ri * 2];
+                        let count = shapes[ri * 2 + 1];
+                        let hasRest = (header & K_HAS_REST) !== 0;
+                        let fixedCount = hasRest ? count - 1 : count;
+
+                        let isStrict = (header & K_STRICT) !== 0;
+                        let length = data.length;
+                        if (isStrict) {
+                            if (
+                                length < fixedCount ||
+                                (!hasRest && length > fixedCount)
+                            ) {
+                                return false;
+                            }
+                        }
+                        let checkCount = length < fixedCount ? length : fixedCount;
+                        for (let i = 0; i < checkCount; i++) {
+                            if (!_validateSlot(data[i], slab[offset + i])) {
+                                return false;
+                            }
+                        }
+                        /** Mark prefix items as evaluated */
+                        if (trackPtr) {
+                            markItemsEvaluated(trackPtr, snapPtr, 0, checkCount);
+                        }
+                        if (hasRest) {
+                            let restType = slab[offset + count - 1];
+                            for (let i = checkCount; i < length; i++) {
+                                if (!_validateSlot(data[i], restType)) {
+                                    return false;
+                                }
+                            }
+                            /** Mark rest items as evaluated */
+                            if (trackPtr && length > checkCount) {
+                                markItemsEvaluated(trackPtr, snapPtr, checkCount, length);
+                            }
+                        }
+                        if (header & K_VALIDATOR) {
+                            return runArrayValidator(data, kinds[ptr + 2], trackPtr, snapPtr);
+                        }
+                        return true;
+                    }
+                    case K_REFINE: {
+                        let shapes = SHAPES;
+                        let slab = SLAB;
+                        let offset = shapes[ri * 2];
+                        let innerType = slab[offset];
+                        let callbackIdx = slab[offset + 1];
+                        if (!_validate(data, innerType, trackPtr, snapPtr)) {
+                            return false;
+                        }
+                        let callbacks = CALLBACKS;
+                        return !!callbacks[callbackIdx](data);
+                    }
+                    case K_NOT: {
+                        /** not never produces annotations per JSON Schema spec */
+                        return !_validate(data, ri, 0, 0);
+                    }
+                    case K_CONDITIONAL: {
+                        let shapes = SHAPES;
+                        let slab = SLAB;
+                        let offset = shapes[ri * 2];
+                        let ifType = slab[offset];
+                        let thenType = slab[offset + 1];
+                        let elseType = slab[offset + 2];
+                        /**
+                         * The `if` branch runs in isolation: a failed `if` must not leave
+                         * partial markings. Reserve a fresh snapPtr for it; commit only if it passes.
+                         */
+                        let ifPassed;
+                        if (trackPtr) {
+                            let words = (TRACK_KEYS[trackPtr] + 31) >>> 5;
+                            let ifSnap = SNAP_TAIL;
+                            SNAP_TAIL += words;
+                            TRACK_SNAP.fill(0, ifSnap, ifSnap + words);
+                            ifPassed = _validate(data, ifType, trackPtr, ifSnap);
+                            if (ifPassed) {
+                                for (let w = 0; w < words; w++) {
+                                    if (snapPtr === 0) {
+                                        TRACK_BITS[trackPtr + 1 + w] |= TRACK_SNAP[ifSnap + w];
+                                    } else {
+                                        TRACK_SNAP[snapPtr + w] |= TRACK_SNAP[ifSnap + w];
+                                    }
+                                }
+                            }
+                            SNAP_TAIL = ifSnap;  // reclaim if-snap slot
+                        } else {
+                            ifPassed = _validate(data, ifType, 0, 0);
+                        }
+                        if (ifPassed) {
+                            return _validate(data, thenType, trackPtr, snapPtr);
+                        } else {
+                            return _validate(data, elseType, trackPtr, snapPtr);
+                        }
+                    }
+                    case K_DYN_ANCHOR: {
+                        let shapes = SHAPES;
+                        let slab = SLAB;
+                        let offset = shapes[ri * 2];
+                        DYN_ANCHORS[DYN_PTR++] = ri;
+                        let valid = _validate(data, slab[offset], trackPtr, snapPtr);
+                        DYN_PTR--;
+                        return valid;
+                    }
+                    case K_DYN_REF: {
+                        let shapes = SHAPES;
+                        let slab = SLAB;
+                        let offset = shapes[ri * 2];
+                        let anchorKeyId = slab[offset];
+                        let targetType = slab[offset + 1];
+                        // Search the scope stack outermost (0) to innermost (DYN_PTR - 1).
+                        // The first match wins per Draft 2020-12 spec.
+                        scan: for (let i = 0; i < DYN_PTR; i++) {
+                            let scopeRi = DYN_ANCHORS[i];
+                            let scopeShapes = SHAPES;
+                            let scopeSlab = SLAB;
+                            let scopeOffset = scopeShapes[scopeRi * 2];
+                            let count = scopeShapes[scopeRi * 2 + 1];
+                            // Binary search the sorted [anchorKeyId, targetType] pairs.
+                            // Skip SLAB[scopeOffset] which is the innerType.
+                            let lo = 0;
+                            let hi = count - 1;
+                            while (lo <= hi) {
+                                let mid = (lo + hi) >>> 1;
+                                let currentKey = scopeSlab[scopeOffset + 1 + mid * 2];
+                                if (currentKey === anchorKeyId) {
+                                    targetType = scopeSlab[scopeOffset + 1 + mid * 2 + 1];
+                                    break scan;
+                                }
+                                if (currentKey < anchorKeyId) {
+                                    lo = mid + 1;
+                                } else {
+                                    hi = mid - 1;
+                                }
+                            }
+                        }
+                        return _validate(data, targetType, trackPtr, snapPtr);
+                    }
+                    case K_UNEVALUATED: {
+                        /**
+                         * K_UNEVALUATED wraps an inner type with evaluation tracking.
+                         * SLAB layout: [innerType, unevalSchemaType, mode]
+                         * mode=0: property tracking (objects)
+                         * mode=1: item tracking (arrays)
+                         *
+                         * Frame layout in TRACK_KEYS: [count, id0, id1, ...idN]
+                         * Frame layout in TRACK_BITS (Uint32, bit-compacted):
+                         *   TRACK_BITS[frameStart + 1 + (i >>> 5)] bit (1 << (i & 31)) = evaluated?
+                         *
+                         * TRACK_TAIL advances by 1 + count; bit words fit inside since
+                         * words = (count + 31) >>> 5 <= count for count >= 1.
+                         */
+                        let shapes = SHAPES;
+                        let slab = SLAB;
+                        let offset = shapes[ri * 2];
+                        let innerType = slab[offset];
+                        let unevalType = slab[offset + 1];
+                        let unevalMode = slab[offset + 2];
+
+                        if (unevalMode === 1) {
+                            // ── Items tracking (arrays) ──
+                            if (!Array.isArray(data)) {
+                                return _validate(data, innerType, trackPtr, snapPtr);
+                            }
+                            let itemCount = data.length;
+                            let frameStart = TRACK_TAIL;
+                            let words = (itemCount + 31) >>> 5;
+                            /** Grow arena if needed */
+                            if (frameStart + 1 + itemCount > TRACK_KEYS.length) {
+                                let newLen = Math.max(TRACK_KEYS.length * 2, frameStart + 1 + itemCount + 64);
+                                let newKeys = new Uint32Array(newLen);
+                                let newBits = new Uint32Array(newLen);
+                                let newSnap = new Uint32Array(newLen);
+                                newKeys.set(TRACK_KEYS);
+                                newBits.set(TRACK_BITS);
+                                newSnap.set(TRACK_SNAP);
+                                TRACK_KEYS = newKeys;
+                                TRACK_BITS = newBits;
+                                TRACK_SNAP = newSnap;
+                            }
+                            TRACK_KEYS[frameStart] = itemCount;
+                            for (let w = 0; w < words; w++) {
+                                TRACK_BITS[frameStart + 1 + w] = 0;
+                            }
+                            TRACK_TAIL = frameStart + 1 + itemCount;
+
+                            if (!_validate(data, innerType, frameStart, 0)) {
+                                TRACK_TAIL = frameStart;
+                                return false;
+                            }
+
+                            /** Check unevaluated items via bit test */
+                            for (let i = 0; i < itemCount; i++) {
+                                if ((TRACK_BITS[frameStart + 1 + (i >>> 5)] & (1 << (i & 31))) === 0) {
+                                    if (!_validate(data[i], unevalType, 0, 0)) {
+                                        TRACK_TAIL = frameStart;
+                                        return false;
+                                    }
+                                }
+                            }
+
+                            /** Mark all items as evaluated in parent frame (if parent is tracking) */
+                            if (trackPtr) {
+                                markItemsEvaluated(trackPtr, snapPtr, 0, itemCount);
+                            }
+
+                            TRACK_TAIL = frameStart;
+                            return true;
+                        }
+
+                        // ── Property tracking (objects) ──
+                        if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                             return _validate(data, innerType, trackPtr, snapPtr);
                         }
-                        let itemCount = data.length;
+
+                        /**
+                         * Allocate tracking frame: TRACK_KEYS[frameStart] = keyCount,
+                         * then [keyId0, keyId1, ...] for each own property.
+                         * Unknown keys (not in KEY_DICT) use the MSB hack to avoid
+                         * calling lookup() — which would permanently store attacker-controlled
+                         * strings in KEY_DICT and cause unbounded memory growth.
+                         */
                         let frameStart = TRACK_TAIL;
-                        let words = (itemCount + 31) >>> 5;
-                        /** Grow arena if needed */
-                        if (frameStart + 1 + itemCount > TRACK_KEYS.length) {
-                            let newLen = Math.max(TRACK_KEYS.length * 2, frameStart + 1 + itemCount + 64);
-                            let newKeys = new Uint32Array(newLen);
-                            let newBits = new Uint32Array(newLen);
-                            let newSnap = new Uint32Array(newLen);
-                            newKeys.set(TRACK_KEYS);
-                            newBits.set(TRACK_BITS);
-                            newSnap.set(TRACK_SNAP);
-                            TRACK_KEYS = newKeys;
-                            TRACK_BITS = newBits;
-                            TRACK_SNAP = newSnap;
+                        let keyCount = 0;
+                        for (let key in data) {
+                            if (!hasOwnProperty.call(data, key)) {
+                                continue;
+                            }
+                            let kid = KEY_DICT.get(key);
+                            if (kid === void 0) {
+                                /** MSB hack: store string in UNKNOWN_KEYS, encode index with MSB set */
+                                let uIdx = UNKNOWN_TAIL++;
+                                UNKNOWN_KEYS[uIdx] = key;
+                                kid = (uIdx | 0x80000000) >>> 0;
+                            }
+                            /** Grow arena if needed (check before writing) */
+                            if (frameStart + 1 + keyCount >= TRACK_KEYS.length) {
+                                let newLen = TRACK_KEYS.length * 2;
+                                let newKeys = new Uint32Array(newLen);
+                                let newBits = new Uint32Array(newLen);
+                                let newSnap = new Uint32Array(newLen);
+                                newKeys.set(TRACK_KEYS);
+                                newBits.set(TRACK_BITS);
+                                newSnap.set(TRACK_SNAP);
+                                TRACK_KEYS = newKeys;
+                                TRACK_BITS = newBits;
+                                TRACK_SNAP = newSnap;
+                            }
+                            TRACK_KEYS[frameStart + 1 + keyCount] = kid;
+                            keyCount++;
                         }
-                        TRACK_KEYS[frameStart] = itemCount;
+                        TRACK_KEYS[frameStart] = keyCount;
+                        let words = (keyCount + 31) >>> 5;
                         for (let w = 0; w < words; w++) {
                             TRACK_BITS[frameStart + 1 + w] = 0;
                         }
-                        TRACK_TAIL = frameStart + 1 + itemCount;
+                        TRACK_TAIL = frameStart + 1 + keyCount;
 
+                        /** Validate inner type with tracking enabled (snapPtr=0 → direct to TRACK_BITS) */
                         if (!_validate(data, innerType, frameStart, 0)) {
                             TRACK_TAIL = frameStart;
                             return false;
                         }
 
-                        /** Check unevaluated items via bit test */
-                        for (let i = 0; i < itemCount; i++) {
-                            if ((TRACK_BITS[frameStart + 1 + (i >>> 5)] & (1 << (i & 31))) === 0) {
-                                if (!_validate(data[i], unevalType, 0, 0)) {
+                        /** Check unevaluated properties via bit test */
+                        let ki = 0;
+                        for (let key in data) {
+                            if (!hasOwnProperty.call(data, key)) {
+                                continue;
+                            }
+                            if ((TRACK_BITS[frameStart + 1 + (ki >>> 5)] & (1 << (ki & 31))) === 0) {
+                                /** This property was not evaluated by any keyword */
+                                if (!_validate(data[key], unevalType, 0, 0)) {
                                     TRACK_TAIL = frameStart;
                                     return false;
                                 }
                             }
+                            ki++;
                         }
 
-                        /** Mark all items as evaluated in parent frame (if parent is tracking) */
+                        /** Mark all our keys as evaluated in parent frame (if parent is tracking) */
                         if (trackPtr) {
-                            markItemsEvaluated(trackPtr, snapPtr, 0, itemCount);
+                            ki = 0;
+                            for (let key in data) {
+                                if (!hasOwnProperty.call(data, key)) {
+                                    continue;
+                                }
+                                let kid = TRACK_KEYS[frameStart + 1 + ki];
+                                markEvaluated(trackPtr, snapPtr, kid);
+                                ki++;
+                            }
                         }
 
                         TRACK_TAIL = frameStart;
                         return true;
                     }
-
-                    // ── Property tracking (objects) ──
-                    if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-                        return _validate(data, innerType, trackPtr, snapPtr);
-                    }
-
-                    /**
-                     * Allocate tracking frame: TRACK_KEYS[frameStart] = keyCount,
-                     * then [keyId0, keyId1, ...] for each own property.
-                     * Unknown keys (not in KEY_DICT) use the MSB hack to avoid
-                     * calling lookup() — which would permanently store attacker-controlled
-                     * strings in KEY_DICT and cause unbounded memory growth.
-                     */
-                    let frameStart = TRACK_TAIL;
-                    let keyCount = 0;
-                    for (let key in data) {
-                        if (!hasOwnProperty.call(data, key)) {
-                            continue;
-                        }
-                        let kid = KEY_DICT.get(key);
-                        if (kid === void 0) {
-                            /** MSB hack: store string in UNKNOWN_KEYS, encode index with MSB set */
-                            let uIdx = UNKNOWN_TAIL++;
-                            UNKNOWN_KEYS[uIdx] = key;
-                            kid = (uIdx | 0x80000000) >>> 0;
-                        }
-                        /** Grow arena if needed (check before writing) */
-                        if (frameStart + 1 + keyCount >= TRACK_KEYS.length) {
-                            let newLen = TRACK_KEYS.length * 2;
-                            let newKeys = new Uint32Array(newLen);
-                            let newBits = new Uint32Array(newLen);
-                            let newSnap = new Uint32Array(newLen);
-                            newKeys.set(TRACK_KEYS);
-                            newBits.set(TRACK_BITS);
-                            newSnap.set(TRACK_SNAP);
-                            TRACK_KEYS = newKeys;
-                            TRACK_BITS = newBits;
-                            TRACK_SNAP = newSnap;
-                        }
-                        TRACK_KEYS[frameStart + 1 + keyCount] = kid;
-                        keyCount++;
-                    }
-                    TRACK_KEYS[frameStart] = keyCount;
-                    let words = (keyCount + 31) >>> 5;
-                    for (let w = 0; w < words; w++) {
-                        TRACK_BITS[frameStart + 1 + w] = 0;
-                    }
-                    TRACK_TAIL = frameStart + 1 + keyCount;
-
-                    /** Validate inner type with tracking enabled (snapPtr=0 → direct to TRACK_BITS) */
-                    if (!_validate(data, innerType, frameStart, 0)) {
-                        TRACK_TAIL = frameStart;
+                    default: {
                         return false;
                     }
-
-                    /** Check unevaluated properties via bit test */
-                    let ki = 0;
-                    for (let key in data) {
-                        if (!hasOwnProperty.call(data, key)) {
-                            continue;
-                        }
-                        if ((TRACK_BITS[frameStart + 1 + (ki >>> 5)] & (1 << (ki & 31))) === 0) {
-                            /** This property was not evaluated by any keyword */
-                            if (!_validate(data[key], unevalType, 0, 0)) {
-                                TRACK_TAIL = frameStart;
-                                return false;
-                            }
-                        }
-                        ki++;
-                    }
-
-                    /** Mark all our keys as evaluated in parent frame (if parent is tracking) */
-                    if (trackPtr) {
-                        ki = 0;
-                        for (let key in data) {
-                            if (!hasOwnProperty.call(data, key)) {
-                                continue;
-                            }
-                            let kid = TRACK_KEYS[frameStart + 1 + ki];
-                            markEvaluated(trackPtr, snapPtr, kid);
-                            ki++;
-                        }
-                    }
-
-                    TRACK_TAIL = frameStart;
-                    return true;
                 }
-                default: {
-                    return false;
-                }
-            } }
+            }
         }
         /** Inline path: typedef > 0xFF with COMPLEX=0 (MOD_*, inline validators) */
         if (typedef > 0xFF) {
