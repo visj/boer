@@ -1,3 +1,5 @@
+/** NEVER is implicitly 0 — a typedef of 0 has no type bits and matches nothing. */
+const NEVER = 0;
 // --- BIT LAYOUT ---
 // Bit 0:   COMPLEX   (0 = primitive typedef, 1 = complex typedef)
 // Bit 1:   NULLABLE  (typedef accepts null)
@@ -25,17 +27,13 @@ const OPTIONAL = 4;
  * REST marks a tuple rest element in the SLAB; stored at bit 31 (above typedef range).
  * ARRAY and OBJECT are complex-only types (K_ARRAY, K_OBJECT).
  *
- * Bits 8-52: reserved for future inline validator payloads.
+ * Bits 8+: inline modifier encoding (MOD_ENUM for const/enum fast-path).
  */
 const ANY = 1 << 3;
 const STRING = 1 << 4;
 const NUMBER = 1 << 5;
 const INTEGER = 1 << 6;
 const BOOLEAN = 1 << 7;
-/** NEVER is implicitly 0 — a typedef of 0 has no type bits and matches nothing. */
-const NEVER = 0;
-/** REST marks a tuple rest element on the SLAB (internal, not a typedef bit). */
-const REST = (1 << 31) >>> 0;
 
 /**
  * SIMPLE: all primitive type bits (used for K_PRIMITIVE headers to mask type info)
@@ -47,15 +45,33 @@ const VALUE = (STRING | NUMBER | INTEGER | BOOLEAN);
 const PRIM_MASK = 0xFF;
 
 /**
+ * Inline modifier bits (bits 8-10, only valid when COMPLEX=0 and typedef > 0xFF).
+ * MODIFIER (bit 8) toggles whether bits 9+ encode a modifier type.
+ * When MODIFIER=1, the primitive bits (3-7) describe the *inner* type of the match,
+ * and bits 9-10 select which modifier:
+ *   MOD_ENUM (2): exact-match against CONSTANTS or ENUMS arena
+ *
+ * Bit 11: isSet flag (0 = CONSTANTS index, 1 = ENUMS index)
+ * Bits 12-29: arena index (18 bits, max 262143 — stays within V8 Smi range)
+ *
+ * MOD_MASK extracts the 2-bit modifier type from bits 9-10.
+ */
+const MODIFIER = 1 << 8;
+const MOD_ENUM = 2 << 9;
+const MOD_MASK = 3 << 9;
+
+/**
  * K_VALIDATOR: set on the KINDS header when a VALIDATORS entry is attached.
  * K_ANY_INNER: set on a KINDS header when the inner type is ANY (no registry entry).
  * Used for bare `type: "array"`, `type: "object"`, `record(ANY)`, etc.
  */
-const K_VALIDATOR = (1 << 31) >>> 0;
-const K_ANY_INNER = 1 << 30;
+const K_VALIDATOR = 1 << 30;
+const K_ANY_INNER = 1 << 29;
 
-const K_STRICT = 1 << 27;
-const K_HAS_ITEMS = 1 << 26;
+const K_STRICT = 1 << 28;
+const K_HAS_ITEMS = 1 << 27;
+/** K_HAS_REST marks that a K_TUPLE has a rest element stored as the last SLAB element. */
+const K_HAS_REST = 1 << 26;
 
 // ── Complex KINDS enum (bits 0-3, values 0-14) ──
 // The KINDS vtable header stores the enum in the lower 4 bits.
@@ -123,10 +139,10 @@ const V_UNEVALUATED_PROPERTIES = 1 << 21;
 const V_ENUM = 1 << 22;
 
 // Boolean modifier flags (no payload)
-const V_EXCLUSIVE_MINIMUM = 1 << 28;
-const V_EXCLUSIVE_MAXIMUM = 1 << 29;
-const V_UNIQUE_ITEMS = 1 << 30;
-const V_ADDITIONAL_PROPERTIES = (1 << 31) >>> 0;
+const V_EXCLUSIVE_MINIMUM = 1 << 27;
+const V_EXCLUSIVE_MAXIMUM = 1 << 28;
+const V_UNIQUE_ITEMS = 1 << 29;
+const V_ADDITIONAL_PROPERTIES = 1 << 30;
 
 /**
  * SWAR popcount for lower 16 bits. Returns the number of set bits in x & 0xFFFF.
@@ -182,14 +198,15 @@ const hasOwnProperty = Object.prototype.hasOwnProperty;
 
 export {
     COMPLEX, NULLABLE, OPTIONAL,
-    ANY, NEVER, REST, BOOLEAN,
+    ANY, NEVER, BOOLEAN,
     NUMBER, STRING, INTEGER,
     SIMPLE, VALUE, PRIM_MASK,
+    MODIFIER, MOD_ENUM, MOD_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
     K_CONDITIONAL, K_DYN_ANCHOR, K_DYN_REF, K_UNEVALUATED, K_ANY_INNER,
-    KIND_ENUM_MASK, K_VALIDATOR, K_STRICT, K_HAS_ITEMS,
+    KIND_ENUM_MASK, K_VALIDATOR, K_STRICT, K_HAS_ITEMS, K_HAS_REST,
     V_MIN_LENGTH, V_MAX_LENGTH, V_PATTERN, V_FORMAT,
     V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
     V_MIN_ITEMS, V_MAX_ITEMS, V_CONTAINS, V_MIN_CONTAINS, V_MAX_CONTAINS,

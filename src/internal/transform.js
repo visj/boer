@@ -1,12 +1,12 @@
 /// <reference path="../../global.d.ts" />
 import {
     COMPLEX, NULLABLE, OPTIONAL,
-    ANY, REST, SIMPLE, PRIM_MASK,
+    ANY, SIMPLE, PRIM_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
     K_CONDITIONAL, K_ANY_INNER,
-    KIND_ENUM_MASK, FAIL,
+    KIND_ENUM_MASK, FAIL, K_HAS_REST,
 } from './const.js';
 import { parseValue } from './util.js';
 
@@ -234,7 +234,7 @@ function createConform(cat) {
                     let slab = hp.SLAB;
                     let offset = shapes[ri * 2];
                     let count = shapes[ri * 2 + 1];
-                    let hasRest = count > 0 && (slab[offset + count - 1] & REST) !== 0;
+                    let hasRest = (header & K_HAS_REST) !== 0;
                     let fixedCount = hasRest ? count - 1 : count;
                     if (data.length < fixedCount) {
                         return false;
@@ -248,7 +248,7 @@ function createConform(cat) {
                         }
                     }
                     if (hasRest) {
-                        let restType = (slab[offset + count - 1] & ~REST) >>> 0;
+                        let restType = slab[offset + count - 1];
                         for (let i = fixedCount; i < data.length; i++) {
                             if (!_parseSlot(data, i, restType, reify)) {
                                 return false;

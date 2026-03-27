@@ -119,8 +119,6 @@ const ajvValidate = ajv.compile(TypeBoxOrder);
 const setupCatalog = catalog();
 const { object: s_object, union: s_union, array: s_array } = allocators(setupCatalog);
 
-
-
 group('Building schema (Setup time)', () => {
     bench('Zod', function () {
         const ZodItem = z.discriminatedUnion("type", [

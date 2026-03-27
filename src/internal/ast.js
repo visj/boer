@@ -9,7 +9,7 @@ import {
     BARE_ARRAY, BARE_OBJECT, BARE_RECORD
 } from "./catalog.js";
 
-import { popcnt16, REST, ANY, STRING, NUMBER, INTEGER, VALUE, K_ANY_INNER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS, V_ENUM, V_CONTAINS, V_PROPERTY_NAMES, K_HAS_ITEMS } from "./const.js";
+import { popcnt16, ANY, STRING, NUMBER, INTEGER, VALUE, K_ANY_INNER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS, V_ENUM, V_CONTAINS, V_PROPERTY_NAMES, K_HAS_ITEMS, K_HAS_REST } from "./const.js";
 
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
@@ -745,7 +745,7 @@ export function compile(cat, ast) {
             case N_TUPLE: {
                 let offset = astChild0[nodeId];
                 let count = astChild1[nodeId];
-                /** Append restType | REST as extra slab element when present */
+                /** Rest type is appended as the last SLAB element; K_HAS_REST flags it on header */
                 let hasRestElem = (astFlags[nodeId] & AST_FLAG_HAS_REST) !== 0;
                 let hasContainsElem = (astFlags[nodeId] & AST_FLAG_HAS_CONTAINS) !== 0;
                 let totalCount = hasRestElem ? count + 1 : count;
@@ -755,7 +755,7 @@ export function compile(cat, ast) {
                 }
                 let extraOffset = offset + count;
                 if (hasRestElem) {
-                    types[count] = (astCompiled[astEdges[extraOffset++]] | REST) >>> 0;
+                    types[count] = astCompiled[astEdges[extraOffset++]];
                 }
                 let vp = compileValidator(nodeId);
                 // NEW: Inject V_CONTAINS payload if present
@@ -780,6 +780,9 @@ export function compile(cat, ast) {
                     }
                 }
                 let kindHeader = (vp !== null) ? (K_TUPLE | K_VALIDATOR) : K_TUPLE;
+                if (hasRestElem) {
+                    kindHeader |= K_HAS_REST;
+                }
                 astCompiled[nodeId] = malloc(kindHeader, 0,
                     types, totalCount, vp !== null ? vp.vHeader : 0, vp !== null ? vp.nodePayloads : null);
                 break;

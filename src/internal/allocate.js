@@ -16,6 +16,7 @@ import {
     V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED,
     V_ENUM,
     K_HAS_ITEMS,
+    MODIFIER, MOD_ENUM,
 } from './const.js';
 import {
     assertIsNumber, assertIsObject,
@@ -141,14 +142,30 @@ function tupleArrayImpl(ctx, types) {
  */
 function literalImpl(ctx, value) {
     if (value === null) { return NULLABLE; }
-    if (value === true) { return refineImpl(ctx, BOOLEAN, v => v === true); }
-    if (value === false) { return refineImpl(ctx, BOOLEAN, v => v === false); }
+    if (value === true || value === false) {
+        let idx = ctx.allocConstant(value);
+        if (idx <= 0x3FFFF) {
+            return BOOLEAN | MODIFIER | MOD_ENUM | (idx << 12);
+        }
+        return refineImpl(ctx, BOOLEAN, value === true ? v => v === true : v => v === false);
+    }
     if (typeof value === 'string') {
+        let idx = ctx.allocConstant(value);
+        if (idx <= 0x3FFFF) {
+            return STRING | MODIFIER | MOD_ENUM | (idx << 12);
+        }
+        /** Fallback: V_ENUM on SLAB */
         let keyId = ctx.lookup(value);
         let valIdx = ctx.allocValidator(V_ENUM, [1, keyId]);
         return ctx.malloc(K_PRIMITIVE | K_VALIDATOR | STRING, valIdx, null, 0, 0, null);
     }
     if (typeof value === 'number') {
+        let primBits = Number.isInteger(value) ? INTEGER : NUMBER;
+        let idx = ctx.allocConstant(value);
+        if (idx <= 0x3FFFF) {
+            return primBits | MODIFIER | MOD_ENUM | (idx << 12);
+        }
+        /** Fallback: V_ENUM on SLAB */
         let valIdx = ctx.allocValidator(V_ENUM, [1, value]);
         return ctx.malloc(K_PRIMITIVE | K_VALIDATOR | NUMBER, valIdx, null, 0, 0, null);
     }
@@ -231,12 +248,33 @@ function enumImpl(ctx, values) {
         for (let i = 0; i < nums.length; i++) { payload.push(nums[i]); }
     }
     if (payload.length > 0) {
-        // Build K_PRIMITIVE with V_ENUM validator; re-attach NULLABLE / OPTIONAL on the pointer.
-        let primBits = payloadBits & ~(NULLABLE | OPTIONAL);
-        let valIdx = ctx.allocValidator(V_ENUM, payload);
-        primType = ctx.malloc(K_PRIMITIVE | K_VALIDATOR | primBits, valIdx, null, 0, 0, null);
-        if (payloadBits & NULLABLE) { primType = (primType | NULLABLE) >>> 0; }
-        if (payloadBits & OPTIONAL) { primType = (primType | OPTIONAL) >>> 0; }
+        /**
+         * Try inline MOD_ENUM path: single-type enum (only strings OR only numbers,
+         * not both), no booleans mixed in. Use a Set for O(1) membership check.
+         */
+        let canInline = complexTypes.length === 0 &&
+            ((strings.length > 0) !== (numbers.length > 0));
+        if (canInline) {
+            let set = strings.length > 0
+                ? new Set(strings)
+                : new Set(numbers);
+            let idx = ctx.allocEnumSet(set);
+            if (idx <= 0x3FFFF) {
+                let innerBits = strings.length > 0 ? STRING : NUMBER;
+                primType = innerBits | MODIFIER | MOD_ENUM | (1 << 11) | (idx << 12);
+                if (payloadBits & NULLABLE) { primType = primType | NULLABLE; }
+                if (payloadBits & OPTIONAL) { primType = primType | OPTIONAL; }
+                if (complexTypes.length === 0) { return primType; }
+            }
+        }
+        if (primType === 0) {
+            // Fallback: Build K_PRIMITIVE with V_ENUM validator; re-attach NULLABLE / OPTIONAL.
+            let primBits = payloadBits & ~(NULLABLE | OPTIONAL);
+            let valIdx = ctx.allocValidator(V_ENUM, payload);
+            primType = ctx.malloc(K_PRIMITIVE | K_VALIDATOR | primBits, valIdx, null, 0, 0, null);
+            if (payloadBits & NULLABLE) { primType = (primType | NULLABLE) >>> 0; }
+            if (payloadBits & OPTIONAL) { primType = (primType | OPTIONAL) >>> 0; }
+        }
     } else if (payloadBits !== 0) {
         // Boolean/null only — no validator payload needed, raw bit flags suffice.
         primType = payloadBits >>> 0;

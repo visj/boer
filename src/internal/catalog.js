@@ -2,7 +2,7 @@
 import { config, heap } from './config.js';
 import {
     COMPLEX, NULLABLE, OPTIONAL,
-    ANY, REST, SIMPLE, PRIM_MASK,
+    ANY, SIMPLE, VALUE, PRIM_MASK,
     STRING,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
@@ -19,7 +19,9 @@ import {
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
     codepointLen, hasOwnProperty,
-    K_HAS_ITEMS
+    K_HAS_ITEMS, K_HAS_REST,
+    MODIFIER, MOD_ENUM, MOD_MASK,
+    NUMBER, INTEGER, BOOLEAN
 } from './const.js';
 import {
     sortByKeyId, _isValue, deepEqual,
@@ -49,6 +51,11 @@ function catalog(cfg) {
     let VALIDATORS = HEAP.VALIDATORS;
     let REGEX_CACHE = HEAP.REGEX_CACHE;
     let CALLBACKS = HEAP.CALLBACKS;
+
+    /** @type {!Array<*>} Inline constant arena for const values (MOD_ENUM, isSet=0) */
+    let CONSTANTS = [];
+    /** @type {!Array<!Set<*>>} Inline enum arena for enum Sets (MOD_ENUM, isSet=1) */
+    let ENUMS = [];
 
     // --- KEY DICTIONARY ---
     /** @type {number} */
@@ -267,6 +274,30 @@ function catalog(cfg) {
         }
         HEAP.VAL_PTR += needed;
         return ptr;
+    }
+
+    /**
+     * Stores a constant value in the CONSTANTS arena. Returns its index.
+     * Used for MOD_ENUM with isSet=0 (single-value const match).
+     * @param {*} value
+     * @returns {number}
+     */
+    function allocConstant(value) {
+        let idx = CONSTANTS.length;
+        CONSTANTS.push(value);
+        return idx;
+    }
+
+    /**
+     * Stores a Set in the ENUMS arena. Returns its index.
+     * Used for MOD_ENUM with isSet=1 (multi-value enum Set.has() match).
+     * @param {!Set<*>} set
+     * @returns {number}
+     */
+    function allocEnumSet(set) {
+        let idx = ENUMS.length;
+        ENUMS.push(set);
+        return idx;
     }
 
     // --- VALIDATOR RUNNERS ---
@@ -661,23 +692,36 @@ function catalog(cfg) {
         return (type & COMPLEX) === 0 && (type & ANY) !== 0;
     }
 
+    /**
+     * Validates data against an inline MOD_ENUM typedef.
+     * Encoding: primBits(3-7) | MODIFIER(8) | MOD_ENUM(9-10) | isSet(11) | index(12-29)
+     * @param {*} data
+     * @param {number} typedef
+     * @returns {boolean}
+     */
+    function _validateModEnum(data, typedef) {
+        let primBits = typedef & PRIM_MASK;
+        // Check base type matches (skip for ANY)
+        if (primBits & VALUE) {
+            if (!_isValue(data, primBits)) return false;
+        }
+        let isSet = (typedef >>> 11) & 1;
+        let idx = (typedef >>> 12) & 0x3FFFF; // 18 bits
+        if (isSet) {
+            return ENUMS[idx].has(data);
+        }
+        return CONSTANTS[idx] === data;
+    }
+
     function _validateSlot(raw, type) {
-        return (
-            /**
-             * undefined = absent field: only OPTIONAL bit permits this.
-             * ANY (bit 3) does NOT make absent fields valid — that would break
-             * JSON Schema `required` keyword semantics.
-             */
-            raw === void 0 ? (type & OPTIONAL) !== 0 :
-                /**
-                 * null: NULLABLE permits it; for primitive ANY without NULLABLE,
-                 * _primitiveAcceptsNull handles the fallback.
-                 */
-                raw === null ? (type & NULLABLE) !== 0 || _primitiveAcceptsNull(type) :
-                    (type & COMPLEX) ? _validate(raw, type, 0, 0) :
-                        (type & SIMPLE) ? _isValue(raw, type & PRIM_MASK) :
-                            false
-        );
+        if (raw === void 0) return (type & OPTIONAL) !== 0;
+        if (raw === null) return (type & NULLABLE) !== 0 || _primitiveAcceptsNull(type);
+        if (type & COMPLEX) return _validate(raw, type, 0, 0);
+        if (type < 256) {
+            return (type & SIMPLE) ? _isValue(raw, type & PRIM_MASK) : false;
+        }
+        /** MOD_ENUM inline path: typedef > 0xFF with MODIFIER bit */
+        return _validateModEnum(raw, type);
     }
 
     /**
@@ -960,7 +1004,7 @@ function catalog(cfg) {
                     let slab = SLAB;
                     let offset = shapes[ri * 2];
                     let count = shapes[ri * 2 + 1];
-                    let hasRest = count > 0 && (slab[offset + count - 1] & REST) !== 0;
+                    let hasRest = (header & K_HAS_REST) !== 0;
                     let fixedCount = hasRest ? count - 1 : count;
 
                     let isStrict = (header & K_STRICT) !== 0;
@@ -984,7 +1028,7 @@ function catalog(cfg) {
                         markItemsEvaluated(trackPtr, snapPtr, 0, checkCount);
                     }
                     if (hasRest) {
-                        let restType = (slab[offset + count - 1] & ~REST) >>> 0;
+                        let restType = slab[offset + count - 1];
                         for (let i = checkCount; i < length; i++) {
                             if (!_validateSlot(data[i], restType)) {
                                 return false;
@@ -1259,6 +1303,10 @@ function catalog(cfg) {
                 }
             }
         }
+        /** Inline MOD_ENUM path: typedef > 0xFF with COMPLEX=0 */
+        if (typedef > 0xFF) {
+            return _validateModEnum(data, typedef);
+        }
         let valueMask = typedef & PRIM_MASK;
         if (valueMask === 0) {
             return false;
@@ -1290,6 +1338,8 @@ function catalog(cfg) {
         HEAP, DICT: { KEY_DICT, KEY_INDEX },
         REGEX_CACHE, CALLBACKS,
         malloc, allocValidator, lookup,
+        allocConstant, allocEnumSet,
+        CONSTANTS, ENUMS,
         _validate,
         BARE_ARRAY, BARE_OBJECT, BARE_RECORD,
     };
