@@ -16,7 +16,7 @@ import {
     V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED,
     V_ENUM,
     K_HAS_ITEMS,
-    MODIFIER, MOD_ENUM,
+    MODIFIER, MOD_ARRAY, MOD_RECORD, MOD_ENUM,
 } from './const.js';
 import {
     assertIsNumber, assertIsObject,
@@ -76,6 +76,166 @@ function migrateRegex(result, cache) {
 // --- Impl functions ---
 
 /**
+ * Attempts to inline a STRING typedef with validator constraints into a 30-bit
+ * integer. Returns 0 if inlining is not possible (fallback to SLAB).
+ *
+ * Inline layout (MODIFIER=0, STRING bit set):
+ *   Bits 9-16  (8 bits): regexIdx (0 = no pattern, 1-255)
+ *   Bits 17-24 (8 bits): maxLength (0 = no max, 1-255)
+ *   Bits 25-29 (5 bits): minLength (0 = no min, 1-31)
+ *
+ * @param {*} ctx
+ * @param {!Object} opts
+ * @returns {number} inline typedef or 0
+ */
+function tryInlineString(ctx, opts) {
+    /** format cannot be inlined */
+    if (opts.format !== void 0) {
+        return 0;
+    }
+    let minLen = opts.minLength;
+    let maxLen = opts.maxLength;
+    let pattern = opts.pattern;
+
+    let minVal = minLen !== void 0 ? +minLen : 0;
+    let maxVal = maxLen !== void 0 ? +maxLen : 0;
+
+    /** 0 value means "no constraint" in inline encoding, so actual 0 can't be inlined */
+    if (minLen !== void 0 && minVal === 0) {
+        return 0;
+    }
+    if (maxLen !== void 0 && maxVal === 0) {
+        return 0;
+    }
+    /** Range checks: 5 bits for min (1-31), 8 bits for max (1-255) */
+    if (minVal > 31 || maxVal > 255) {
+        return 0;
+    }
+
+    let regexIdx = 0;
+    if (pattern !== void 0) {
+        let cacheLen = ctx.REGEX_CACHE.length;
+        if (cacheLen > 255) {
+            return 0;
+        }
+        let re = typeof pattern === 'string' ? new RegExp(pattern, 'u') : pattern;
+        regexIdx = ctx.REGEX_CACHE.push(re) - 1;
+    }
+
+    /** No payload bits set → not worth inlining (bare STRING is already bits 0-7) */
+    if (regexIdx === 0 && minVal === 0 && maxVal === 0) {
+        return 0;
+    }
+
+    return STRING | (regexIdx << 9) | (maxVal << 17) | (minVal << 25);
+}
+
+/**
+ * Attempts to inline a NUMBER or INTEGER typedef with validator constraints
+ * into a 30-bit integer. Returns 0 if inlining is not possible.
+ *
+ * Only integer bounds can be inlined. Float bounds or multipleOf require SLAB.
+ *
+ * Inline layout (MODIFIER=0, NUMBER or INTEGER bit set):
+ *   Bit 9:           EXCLUSIVE_MIN
+ *   Bit 10:          EXCLUSIVE_MAX
+ *   Bit 11:          MIN_NEGATIVE
+ *   Bit 12:          MAX_NEGATIVE
+ *   Bits 13-21 (9b): minMagnitude (0 = no min, 1-511)
+ *   Bits 22-29 (8b): maxMagnitude (0 = no max, 1-255)
+ *
+ * @param {*} ctx
+ * @param {number} primConst - NUMBER or INTEGER
+ * @param {!Object} opts
+ * @returns {number} inline typedef or 0
+ */
+function tryInlineNumber(ctx, primConst, opts) {
+    /** multipleOf cannot be inlined */
+    if (opts.multipleOf !== void 0) {
+        return 0;
+    }
+
+    /**
+     * Resolve effective min/max bounds. JSON Schema allows both `minimum` and
+     * `exclusiveMinimum` to coexist; the stricter one wins.
+     */
+    let effMin = void 0;
+    let exclMin = 0;
+    let rawMin = opts.minimum;
+    let rawExMin = opts.exclusiveMinimum;
+    if (rawMin !== void 0 && rawExMin !== void 0) {
+        if (+rawExMin >= +rawMin) {
+            effMin = +rawExMin;
+            exclMin = 1;
+        } else {
+            effMin = +rawMin;
+        }
+    } else if (rawMin !== void 0) {
+        effMin = +rawMin;
+    } else if (rawExMin !== void 0) {
+        effMin = +rawExMin;
+        exclMin = 1;
+    }
+
+    let effMax = void 0;
+    let exclMax = 0;
+    let rawMax = opts.maximum;
+    let rawExMax = opts.exclusiveMaximum;
+    if (rawMax !== void 0 && rawExMax !== void 0) {
+        if (+rawExMax <= +rawMax) {
+            effMax = +rawExMax;
+            exclMax = 1;
+        } else {
+            effMax = +rawMax;
+        }
+    } else if (rawMax !== void 0) {
+        effMax = +rawMax;
+    } else if (rawExMax !== void 0) {
+        effMax = +rawExMax;
+        exclMax = 1;
+    }
+
+    /** No bounds → not worth inlining */
+    if (effMin === void 0 && effMax === void 0) {
+        return 0;
+    }
+
+    let minNeg = 0;
+    let minMag = 0;
+    if (effMin !== void 0) {
+        /** Must be integer with magnitude 1-511 (0 magnitude = "no bound" sentinel) */
+        if (!Number.isInteger(effMin)) {
+            return 0;
+        }
+        let absMin = Math.abs(effMin);
+        if (absMin === 0 || absMin > 511) {
+            return 0;
+        }
+        minNeg = effMin < 0 ? 1 : 0;
+        minMag = absMin;
+    }
+
+    let maxNeg = 0;
+    let maxMag = 0;
+    if (effMax !== void 0) {
+        if (!Number.isInteger(effMax)) {
+            return 0;
+        }
+        let absMax = Math.abs(effMax);
+        if (absMax === 0 || absMax > 255) {
+            return 0;
+        }
+        maxNeg = effMax < 0 ? 1 : 0;
+        maxMag = absMax;
+    }
+
+    return primConst
+        | (exclMin << 9) | (exclMax << 10)
+        | (minNeg << 11) | (maxNeg << 12)
+        | (minMag << 13) | (maxMag << 22);
+}
+
+/**
  * @param {*} ctx
  * @param {number} primConst
  * @param {!Object=} opts
@@ -84,6 +244,18 @@ function migrateRegex(result, cache) {
 function valueImpl(ctx, primConst, opts) {
     if (opts === void 0) {
         return primConst;
+    }
+    /** Try inline encoding before falling back to K_PRIMITIVE + VALIDATORS */
+    if (primConst & STRING) {
+        let inlined = tryInlineString(ctx, opts);
+        if (inlined !== 0) {
+            return inlined;
+        }
+    } else if (primConst & (NUMBER | INTEGER)) {
+        let inlined = tryInlineNumber(ctx, primConst, opts);
+        if (inlined !== 0) {
+            return inlined;
+        }
     }
     let mask = (primConst & STRING) ? STR_MASK : NUM_MASK;
     let result = packValidators(opts, mask, null);
@@ -293,6 +465,17 @@ function enumImpl(ctx, values) {
  */
 function recordImpl(ctx, valueType) {
     assertIsNumber(valueType, 0);
+    /**
+     * Try inline MOD_RECORD: value type must be a bare primitive (bits 0-7 only).
+     * MOD_RECORD layout: innerPrimBits | MODIFIER | MOD_RECORD
+     * Without min/maxProperties, all payload bits are 0.
+     */
+    if (!(valueType & (COMPLEX | NULLABLE | OPTIONAL)) && valueType <= 0xFF) {
+        let typeBits = valueType & 0xF8;
+        if (typeBits !== 0 && (typeBits & (typeBits - 1)) === 0) {
+            return typeBits | MODIFIER | MOD_RECORD;
+        }
+    }
     return ctx.malloc(K_RECORD, valueType >>> 0, null, 0, 0, null);
 }
 
@@ -302,9 +485,10 @@ function recordImpl(ctx, valueType) {
  * @returns {number}
  */
 function orImpl(ctx, types) {
-    // Fast path: if all inputs are raw primitives (no COMPLEX bit),
-    // just OR the bits together — no allocation needed.
-    let allPrimitive = true;
+    // Fast path: if all inputs are bare primitives (bits 0-7 only, no COMPLEX,
+    // no inline modifiers), just OR the bits together — no allocation needed.
+    // Inline types (> 0xFF) cannot be merged because their payload bits would collide.
+    let allBarePrimitive = true;
     let merged = 0;
     let j = 0;
     let nullableOptional = 0;
@@ -317,13 +501,13 @@ function orImpl(ctx, types) {
         if (type & OPTIONAL) {
             nullableOptional |= OPTIONAL;
         }
-        if (type & COMPLEX) {
-            allPrimitive = false;
+        if ((type & COMPLEX) || type > 0xFF) {
+            allBarePrimitive = false;
             break;
         }
         merged |= type;
     }
-    if (allPrimitive) {
+    if (allBarePrimitive) {
         return merged >>> 0;
     }
     let result = ctx.malloc(K_OR, 0, types, types.length, 0, null);
@@ -433,6 +617,72 @@ function objectImpl(ctx, definition, opts) {
 }
 
 /**
+ * Attempts to inline an array type as MOD_ARRAY. Returns 0 if not possible.
+ *
+ * Requirements for inlining:
+ *   - elemType is a simple primitive (no COMPLEX, no MOD_*, fits in bits 3-7)
+ *   - Only minItems, maxItems, uniqueItems are used (no contains)
+ *   - Values fit in their bit ranges
+ *
+ * MOD_ARRAY layout (MODIFIER=1, MOD_ARRAY=0<<9):
+ *   Bits 3-7:        inner primitive type
+ *   Bit 11:          UNIQUE flag
+ *   Bits 12-21 (10b): maxItems (0 = no max, 1-1023)
+ *   Bits 22-29 (8b):  minItems (0 = no min, 1-255)
+ *
+ * @param {number} elemType
+ * @param {!Object|undefined} opts
+ * @returns {number} inline typedef or 0
+ */
+function tryInlineArray(elemType, opts) {
+    /**
+     * elemType must be a pure bare primitive (bits 3-7 only, no COMPLEX,
+     * no NULLABLE/OPTIONAL, no MOD_*). NULLABLE/OPTIONAL on the element
+     * type would conflict with the outer container's own NULLABLE/OPTIONAL bits.
+     */
+    if (elemType & (COMPLEX | NULLABLE | OPTIONAL)) {
+        return 0;
+    }
+    if (elemType > 0xFF) {
+        return 0;
+    }
+    /** Must have a single primitive type bit set (no unions like STRING|NUMBER) */
+    let typeBits = elemType & 0xF8; // bits 3-7
+    if (typeBits === 0 || (typeBits & (typeBits - 1)) !== 0) {
+        return 0;
+    }
+
+    let minItems = 0;
+    let maxItems = 0;
+    let unique = 0;
+
+    if (opts !== void 0) {
+        /** contains, minContains, maxContains cannot be inlined */
+        if (opts.contains !== void 0 || opts.minContains !== void 0 || opts.maxContains !== void 0) {
+            return 0;
+        }
+        if (opts.minItems !== void 0) {
+            minItems = +opts.minItems;
+            if (minItems === 0 || minItems > 255) {
+                return 0;
+            }
+        }
+        if (opts.maxItems !== void 0) {
+            maxItems = +opts.maxItems;
+            if (maxItems === 0 || maxItems > 1023) {
+                return 0;
+            }
+        }
+        if (opts.uniqueItems === true) {
+            unique = 1;
+        }
+    }
+
+    return typeBits | MODIFIER | MOD_ARRAY
+        | (unique << 11) | (maxItems << 12) | (minItems << 22);
+}
+
+/**
  * @param {*} ctx
  * @param {number} elemType
  * @param {uvd.ArrayValidators=} opts
@@ -440,6 +690,11 @@ function objectImpl(ctx, definition, opts) {
  */
 function arrayImpl(ctx, elemType, opts) {
     assertIsNumber(elemType, ERR_ARRAY_ELEMENT_MUST_BE_NUMBER);
+    /** Try inline MOD_ARRAY encoding */
+    let inlined = tryInlineArray(elemType, opts);
+    if (inlined !== 0) {
+        return inlined;
+    }
     const hasVal = opts !== void 0;
     let vHeader = 0;
     let payloads = null;

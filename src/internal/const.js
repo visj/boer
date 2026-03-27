@@ -57,6 +57,8 @@ const PRIM_MASK = 0xFF;
  * MOD_MASK extracts the 2-bit modifier type from bits 9-10.
  */
 const MODIFIER = 1 << 8;
+const MOD_ARRAY = 0 << 9;
+const MOD_RECORD = 1 << 9;
 const MOD_ENUM = 2 << 9;
 const MOD_MASK = 3 << 9;
 
@@ -201,7 +203,7 @@ export {
     ANY, NEVER, BOOLEAN,
     NUMBER, STRING, INTEGER,
     SIMPLE, VALUE, PRIM_MASK,
-    MODIFIER, MOD_ENUM, MOD_MASK,
+    MODIFIER, MOD_ARRAY, MOD_RECORD, MOD_ENUM, MOD_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,

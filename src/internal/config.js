@@ -47,7 +47,7 @@ function heap(cfg) {
         SHAPES: new Uint32Array(cfg.shapes),
         KINDS: new Uint32Array(cfg.kinds),
         VALIDATORS: new Float64Array(cfg.validators),
-        REGEX_CACHE: [],
+        REGEX_CACHE: [/(?:)/],
         CALLBACKS: [],
     };
 }

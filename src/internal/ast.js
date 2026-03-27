@@ -9,7 +9,16 @@ import {
     BARE_ARRAY, BARE_OBJECT, BARE_RECORD
 } from "./catalog.js";
 
-import { popcnt16, ANY, STRING, NUMBER, INTEGER, VALUE, K_ANY_INNER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS, V_ENUM, V_CONTAINS, V_PROPERTY_NAMES, K_HAS_ITEMS, K_HAS_REST } from "./const.js";
+import {
+    popcnt16, ANY, STRING, NUMBER, INTEGER, BOOLEAN, VALUE, PRIM_MASK,
+    K_ANY_INNER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES,
+    V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS, V_ENUM, V_CONTAINS,
+    V_PROPERTY_NAMES, K_HAS_ITEMS, K_HAS_REST,
+    MODIFIER, MOD_ARRAY, MOD_RECORD, MOD_ENUM,
+    V_MIN_LENGTH, V_MAX_LENGTH, V_FORMAT,
+    V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
+    V_MIN_ITEMS, V_MAX_ITEMS, V_MIN_CONTAINS, V_MAX_CONTAINS, V_UNIQUE_ITEMS,
+} from "./const.js";
 
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
@@ -169,6 +178,118 @@ export function compile(cat, ast) {
                 let primBits = astFlags[nodeId];
                 let off = astVOffset[nodeId];
                 let fixedCount = popcnt16(vHeader & 0xFFFF);
+
+                /**
+                 * Try inline encoding for simple primitive validators.
+                 * Must be a single type (not multi-type union), no V_ENUM,
+                 * no V_FORMAT, and values must fit in the bit ranges.
+                 */
+                let typeBits = primBits & 0xF8;
+                let isSingleType = typeBits !== 0 && (typeBits & (typeBits - 1)) === 0;
+                let canTryInline = isSingleType && !(vHeader & V_ENUM) && !(primBits & ANY);
+
+                if (canTryInline && (typeBits === STRING)) {
+                    /** Try inline STRING: regexIdx(8b), maxLength(8b), minLength(5b) */
+                    let canInline = !(vHeader & V_FORMAT);
+                    let regexIdx = 0;
+                    let minLen = 0;
+                    let maxLen = 0;
+                    if (canInline && (vHeader & V_PATTERN)) {
+                        let slot = popcnt16(vHeader & (V_PATTERN - 1));
+                        let raw = vPayloads[off + slot];
+                        regexIdx = heap.REGEX_CACHE.push(regexes[raw]) - 1;
+                        if (regexIdx > 255) {
+                            canInline = false;
+                        }
+                    }
+                    if (canInline && (vHeader & V_MIN_LENGTH)) {
+                        let slot = popcnt16(vHeader & (V_MIN_LENGTH - 1));
+                        minLen = vPayloads[off + slot] | 0;
+                        if (minLen === 0 || minLen > 31) {
+                            canInline = false;
+                        }
+                    }
+                    if (canInline && (vHeader & V_MAX_LENGTH)) {
+                        let slot = popcnt16(vHeader & (V_MAX_LENGTH - 1));
+                        maxLen = vPayloads[off + slot] | 0;
+                        if (maxLen === 0 || maxLen > 255) {
+                            canInline = false;
+                        }
+                    }
+                    if (canInline && (regexIdx > 0 || minLen > 0 || maxLen > 0)) {
+                        let result = STRING | (regexIdx << 9) | (maxLen << 17) | (minLen << 25);
+                        if (primBits & NULLABLE) { result |= NULLABLE; }
+                        if (primBits & OPTIONAL) { result |= OPTIONAL; }
+                        astCompiled[nodeId] = result;
+                        astState[nodeId] = COMPILED;
+                        continue;
+                    }
+                }
+
+                if (canTryInline && (typeBits === NUMBER || typeBits === INTEGER)) {
+                    /**
+                     * Try inline NUMBER/INTEGER: exclMin(1b), exclMax(1b),
+                     * minNeg(1b), maxNeg(1b), minMag(9b), maxMag(8b).
+                     * Only integer bounds can be inlined. Float or multipleOf → fallback.
+                     */
+                    let canInline = !(vHeader & V_MULTIPLE_OF);
+                    let exclMin = 0;
+                    let exclMax = 0;
+                    let minNeg = 0;
+                    let maxNeg = 0;
+                    let minMag = 0;
+                    let maxMag = 0;
+
+                    if (canInline && (vHeader & V_MINIMUM)) {
+                        let slot = popcnt16(vHeader & (V_MINIMUM - 1));
+                        let val = vPayloads[off + slot];
+                        if (!Number.isInteger(val) || val === 0) {
+                            canInline = false;
+                        } else {
+                            let abs = Math.abs(val);
+                            if (abs > 511) {
+                                canInline = false;
+                            } else {
+                                minNeg = val < 0 ? 1 : 0;
+                                minMag = abs;
+                                if (vHeader & V_EXCLUSIVE_MINIMUM) {
+                                    exclMin = 1;
+                                }
+                            }
+                        }
+                    }
+                    if (canInline && (vHeader & V_MAXIMUM)) {
+                        let slot = popcnt16(vHeader & (V_MAXIMUM - 1));
+                        let val = vPayloads[off + slot];
+                        if (!Number.isInteger(val) || val === 0) {
+                            canInline = false;
+                        } else {
+                            let abs = Math.abs(val);
+                            if (abs > 255) {
+                                canInline = false;
+                            } else {
+                                maxNeg = val < 0 ? 1 : 0;
+                                maxMag = abs;
+                                if (vHeader & V_EXCLUSIVE_MAXIMUM) {
+                                    exclMax = 1;
+                                }
+                            }
+                        }
+                    }
+                    if (canInline && (minMag > 0 || maxMag > 0)) {
+                        let result = typeBits
+                            | (exclMin << 9) | (exclMax << 10)
+                            | (minNeg << 11) | (maxNeg << 12)
+                            | (minMag << 13) | (maxMag << 22);
+                        if (primBits & NULLABLE) { result |= NULLABLE; }
+                        if (primBits & OPTIONAL) { result |= OPTIONAL; }
+                        astCompiled[nodeId] = result;
+                        astState[nodeId] = COMPILED;
+                        continue;
+                    }
+                }
+
+                /** Fallback: allocate K_PRIMITIVE + VALIDATORS on the heap */
                 let nodePayloads = [];
                 // Read fixed-slot payloads (bits 0-15), remapping regex placeholder indices.
                 let patternSlot = (vHeader & V_PATTERN) ? popcnt16(vHeader & (V_PATTERN - 1)) : -1;
@@ -640,7 +761,8 @@ export function compile(cat, ast) {
                 // Inject V_CONTAINS payload when a contains child is present (astFlags bit 1).
                 // runArrayValidator uses popcnt16(vHeader & (V_CONTAINS - 1)) to locate the
                 // contains slot, so we insert the compiled typedef at that same offset.
-                if (astFlags[nodeId] & 2) {
+                let hasContains = (astFlags[nodeId] & 2) !== 0;
+                if (hasContains) {
                     let containsType = astCompiled[astChild1[nodeId]] >>> 0;
                     if (vp === null) {
                         vp = { vHeader: V_CONTAINS, nodePayloads: [containsType] };
@@ -660,8 +782,16 @@ export function compile(cat, ast) {
                     }
                 }
 
+                /**
+                 * MOD_ARRAY inlining is NOT done in the AST compiler because JSON Schema
+                 * supports unevaluatedItems which requires tracking via trackPtr/snapPtr.
+                 * Inline MOD_ARRAY bypasses this tracking. The DSL path in allocate.js
+                 * can inline safely since the DSL doesn't expose unevaluated tracking.
+                 */
+                let hasItems = (astFlags[nodeId] & 4) !== 0;
+
                 let kindHeader = (vp !== null) ? (K_ARRAY | K_VALIDATOR) : K_ARRAY;
-                if (astFlags[nodeId] & 4) {
+                if (hasItems) {
                     kindHeader |= K_HAS_ITEMS;
                 }
 
@@ -675,17 +805,17 @@ export function compile(cat, ast) {
                 let offset = astChild0[nodeId];
                 let count = astChild1[nodeId];
                 let types = new Array(count);
-                let allPrimitive = true;
+                let allBarePrimitive = true;
                 let merged = 0;
                 for (let i = 0; i < count; i++) {
                     types[i] = astCompiled[astEdges[offset + i]];
-                    if (types[i] & COMPLEX) {
-                        allPrimitive = false;
+                    if ((types[i] & COMPLEX) || types[i] > 0xFF) {
+                        allBarePrimitive = false;
                     } else {
                         merged |= types[i];
                     }
                 }
-                if (allPrimitive) {
+                if (allBarePrimitive) {
                     astCompiled[nodeId] = merged >>> 0;
                 } else {
                     let result = malloc(K_OR, 0, types, types.length, 0, null);

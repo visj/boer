@@ -18,8 +18,11 @@ describe('arrays.test.js', () => {
             expect(typeof array(NUMBER)).toBe('number');
         });
 
-        test('returns a complex typedef (bit 0 set)', () => {
-            expect(array(NUMBER) & 1).toBe(1);
+        test('returns an inline MOD_ARRAY typedef for simple primitives', () => {
+            /** Simple primitive arrays are inlined (COMPLEX=0, typedef > 0xFF) */
+            let td = array(NUMBER);
+            expect(td & 1).toBe(0);
+            expect(td > 0xFF).toBe(true);
         });
 
         test('throws on non-number element type', () => {

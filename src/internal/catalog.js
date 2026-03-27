@@ -20,7 +20,7 @@ import {
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
     codepointLen, hasOwnProperty,
     K_HAS_ITEMS, K_HAS_REST,
-    MODIFIER, MOD_ENUM, MOD_MASK,
+    MODIFIER, MOD_ARRAY, MOD_RECORD, MOD_ENUM, MOD_MASK,
     NUMBER, INTEGER, BOOLEAN
 } from './const.js';
 import {
@@ -713,6 +713,193 @@ function catalog(cfg) {
         return CONSTANTS[idx] === data;
     }
 
+    /**
+     * Validates data against an inline typedef (COMPLEX=0, typedef > 0xFF).
+     * Handles MOD_ARRAY, MOD_RECORD, MOD_ENUM modifiers, and inline
+     * primitive validators (STRING with minLength/maxLength/pattern,
+     * NUMBER/INTEGER with min/max bounds).
+     *
+     * Bit layout (30-bit, stays within V8 Smi range):
+     *   Bits 0-7:   primBits (COMPLEX=0, NULLABLE, OPTIONAL, type flags)
+     *   Bit 8:      MODIFIER toggle
+     *   Bits 9-10:  modifier type (0=ARRAY, 1=RECORD, 2=ENUM)
+     *   Bits 11-29: contextual payload (depends on modifier/type)
+     *
+     * @param {*} data
+     * @param {number} typedef
+     * @returns {boolean}
+     */
+    function _validateInline(data, typedef) {
+        let primBits = typedef & PRIM_MASK;
+
+        if (typedef & MODIFIER) {
+            let modType = (typedef >>> 9) & 3;
+
+            if (modType === 2) {
+                /** MOD_ENUM: exact-match against CONSTANTS or ENUMS arena */
+                return _validateModEnum(data, typedef);
+            }
+
+            if (modType === 0) {
+                /**
+                 * MOD_ARRAY: homogeneous array (e.g. string[])
+                 * Bit 11: UNIQUE flag
+                 * Bits 12-21 (10 bits): maxItems (0 = no max)
+                 * Bits 22-29 (8 bits): minItems (0 = no min)
+                 */
+                if (!Array.isArray(data)) {
+                    return false;
+                }
+                let len = data.length;
+                let maxItems = (typedef >>> 12) & 0x3FF;
+                let minItems = (typedef >>> 22) & 0xFF;
+                if (minItems > 0 && len < minItems) {
+                    return false;
+                }
+                if (maxItems > 0 && len > maxItems) {
+                    return false;
+                }
+                let mask = primBits;
+                for (let i = 0; i < len; i++) {
+                    if (!_isValue(data[i], mask)) {
+                        return false;
+                    }
+                }
+                let unique = (typedef >>> 11) & 1;
+                if (unique) {
+                    for (let i = 0; i < len; i++) {
+                        for (let j = i + 1; j < len; j++) {
+                            if (deepEqual(data[i], data[j])) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
+
+            if (modType === 1) {
+                /**
+                 * MOD_RECORD: dynamic dictionary (e.g. Record<string, number>)
+                 * Bits 11-21 (11 bits): maxProperties (0 = no max)
+                 * Bits 22-29 (8 bits): minProperties (0 = no min)
+                 */
+                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                    return false;
+                }
+                let mask = primBits;
+                let maxProps = (typedef >>> 11) & 0x7FF;
+                let minProps = (typedef >>> 22) & 0xFF;
+                let count = 0;
+                for (let key in data) {
+                    if (!hasOwnProperty.call(data, key)) {
+                        continue;
+                    }
+                    if (!_isValue(data[key], mask)) {
+                        return false;
+                    }
+                    count++;
+                    if (maxProps > 0 && count > maxProps) {
+                        return false;
+                    }
+                }
+                if (minProps > 0 && count < minProps) {
+                    return false;
+                }
+                return true;
+            }
+
+            return false;
+        }
+
+        /**
+         * Inline primitive validator (MODIFIER=0, typedef > 0xFF).
+         * The specific type determines the payload layout.
+         */
+        if (primBits & STRING) {
+            /**
+             * STRING payload:
+             *   Bits 9-16  (8 bits): regexIdx (0 = no pattern)
+             *   Bits 17-24 (8 bits): maxLength (0 = no max)
+             *   Bits 25-29 (5 bits): minLength (0 = no min)
+             */
+            if (typeof data !== 'string') {
+                return false;
+            }
+            let regexIdx = (typedef >>> 9) & 0xFF;
+            let maxLen = (typedef >>> 17) & 0xFF;
+            let minLen = (typedef >>> 25) & 0x1F;
+            if (minLen > 0 || maxLen > 0) {
+                let rawLen = data.length;
+                /** Fast reject: UTF-16 len < minLen → codepoint len even smaller */
+                if (minLen > 0 && rawLen < minLen) {
+                    return false;
+                }
+                let needsScan = (minLen > 0) || (maxLen > 0 && rawLen > maxLen);
+                if (needsScan) {
+                    let slen = codepointLen(data);
+                    if (minLen > 0 && slen < minLen) {
+                        return false;
+                    }
+                    if (maxLen > 0 && slen > maxLen) {
+                        return false;
+                    }
+                }
+            }
+            if (regexIdx > 0 && !REGEX_CACHE[regexIdx].test(data)) {
+                return false;
+            }
+            return true;
+        }
+
+        if (primBits & (NUMBER | INTEGER)) {
+            /**
+             * NUMBER/INTEGER payload:
+             *   Bit 9:           EXCLUSIVE_MIN (0 = >=, 1 = >)
+             *   Bit 10:          EXCLUSIVE_MAX (0 = <=, 1 = <)
+             *   Bit 11:          MIN_NEGATIVE (0 = positive, 1 = negative)
+             *   Bit 12:          MAX_NEGATIVE (0 = positive, 1 = negative)
+             *   Bits 13-21 (9b): minMagnitude (0 = no min, 1-511)
+             *   Bits 22-29 (8b): maxMagnitude (0 = no max, 1-255)
+             */
+            if (typeof data !== 'number') {
+                return false;
+            }
+            if ((primBits & INTEGER) && !Number.isInteger(data)) {
+                return false;
+            }
+            let minMag = (typedef >>> 13) & 0x1FF;
+            if (minMag > 0) {
+                let minNeg = (typedef >>> 11) & 1;
+                let exclMin = (typedef >>> 9) & 1;
+                let minVal = minNeg ? -minMag : minMag;
+                if (exclMin ? data <= minVal : data < minVal) {
+                    return false;
+                }
+            }
+            let maxMag = (typedef >>> 22) & 0xFF;
+            if (maxMag > 0) {
+                let maxNeg = (typedef >>> 12) & 1;
+                let exclMax = (typedef >>> 10) & 1;
+                let maxVal = maxNeg ? -maxMag : maxMag;
+                if (exclMax ? data >= maxVal : data > maxVal) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        if (primBits & BOOLEAN) {
+            return typeof data === 'boolean';
+        }
+
+        if (primBits & ANY) {
+            return true;
+        }
+
+        return false;
+    }
+
     function _validateSlot(raw, type) {
         if (raw === void 0) return (type & OPTIONAL) !== 0;
         if (raw === null) return (type & NULLABLE) !== 0 || _primitiveAcceptsNull(type);
@@ -720,8 +907,8 @@ function catalog(cfg) {
         if (type < 256) {
             return (type & SIMPLE) ? _isValue(raw, type & PRIM_MASK) : false;
         }
-        /** MOD_ENUM inline path: typedef > 0xFF with MODIFIER bit */
-        return _validateModEnum(raw, type);
+        /** Inline path: MOD_ENUM, MOD_ARRAY, MOD_RECORD, or inline primitive validator */
+        return _validateInline(raw, type);
     }
 
     /**
@@ -1303,9 +1490,9 @@ function catalog(cfg) {
                 }
             }
         }
-        /** Inline MOD_ENUM path: typedef > 0xFF with COMPLEX=0 */
+        /** Inline path: typedef > 0xFF with COMPLEX=0 (MOD_*, inline validators) */
         if (typedef > 0xFF) {
-            return _validateModEnum(data, typedef);
+            return _validateInline(data, typedef);
         }
         let valueMask = typedef & PRIM_MASK;
         if (valueMask === 0) {
