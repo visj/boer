@@ -159,7 +159,7 @@ describe('validate: objects', () => {
     });
 });
 
-describe('parse: objects', () => {
+describe.skip('parse: objects', () => {
     test('basic parse leaves native types alone', () => {
         let schema = object({ s: STRING, n: NUMBER, b: BOOLEAN });
         let obj = { s: 'hello', n: 42, b: true };

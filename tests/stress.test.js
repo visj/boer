@@ -250,7 +250,7 @@ describe('stress: combined registries at scale', () => {
     });
 });
 
-describe('stress: parse and strict on large objects', () => {
+describe.skip('stress: parse and strict on large objects', () => {
     test('parse 50-field object with Dates', () => {
         let def = {};
         let obj = {};

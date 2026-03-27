@@ -54,8 +54,8 @@ function catalog(cfg) {
     let keyseq = 1;
     /** @const @type {!Map<string,number>} */
     let KEY_DICT = new Map();
-    /** @const @type {!Map<number,string>} */
-    let KEY_INDEX = new Map();
+    /** @const @type {!Array<string>} */
+    let KEY_INDEX = [""];
 
     // --- PRE-ALLOCATED COMPLEX TYPE CONSTANTS ---
     // Bare array: K_ARRAY | K_ANY_INNER (1-slot entry)
@@ -165,7 +165,7 @@ function catalog(cfg) {
         if (id === void 0) {
             id = keyseq++;
             KEY_DICT.set(key, id);
-            KEY_INDEX.set(id, key);
+            KEY_INDEX[id] = key;
         }
         return id;
     }
@@ -494,12 +494,12 @@ function catalog(cfg) {
             for (let ti = 0; ti < triggerCount; ti++) {
                 let triggerKeyId = vals[p++] | 0;
                 let depCount = vals[p++] | 0;
-                let triggerKey = KEY_INDEX.get(triggerKeyId);
+                let triggerKey = KEY_INDEX[triggerKeyId];
                 // Use hasOwnProperty so that null/false/0 values still count as "present".
                 if (triggerKey !== void 0 && hasOwnProperty.call(data, triggerKey)) {
                     for (let di = 0; di < depCount; di++) {
                         let depKeyId = vals[p++] | 0;
-                        let depKey = KEY_INDEX.get(depKeyId);
+                        let depKey = KEY_INDEX[depKeyId];
                         if (depKey === void 0 || !hasOwnProperty.call(data, depKey)) {
                             return false;
                         }
@@ -514,7 +514,7 @@ function catalog(cfg) {
             for (let di = 0; di < depCount; di++) {
                 let triggerKeyId = vals[p++] | 0;
                 let depSchemaType = vals[p++] >>> 0;
-                let triggerKey = KEY_INDEX.get(triggerKeyId);
+                let triggerKey = KEY_INDEX[triggerKeyId];
                 if (triggerKey !== void 0 && data[triggerKey] !== void 0) {
                     if (!_validate(data, depSchemaType, trackPtr, snapPtr)) {
                         return false;
@@ -659,10 +659,7 @@ function catalog(cfg) {
                     let length = shapes[ri * 2 + 1];
                     for (let i = 0; i < length; i++) {
                         let keyId = slab[offset + (i * 2)];
-                        let key = KEY_INDEX.get(keyId);
-                        if (key === void 0) {
-                            return false;
-                        }
+                        let key = KEY_INDEX[keyId];
                         let type = slab[offset + (i * 2) + 1];
                         let val = data[key];
 
@@ -851,10 +848,7 @@ function catalog(cfg) {
                     let offset = shapes[ri * 2];
                     let length = shapes[ri * 2 + 1];
                     // slab[offset] is the discriminator key id; variants follow at offset+1
-                    let discKey = KEY_INDEX.get(slab[offset]);
-                    if (discKey === void 0) {
-                        return false;
-                    }
+                    let discKey = KEY_INDEX[slab[offset]];
                     let valueId = KEY_DICT.get(data[discKey]);
                     if (valueId === void 0) {
                         return false;
