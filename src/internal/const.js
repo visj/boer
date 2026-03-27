@@ -72,6 +72,8 @@ const K_STRICT = 1 << 28;
 const K_HAS_ITEMS = 1 << 27;
 /** K_HAS_REST marks that a K_TUPLE has a rest element stored as the last SLAB element. */
 const K_HAS_REST = 1 << 26;
+/** K_ALL_REQUIRED marks K_OBJECT shapes where every property is required (no OPTIONAL bits). */
+const K_ALL_REQUIRED = 1 << 24;
 
 // ── Complex KINDS enum (bits 0-3, values 0-14) ──
 // The KINDS vtable header stores the enum in the lower 4 bits.
@@ -206,7 +208,7 @@ export {
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
     K_CONDITIONAL, K_DYN_ANCHOR, K_DYN_REF, K_UNEVALUATED, K_ANY_INNER,
-    KIND_ENUM_MASK, K_VALIDATOR, K_STRICT, K_HAS_ITEMS, K_HAS_REST,
+    KIND_ENUM_MASK, K_VALIDATOR, K_STRICT, K_HAS_ITEMS, K_HAS_REST, K_ALL_REQUIRED,
     V_MIN_LENGTH, V_MAX_LENGTH, V_PATTERN, V_FORMAT,
     V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
     V_MIN_ITEMS, V_MAX_ITEMS, V_CONTAINS, V_MIN_CONTAINS, V_MAX_CONTAINS,

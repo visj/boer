@@ -9,7 +9,7 @@ import {
     BARE_ARRAY, BARE_OBJECT, BARE_RECORD
 } from "./catalog.js";
 
-import { popcnt16, ANY, STRING, NUMBER, INTEGER, VALUE, K_ANY_INNER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS, V_ENUM, V_CONTAINS, V_PROPERTY_NAMES, K_HAS_ITEMS, K_HAS_REST } from "./const.js";
+import { popcnt16, ANY, STRING, NUMBER, INTEGER, VALUE, OPTIONAL as _OPTIONAL, K_ANY_INNER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS, V_ENUM, V_CONTAINS, V_PROPERTY_NAMES, K_HAS_ITEMS, K_HAS_REST, K_ALL_REQUIRED, MODIFIER, MOD_ENUM } from "./const.js";
 
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
@@ -169,6 +169,71 @@ export function compile(cat, ast) {
                 let primBits = astFlags[nodeId];
                 let off = astVOffset[nodeId];
                 let fixedCount = popcnt16(vHeader & 0xFFFF);
+
+                /**
+                 * MOD_ENUM fast path: when V_ENUM is the ONLY validator (no min/max/pattern/format)
+                 * and the enum is single-type (strings only or numbers only),
+                 * compile directly to an inline MOD_ENUM typedef using Set.has().
+                 * This avoids the K_PRIMITIVE → KINDS → runPrimValidator → binary search chain.
+                 */
+                let enumOnly = (vHeader & V_ENUM) && fixedCount === 0;
+                if (enumOnly) {
+                    let p = off;
+                    let valueBits = primBits & VALUE;
+                    let hasNull = (primBits & NULLABLE) !== 0;
+                    let hasUndef = (primBits & OPTIONAL) !== 0;
+
+                    /** String-only enum: build a Set of the raw string values. */
+                    if (valueBits === STRING) {
+                        let strCount = vPayloads[p++] | 0;
+                        let set = new Set();
+                        for (let i = 0; i < strCount; i++) {
+                            set.add(propNames[vPayloads[p++] | 0]);
+                        }
+                        let idx = heap.allocEnumSet(set);
+                        if (idx <= 0xFFFFF) {
+                            let result = STRING | MODIFIER | MOD_ENUM | (1 << 11) | (idx << 12);
+                            if (hasNull) {
+                                result = result | NULLABLE;
+                            }
+                            if (hasUndef) {
+                                result = result | OPTIONAL;
+                            }
+                            astCompiled[nodeId] = result;
+                            astState[nodeId] = COMPILED;
+                            continue;
+                        }
+                    }
+
+                    /** Number-only enum: build a Set of the raw number values. */
+                    if (valueBits === NUMBER || valueBits === INTEGER || valueBits === (NUMBER | INTEGER)) {
+                        /** Skip string segment if present (shouldn't be for number-only) */
+                        if (primBits & STRING) {
+                            let strCount = vPayloads[p++] | 0;
+                            p += strCount;
+                        }
+                        let numCount = vPayloads[p++] | 0;
+                        let set = new Set();
+                        for (let i = 0; i < numCount; i++) {
+                            set.add(vPayloads[p++]);
+                        }
+                        let idx = heap.allocEnumSet(set);
+                        if (idx <= 0xFFFFF) {
+                            let innerBits = (valueBits & INTEGER) ? INTEGER : NUMBER;
+                            let result = innerBits | MODIFIER | MOD_ENUM | (1 << 11) | (idx << 12);
+                            if (hasNull) {
+                                result = result | NULLABLE;
+                            }
+                            if (hasUndef) {
+                                result = result | OPTIONAL;
+                            }
+                            astCompiled[nodeId] = result;
+                            astState[nodeId] = COMPILED;
+                            continue;
+                        }
+                    }
+                }
+
                 let nodePayloads = [];
                 // Read fixed-slot payloads (bits 0-15), remapping regex placeholder indices.
                 let patternSlot = (vHeader & V_PATTERN) ? popcnt16(vHeader & (V_PATTERN - 1)) : -1;
@@ -628,6 +693,17 @@ export function compile(cat, ast) {
 
                 let hasVal = finalPayloads !== null;
                 let kindHeader = hasVal ? (K_OBJECT | K_VALIDATOR) : K_OBJECT;
+                /** Check if all properties are required for K_ALL_REQUIRED fast path */
+                let allRequired = true;
+                for (let i = 1; i < resolved.length; i += 2) {
+                    if (resolved[i] & _OPTIONAL) {
+                        allRequired = false;
+                        break;
+                    }
+                }
+                if (allRequired) {
+                    kindHeader = kindHeader | K_ALL_REQUIRED;
+                }
                 astCompiled[nodeId] = malloc(kindHeader, 0,
                     resolved, count, hasVal ? finalVHeader : 0, finalPayloads);
                 break;

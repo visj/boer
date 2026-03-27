@@ -15,7 +15,7 @@ import {
     V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
     V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED,
     V_ENUM,
-    K_HAS_ITEMS,
+    K_HAS_ITEMS, K_ALL_REQUIRED,
     MODIFIER, MOD_ENUM,
 } from './const.js';
 import {
@@ -429,6 +429,17 @@ function objectImpl(ctx, definition, opts) {
         payloads = result.slice(1);
     }
     let kindHeader = hasValidator ? (K_OBJECT | K_VALIDATOR) : K_OBJECT;
+    /** Check if all properties are required (no OPTIONAL bits) for K_ALL_REQUIRED fast path */
+    let allRequired = true;
+    for (let i = 1; i < resolved.length; i += 2) {
+        if (resolved[i] & OPTIONAL) {
+            allRequired = false;
+            break;
+        }
+    }
+    if (allRequired) {
+        kindHeader = kindHeader | K_ALL_REQUIRED;
+    }
     return ctx.malloc(kindHeader, 0, resolved, count, vHeader, payloads);
 }
 
