@@ -19,7 +19,7 @@ import {
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
     codepointLen, hasOwnProperty,
-    K_HAS_ITEMS, K_HAS_REST,
+    K_HAS_ITEMS, K_HAS_REST, K_ALL_REQUIRED,
     MODIFIER, MOD_ARRAY, MOD_RECORD, MOD_ENUM, MOD_MASK,
     NUMBER, INTEGER, BOOLEAN
 } from './const.js';
@@ -337,13 +337,25 @@ function catalog(cfg) {
         if (typeof value === 'string') {
             if (vHeader & V_MIN_LENGTH) {
                 let p = base + popcnt16(vHeader & (V_MIN_LENGTH - 1));
-                if (codepointLen(value) < vals[p]) {
+                let limit = vals[p];
+                /**
+                 * Fast codepoint length: codepointLen <= value.length (always).
+                 * If value.length < limit, codepoint count is also < limit → fail fast.
+                 * Otherwise need the real count only if surrogates might lower it below limit.
+                 */
+                if (value.length < limit || codepointLen(value) < limit) {
                     return false;
                 }
             }
             if (vHeader & V_MAX_LENGTH) {
                 let p = base + popcnt16(vHeader & (V_MAX_LENGTH - 1));
-                if (codepointLen(value) > vals[p]) {
+                let limit = vals[p];
+                /**
+                 * Fast path: codepointLen <= value.length.
+                 * If value.length <= limit, codepoint count is also <= limit → pass.
+                 * Only call codepointLen when value.length > limit.
+                 */
+                if (value.length > limit && codepointLen(value) > limit) {
                     return false;
                 }
             }
@@ -957,22 +969,12 @@ function catalog(cfg) {
 
             let ri = kinds[ptr + 1];
 
-            switch (ct) {
-                case K_PRIMITIVE: {
-                    let primBits = header & SIMPLE;
-                    /**
-                     * K_ANY_INNER means the type included ANY — skip the _isValue type check.
-                     * We still run the validator (minimum, pattern etc.) if K_VALIDATOR is set.
-                     */
-                    if (!(header & K_ANY_INNER) && !_isValue(data, primBits)) {
-                        return false;
-                    }
-                    if (header & K_VALIDATOR) {
-                        return runPrimValidator(data, primBits, ri);
-                    }
-                    return true;
-                }
-                case K_OBJECT: {
+            /**
+             * Hot-path if-else chain: K_OBJECT, K_ARRAY, K_PRIMITIVE first,
+             * then K_INTERSECT. Remaining kinds fall through to a switch.
+             * Inlined _validateSlot and _isValue avoid function call overhead.
+             */
+            if (ct === K_OBJECT) {
                     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                         return false;
                     }
@@ -980,31 +982,120 @@ function catalog(cfg) {
                     let slab = SLAB;
                     let offset = shapes[ri * 2];
                     let length = shapes[ri * 2 + 1];
-                    for (let i = 0; i < length; i++) {
-                        let keyId = slab[offset + (i * 2)];
-                        let key = KEY_INDEX[keyId];
-                        let type = slab[offset + (i * 2) + 1];
-                        let val = data[key];
 
-                        if (val !== void 0) {
+                    if (header & K_ALL_REQUIRED) {
+                        /**
+                         * K_ALL_REQUIRED fast path: all properties are required.
+                         * No OPTIONAL checks needed — any missing property is an immediate failure.
+                         * We still need hasOwnProperty to guard against prototype keys like __proto__.
+                         */
+                        for (let i = 0; i < length; i++) {
+                            let keyId = slab[offset + (i * 2)];
+                            let key = KEY_INDEX[keyId];
+                            let type = slab[offset + (i * 2) + 1];
                             if (!hasOwnProperty.call(data, key)) {
-                                val = void 0;
+                                return false;
+                            }
+                            let val = data[key];
+
+                            if (val === null) {
+                                if ((type & NULLABLE) || ((type & COMPLEX) === 0 && (type & ANY) !== 0)) {
+                                    if (trackPtr) {
+                                        markEvaluated(trackPtr, snapPtr, keyId);
+                                    }
+                                    continue;
+                                }
+                                return false;
+                            }
+                            /** Dispatch on type encoding — inlined _isValue for bare primitives */
+                            if (type & COMPLEX) {
+                                if (!_validate(val, type, 0, 0)) {
+                                    return false;
+                                }
+                            } else if (type < 256) {
+                                let mask = type & PRIM_MASK;
+                                if (!(mask & ANY)) {
+                                    let jt = typeof val;
+                                    if (!(
+                                        jt === 'string' ? (mask & STRING) :
+                                        jt === 'number' ? ((mask & NUMBER) || ((mask & INTEGER) && Number.isInteger(val))) :
+                                        jt === 'boolean' ? (mask & BOOLEAN) :
+                                        false
+                                    )) {
+                                        return false;
+                                    }
+                                }
+                            } else {
+                                if (!_validateInline(val, type)) {
+                                    return false;
+                                }
+                            }
+                            if (trackPtr) {
+                                markEvaluated(trackPtr, snapPtr, keyId);
                             }
                         }
-                        if (!_validateSlot(val, type)) {
-                            return false;
-                        }
-                        /** Mark this property as evaluated in the tracking frame */
-                        if (trackPtr && val !== void 0) {
-                            markEvaluated(trackPtr, snapPtr, keyId);
+                    } else {
+                        /**
+                         * General path: some properties may be optional.
+                         * Need hasOwnProperty + OPTIONAL checks.
+                         */
+                        for (let i = 0; i < length; i++) {
+                            let keyId = slab[offset + (i * 2)];
+                            let key = KEY_INDEX[keyId];
+                            let type = slab[offset + (i * 2) + 1];
+                            let hasProp = hasOwnProperty.call(data, key);
+                            let val = hasProp ? data[key] : void 0;
+
+                            if (val === void 0) {
+                                if (type & OPTIONAL) {
+                                    if (trackPtr && hasProp) {
+                                        markEvaluated(trackPtr, snapPtr, keyId);
+                                    }
+                                    continue;
+                                }
+                                return false;
+                            }
+                            if (val === null) {
+                                if ((type & NULLABLE) || ((type & COMPLEX) === 0 && (type & ANY) !== 0)) {
+                                    if (trackPtr) {
+                                        markEvaluated(trackPtr, snapPtr, keyId);
+                                    }
+                                    continue;
+                                }
+                                return false;
+                            }
+                            if (type & COMPLEX) {
+                                if (!_validate(val, type, 0, 0)) {
+                                    return false;
+                                }
+                            } else if (type < 256) {
+                                let mask = type & PRIM_MASK;
+                                if (!(mask & ANY)) {
+                                    let jt = typeof val;
+                                    if (!(
+                                        jt === 'string' ? (mask & STRING) :
+                                        jt === 'number' ? ((mask & NUMBER) || ((mask & INTEGER) && Number.isInteger(val))) :
+                                        jt === 'boolean' ? (mask & BOOLEAN) :
+                                        false
+                                    )) {
+                                        return false;
+                                    }
+                                }
+                            } else {
+                                if (!_validateInline(val, type)) {
+                                    return false;
+                                }
+                            }
+                            if (trackPtr) {
+                                markEvaluated(trackPtr, snapPtr, keyId);
+                            }
                         }
                     }
                     if (header & K_VALIDATOR) {
                         return runObjectValidator(data, kinds[ptr + 2], ri, trackPtr, snapPtr);
                     }
                     return true;
-                }
-                case K_ARRAY: {
+            } else if (ct === K_ARRAY) {
                     if (!Array.isArray(data)) {
                         return false;
                     }
@@ -1012,9 +1103,71 @@ function catalog(cfg) {
                     if (hasItems) {
                         let innerType = ri;
                         let length = data.length;
-                        for (let i = 0; i < length; i++) {
-                            if (!_validateSlot(data[i], innerType)) {
-                                return false;
+                        /**
+                         * Inlined _validateSlot for array items: avoids function
+                         * call overhead per element. Pre-compute the dispatch route
+                         * once since innerType is constant across all elements.
+                         */
+                        if (innerType & COMPLEX) {
+                            /** Complex inner type: full _validate per element */
+                            for (let i = 0; i < length; i++) {
+                                let el = data[i];
+                                if (el === void 0) {
+                                    if (!(innerType & OPTIONAL)) {
+                                        return false;
+                                    }
+                                } else if (el === null) {
+                                    if (!(innerType & NULLABLE)) {
+                                        return false;
+                                    }
+                                } else if (!_validate(el, innerType, 0, 0)) {
+                                    return false;
+                                }
+                            }
+                        } else if (innerType < 256) {
+                            /**
+                             * Bare primitive inner type: inlined _isValue with typeof dispatch.
+                             * Pre-compute bitmask once since innerType is constant.
+                             */
+                            let mask = innerType & PRIM_MASK;
+                            let acceptsAny = (mask & ANY) !== 0;
+                            for (let i = 0; i < length; i++) {
+                                let el = data[i];
+                                if (el === void 0) {
+                                    if (!(innerType & OPTIONAL)) {
+                                        return false;
+                                    }
+                                } else if (el === null) {
+                                    if (!(innerType & NULLABLE) && !acceptsAny) {
+                                        return false;
+                                    }
+                                } else if (!acceptsAny) {
+                                    let jt = typeof el;
+                                    if (!(
+                                        jt === 'string' ? (mask & STRING) :
+                                        jt === 'number' ? ((mask & NUMBER) || ((mask & INTEGER) && Number.isInteger(el))) :
+                                        jt === 'boolean' ? (mask & BOOLEAN) :
+                                        false
+                                    )) {
+                                        return false;
+                                    }
+                                }
+                            }
+                        } else {
+                            /** MOD_ENUM inner type */
+                            for (let i = 0; i < length; i++) {
+                                let el = data[i];
+                                if (el === void 0) {
+                                    if (!(innerType & OPTIONAL)) {
+                                        return false;
+                                    }
+                                } else if (el === null) {
+                                    if (!(innerType & NULLABLE)) {
+                                        return false;
+                                    }
+                                } else if (!_validateInline(el, innerType)) {
+                                    return false;
+                                }
                             }
                         }
                         /** items evaluates ALL items */
@@ -1026,7 +1179,42 @@ function catalog(cfg) {
                         return runArrayValidator(data, kinds[ptr + 2], trackPtr, snapPtr);
                     }
                     return true;
-                }
+            } else if (ct === K_PRIMITIVE) {
+                    let primBits = header & SIMPLE;
+                    /**
+                     * K_ANY_INNER means the type included ANY — skip the _isValue type check.
+                     * We still run the validator (minimum, pattern etc.) if K_VALIDATOR is set.
+                     */
+                    if (!(header & K_ANY_INNER)) {
+                        /** Inlined _isValue: direct typeof dispatch */
+                        if (!(primBits & ANY)) {
+                            let jt = typeof data;
+                            if (!(
+                                jt === 'string' ? (primBits & STRING) :
+                                jt === 'number' ? ((primBits & NUMBER) || ((primBits & INTEGER) && Number.isInteger(data))) :
+                                jt === 'boolean' ? (primBits & BOOLEAN) :
+                                false
+                            )) {
+                                return false;
+                            }
+                        }
+                    }
+                    if (header & K_VALIDATOR) {
+                        return runPrimValidator(data, primBits, ri);
+                    }
+                    return true;
+            } else if (ct === K_INTERSECT) {
+                    let shapes = SHAPES;
+                    let slab = SLAB;
+                    let offset = shapes[ri * 2];
+                    let count = shapes[ri * 2 + 1];
+                    for (let i = 0; i < count; i++) {
+                        if (!_validate(data, slab[offset + i], trackPtr, snapPtr)) {
+                            return false;
+                        }
+                    }
+                    return true;
+            } else { switch (ct) {
                 case K_RECORD: {
                     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                         return false;
@@ -1488,7 +1676,7 @@ function catalog(cfg) {
                 default: {
                     return false;
                 }
-            }
+            } }
         }
         /** Inline path: typedef > 0xFF with COMPLEX=0 (MOD_*, inline validators) */
         if (typedef > 0xFF) {
