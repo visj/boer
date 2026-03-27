@@ -1,12 +1,11 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    BOOLEAN, NUMBER, STRING,
-    BIGINT, DATE, URI
+    BOOLEAN, NUMBER, STRING
 } from 'uvd';
 import { catalog, allocators } from 'uvd/core';
 
 const cat = catalog();
-const { object, array, string, number, boolean, bigint, date, uri, nullable, optional, refine, union } = allocators(cat);
+const { object, array, string, number, boolean, nullable, optional, refine, union } = allocators(cat);
 const { validate } = cat;
 
 describe('validate: primitive builders — no args', () => {
@@ -18,15 +17,6 @@ describe('validate: primitive builders — no args', () => {
     });
     test('boolean() returns BOOLEAN constant', () => {
         expect(boolean()).toBe(BOOLEAN);
-    });
-    test('bigint() returns BIGINT constant', () => {
-        expect(bigint()).toBe(BIGINT);
-    });
-    test('date() returns DATE constant', () => {
-        expect(date()).toBe(DATE);
-    });
-    test('uri() returns URI constant', () => {
-        expect(uri()).toBe(URI);
     });
 });
 
@@ -316,10 +306,6 @@ describe('validate: string format — date-time', () => {
         expect(validate('2024-01-15', td)).toBe(false);
         expect(validate('not-a-date', td)).toBe(false);
         expect(validate('2024-01-15 10:30:00', td)).toBe(false);
-    });
-    test('date-time is NOT the DATE primitive', () => {
-        let td = string({ format: 'date-time' });
-        expect(validate(new Date(), td)).toBe(false);
     });
 });
 

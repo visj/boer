@@ -1,7 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    UNDEFINED, NULL, BOOLEAN, NUMBER,
-    STRING, BIGINT, DATE, URI,
+    UNDEFINED, NULL, BOOLEAN, NUMBER, STRING,
 } from 'uvd';
 import {
     catalog, allocators, createConform
@@ -54,24 +53,6 @@ describe('arrays.test.js', () => {
             let type = array(BOOLEAN);
             expect(validate([true, false, true], type)).toBe(true);
             expect(validate([true, 0], type)).toBe(false);
-        });
-
-        test('Array<bigint>', () => {
-            let type = array(BIGINT);
-            expect(validate([BigInt(1), BigInt(2)], type)).toBe(true);
-            expect(validate([1, 2], type)).toBe(false);
-        });
-
-        test('Array<Date>', () => {
-            let type = array(DATE);
-            expect(validate([new Date(), new Date('2024-01-01')], type)).toBe(true);
-            expect(validate(['2024-01-01'], type)).toBe(false);
-        });
-
-        test('Array<URL>', () => {
-            let type = array(URI);
-            expect(validate([new URL('https://vilhelm.se')], type)).toBe(true);
-            expect(validate(['https://vilhelm.se'], type)).toBe(false);
         });
     });
 
@@ -153,12 +134,6 @@ describe('arrays.test.js', () => {
             let type = array(STRING | NUMBER | NULL);
             expect(validate([1, 'two', null], type)).toBe(true);
             expect(validate([true], type)).toBe(false);
-        });
-
-        test('Array<Date | string>', () => {
-            let type = array(DATE | STRING);
-            expect(validate([new Date(), 'hello'], type)).toBe(true);
-            expect(validate([42], type)).toBe(false);
         });
     });
 
@@ -256,75 +231,6 @@ describe('arrays.test.js', () => {
         });
     });
 
-    describe.skip('parse: arrays', () => {
-        test('Array<Date> casts date strings', () => {
-            let type = array(DATE);
-            let arr = ['2024-01-01', '2024-06-15'];
-            expect(conform(arr, type)).toBe(true);
-            expect(arr[0]).toBeInstanceOf(Date);
-            expect(arr[1]).toBeInstanceOf(Date);
-        });
-
-        test('Array<Date | null> casts with nulls', () => {
-            let type = array(DATE | NULL);
-            let arr = ['2024-01-01', null, '2024-12-25'];
-            expect(conform(arr, type)).toBe(true);
-            expect(arr[0]).toBeInstanceOf(Date);
-            expect(arr[1]).toBe(null);
-            expect(arr[2]).toBeInstanceOf(Date);
-        });
-
-        test('Array<Date | null> | null returns true for null', () => {
-            let type = array(DATE | NULL) | NULL;
-            expect(conform(null, type)).toBe(true);
-        });
-
-        test('Array<URI> casts URL strings', () => {
-            let type = array(URI);
-            let arr = ['https://a.com', 'https://b.com'];
-            expect(conform(arr, type)).toBe(true);
-            expect(arr[0]).toBeInstanceOf(URL);
-            expect(arr[1]).toBeInstanceOf(URL);
-        });
-
-        test('Array<BIGINT> casts from strings', () => {
-            let type = array(BIGINT);
-            let arr = ['123', '456'];
-            expect(conform(arr, type)).toBe(true);
-            expect(typeof arr[0]).toBe('bigint');
-        });
-
-        test('Array<DATE | STRING> casts dates, keeps non-date strings', () => {
-            let type = array(DATE | STRING);
-            let arr = ['2024-01-01', 'hello', '2024-06-15'];
-            expect(conform(arr, type)).toBe(true);
-            expect(arr[0]).toBeInstanceOf(Date);
-            expect(typeof arr[1]).toBe('string');
-            expect(arr[2]).toBeInstanceOf(Date);
-        });
-
-        test('Array<Object> parses object elements with rich types', () => {
-            let Item = object({ name: STRING, created: DATE });
-            let type = array(Item);
-            let arr = [
-                { name: 'A', created: '2024-01-01' },
-                { name: 'B', created: '2024-06-15' }
-            ];
-            expect(conform(arr, type)).toBe(true);
-            expect(arr[0].created).toBeInstanceOf(Date);
-            expect(arr[1].created).toBeInstanceOf(Date);
-        });
-
-        test('nested Array<Array<Date>> parses deeply', () => {
-            let type = array(array(DATE));
-            let arr = [['2024-01-01', '2024-02-01'], ['2024-03-01']];
-            expect(conform(arr, type)).toBe(true);
-            expect(arr[0][0]).toBeInstanceOf(Date);
-            expect(arr[0][1]).toBeInstanceOf(Date);
-            expect(arr[1][0]).toBeInstanceOf(Date);
-        });
-    });
-
     describe('validate: arrays as object fields', () => {
         test('object with required array field', () => {
             let schema = object({ tags: array(STRING), name: STRING });
@@ -366,15 +272,6 @@ describe('arrays.test.js', () => {
             expect(validate({ items: [{ id: 1, name: 42 }] }, schema)).toBe(false);
         });
 
-        // test('parse object with array of dates field', () => {
-        //     let schema = object({ dates: array(DATE) | NULL });
-        //     let obj = { dates: ['2024-01-01', '2024-06-15'] };
-        //     expect(conform(obj, schema)).toBe(true);
-        //     expect(obj.dates[0]).toBeInstanceOf(Date);
-        //     expect(obj.dates[1]).toBeInstanceOf(Date);
-        //     let obj2 = { dates: null };
-        //     expect(conform(obj2, schema)).toBe(true);
-        // });
     });
 
     describe('array: edge cases', () => {
@@ -382,7 +279,6 @@ describe('arrays.test.js', () => {
             expect(validate([], array(NUMBER))).toBe(true);
             expect(validate([], array(STRING | NULL))).toBe(true);
             expect(validate([], array(array(NUMBER)))).toBe(true);
-            // expect(conform([], array(DATE))).toBe(true);
         });
 
         test('single element arrays', () => {

@@ -1,7 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    BOOLEAN, NUMBER, STRING,
-    BIGINT, DATE, URI
+    BOOLEAN, NUMBER, STRING
 } from 'uvd';
 import { catalog, allocators, createConform, createDiagnose } from 'uvd/core';
 
@@ -73,13 +72,6 @@ describe('K_TUPLE', () => {
         expect(validate([42, 'hello'], tup)).toBe(false);
     });
 
-    test('conform works with tuple', () => {
-        let tup = tuple(DATE, NUMBER);
-        let data = ['2024-01-01', 42];
-        expect(conform(data, tup)).toBe(true);
-        expect(data[0] instanceof Date).toBe(true);
-    });
-
     test('diagnose works with tuple', () => {
         let tup = tuple(STRING, NUMBER);
         let errors = diagnose(42, tup);
@@ -139,13 +131,6 @@ describe('K_RECORD', () => {
         expect(validate({ a: 'a' }, rec)).toBe(false);
     });
 
-    test('conform works with record', () => {
-        let rec = record(DATE);
-        let data = { a: '2024-01-01', b: '2024-06-15' };
-        expect(conform(data, rec)).toBe(true);
-        expect(data.a instanceof Date).toBe(true);
-    });
-
     test('diagnose works with record', () => {
         let rec = record(NUMBER);
         let errors = diagnose({ a: 'bad' }, rec);
@@ -195,11 +180,10 @@ describe('K_OR (anyOf)', () => {
     });
 
     test('array-first overload for 4+ types', () => {
-        let orType = or([STRING, NUMBER, BOOLEAN, BIGINT]);
+        let orType = or([STRING, NUMBER, BOOLEAN]);
         expect(validate('hi', orType)).toBe(true);
         expect(validate(42, orType)).toBe(true);
         expect(validate(true, orType)).toBe(true);
-        expect(validate(BigInt(10), orType)).toBe(true);
     });
 
     test('validate respects inner validators', () => {
@@ -208,13 +192,6 @@ describe('K_OR (anyOf)', () => {
         expect(validate('abc', orType)).toBe(true);
         expect(validate('ab', orType)).toBe(false);
         expect(validate(42, orType)).toBe(true);
-    });
-
-    test('conform works with or', () => {
-        let orType = or(DATE, STRING);
-        let data = { val: '2024-01-01' };
-        // conform tries first type (DATE), which should parse the string
-        // But or is on the value itself, not a slot
     });
 
     test('diagnose works with or', () => {

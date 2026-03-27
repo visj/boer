@@ -1,6 +1,6 @@
 import {
     VALUE, NULL, UNDEFINED, BOOLEAN,
-    NUMBER, STRING, DATE, URI, BIGINT,
+    NUMBER, STRING,
     ANY, NEVER, TRUE, FALSE
 } from './internal/const.js';
 import {
@@ -19,7 +19,7 @@ const OBJECT = uvd.__heap.BARE_OBJECT;
 
 const {
     object, array, union,
-    string, number, boolean, bigint, date, uri,
+    string, number, boolean,
     refine, tuple, record,
     or, exclusive, intersect, not, when,
     optional, nullable,
@@ -31,7 +31,7 @@ export const diagnose = createDiagnose(uvd);
 
 export {
     object, array, union,
-    string, number, boolean, bigint, date, uri,
+    string, number, boolean,
     refine, tuple, record,
     or, exclusive, intersect, not, when,
     optional, nullable,
@@ -39,7 +39,7 @@ export {
 
 export {
     VALUE, NULL, UNDEFINED, BOOLEAN,
-    NUMBER, STRING, DATE, URI, BIGINT,
+    NUMBER, STRING,
     ANY, NEVER, TRUE, FALSE,
     ARRAY, OBJECT,
 }

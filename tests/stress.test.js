@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    BOOLEAN, NUMBER, STRING, DATE,
+    BOOLEAN, NUMBER, STRING
 } from 'uvd';
 import { catalog, allocators, createConform } from 'uvd/core';
 
@@ -251,28 +251,6 @@ describe('stress: combined registries at scale', () => {
 });
 
 describe.skip('stress: parse and strict on large objects', () => {
-    test('parse 50-field object with Dates', () => {
-        let def = {};
-        let obj = {};
-        for (let i = 0; i < 50; i++) {
-            if (i % 3 === 0) {
-                def['pf_' + i] = DATE;
-                obj['pf_' + i] = '2024-01-' + String(i % 28 + 1).padStart(2, '0');
-            } else if (i % 3 === 1) {
-                def['pf_' + i] = NUMBER;
-                obj['pf_' + i] = i;
-            } else {
-                def['pf_' + i] = STRING;
-                obj['pf_' + i] = 'val_' + i;
-            }
-        }
-        let schema = object(def);
-        expect(conform(obj, schema)).toBe(true);
-        expect(obj['pf_0']).toBeInstanceOf(Date);
-        expect(obj['pf_3']).toBeInstanceOf(Date);
-        expect(typeof obj['pf_1']).toBe('number');
-        expect(typeof obj['pf_2']).toBe('string');
-    });
 
     test('additionalProperties false rejects 30-field object with 20 extras', () => {
         let def = {};

@@ -12,7 +12,7 @@ const NULLABLE = 1 << 29;
 const OPTIONAL = 1 << 28;
 
 /**
- * Primitive type bits (bits 15-27)
+ * Primitive type bits (bits 20-27)
  *
  * Layer 1: Meta types
  *   27: ANY    - matches everything (JSON Schema true/{})
@@ -21,15 +21,12 @@ const OPTIONAL = 1 << 28;
  *
  * Layer 2: JS value types
  *   24: FALSE    23: TRUE     (BOOLEAN = FALSE | TRUE)
- *   22: NUMBER   21: STRING   20: INTEGER   19: BIGINT
- *   18: (reserved)  17: (reserved)  16: DATE  15: URI
+ *   22: NUMBER   21: STRING   20: INTEGER
  *
  * ARRAY and OBJECT are complex-only types (K_ARRAY, K_OBJECT).
  * They are no longer primitive value bits.
  *
- * Bits 9-14: Reserved for future use
- * Bit 8: CONTEXT (payload flag for sub-type enum in bits 0-7)
- * Bits 0-7: Payload data (when CONTEXT=1)
+ * Bits 0-19: Reserved for future use
  */
 const ANY = 1 << 27;
 const NEVER = 1 << 26;
@@ -40,17 +37,13 @@ const BOOLEAN = FALSE | TRUE;
 const NUMBER = 1 << 22;
 const STRING = 1 << 21;
 const INTEGER = 1 << 20;
-const BIGINT = 1 << 19;
-const DATE = 1 << 16;
-const URI = 1 << 15;
-const CONTEXT = 1 << 8;
 
 /**
  * SIMPLE: all non-header, non-container type bits (used for K_PRIMITIVE headers)
  * VALUE: true value types only (no containers, no meta types)
  */
-const SIMPLE = (ANY | NEVER | REST | FALSE | TRUE | NUMBER | STRING | INTEGER | BIGINT | DATE | URI);
-const VALUE = (FALSE | TRUE | NUMBER | STRING | INTEGER | BIGINT | DATE | URI);
+const SIMPLE = (ANY | NEVER | REST | FALSE | TRUE | NUMBER | STRING | INTEGER);
+const VALUE = (FALSE | TRUE | NUMBER | STRING | INTEGER);
 const PRIM_MASK = 0x0FFFFFFF;
 const KIND_MASK = 0x0FFFFFFF;
 
@@ -207,9 +200,8 @@ const hasOwnProperty = Object.prototype.hasOwnProperty;
 export {
     COMPLEX, NULLABLE, OPTIONAL,
     ANY, NEVER, REST, FALSE, TRUE, BOOLEAN,
-    NUMBER, STRING, INTEGER, BIGINT,
-    DATE, URI,
-    CONTEXT, SIMPLE, VALUE, PRIM_MASK, KIND_MASK,
+    NUMBER, STRING, INTEGER,
+    SIMPLE, VALUE, PRIM_MASK, KIND_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,

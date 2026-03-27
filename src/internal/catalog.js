@@ -68,7 +68,7 @@ function catalog(cfg) {
 
 
     /** Global stack tracking active dynamic scope boundaries during validation. */
-    const DYN_ANCHORS = new Uint32Array(512);
+    const DYN_ANCHORS = new Uint32Array(4);
     let DYN_PTR = 0;
 
     /**
@@ -77,15 +77,15 @@ function catalog(cfg) {
      * TRACK_BITS: [unused, bit0, bit1, ...] per frame (1 = evaluated).
      * TRACK_SNAP: snapshot buffer for branching rollback.
      */
-    let TRACK_KEYS = new Uint32Array(256);
-    let TRACK_BITS = new Uint32Array(256);  // bit-compacted: 32 keys per word
-    let TRACK_SNAP = new Uint32Array(256);  // branch workspace; index 0 is "no snapshot" sentinel
+    let TRACK_KEYS = new Uint32Array(32);
+    let TRACK_BITS = new Uint32Array(32);  // bit-compacted: 32 keys per word
+    let TRACK_SNAP = new Uint32Array(32);  // branch workspace; index 0 is "no snapshot" sentinel
     /** Arena pointer; starts at 1 because 0 is the "no tracking" sentinel for trackPtr */
     let TRACK_TAIL = 1;
     /** Stack pointer for TRACK_SNAP — starts at 1 so snapPtr=0 always means "no snapshot" */
     let SNAP_TAIL = 1;
     /** Temporary storage for unknown key strings during a single validate() call */
-    let UNKNOWN_KEYS = new Array(32);
+    let UNKNOWN_KEYS = new Array(16);
     let UNKNOWN_TAIL = 0;
 
     /**

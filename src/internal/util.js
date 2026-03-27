@@ -1,8 +1,7 @@
 import {
     COMPLEX, NULLABLE, OPTIONAL,
     ANY, NEVER, FALSE, TRUE, BOOLEAN,
-    NUMBER, STRING, INTEGER, BIGINT,
-    DATE, URI,
+    NUMBER, STRING, INTEGER,
     SIMPLE, PRIM_MASK, KIND_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
@@ -155,52 +154,13 @@ function parseValue(raw, mask, reify) {
         if (mask & NUMBER) {
             return raw;
         }
-        if (reify) {
-            if (mask & BIGINT) {
-                if (!Number.isInteger(/** @type {number} */(raw))) {
-                    return FAIL;
-                }
-                return BigInt(/** @type {number} */(raw));
-            }
-            if (mask & DATE) {
-                let date = new Date(/** @type {number} */(raw));
-                if (!isNaN(date.valueOf())) {
-                    return date;
-                }
-            }
-        }
         return FAIL;
     }
     if (jsType === 'string') {
-        if (reify) {
-            if (mask & DATE) {
-                let date = new Date(/** @type {string} */(raw));
-                if (!isNaN(date.valueOf())) {
-                    return date;
-                }
-            }
-            if ((mask & URI)) {
-                try {
-                    return new URL(/** @type {string} */(raw));
-                } catch (_) { /* fall through */ }
-            }
-            if (mask & BIGINT) {
-                try {
-                    return BigInt(/** @type {string} */(raw));
-                } catch (_) { /* fall through */ }
-            }
-        }
         if (mask & STRING) {
             return raw;
         }
         return FAIL;
-    }
-    if (
-        ((mask & BIGINT) && jsType === 'bigint') ||
-        ((mask & DATE) && raw instanceof Date) ||
-        ((mask & URI) && raw instanceof URL)
-    ) {
-        return raw;
     }
     return FAIL;
 }
@@ -220,10 +180,7 @@ function _isValue(raw, mask) {
         jsType === 'string' ? (mask & STRING) !== 0 :
             jsType === 'number' ? ((mask & NUMBER) !== 0 || ((mask & INTEGER) !== 0 && Number.isInteger(raw))) :
                 jsType === 'boolean' ? (raw ? (mask & TRUE) : (mask & FALSE)) !== 0 :
-                    jsType === 'bigint' ? (mask & BIGINT) !== 0 :
-                        raw instanceof Date ? (mask & DATE) !== 0 :
-                            raw instanceof URL ? (mask & URI) !== 0 :
-                                false
+                    false
     );
 }
 
@@ -246,9 +203,6 @@ function describePrimBits(bits, parts) {
     if (bits & NUMBER) parts.push('number');
     if (bits & STRING) parts.push('string');
     if (bits & INTEGER) parts.push('integer');
-    if (bits & BIGINT) parts.push('bigint');
-    if (bits & DATE) parts.push('Date');
-    if (bits & URI) parts.push('URL');
 }
 
 /**

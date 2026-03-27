@@ -1,7 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    UNDEFINED, NULL, BOOLEAN, NUMBER,
-    STRING, BIGINT, DATE, URI, VALUE
+    UNDEFINED, NULL, BOOLEAN, NUMBER, STRING, VALUE
 } from 'uvd';
 import { catalog, allocators, createConform } from 'uvd/core';
 
@@ -167,27 +166,6 @@ describe.skip('parse: objects', () => {
         expect(obj).toEqual({ s: 'hello', n: 42, b: true });
     });
 
-    test('parse casts Date fields from strings', () => {
-        let schema = object({ created: DATE });
-        let obj = { created: '2024-06-15T12:00:00Z' };
-        expect(conform(obj, schema)).toBe(true);
-        expect(obj.created).toBeInstanceOf(Date);
-    });
-
-    test('parse casts URI fields from strings', () => {
-        let schema = object({ url: URI });
-        let obj = { url: 'https://vilhelm.se/page' };
-        expect(conform(obj, schema)).toBe(true);
-        expect(obj.url).toBeInstanceOf(URL);
-    });
-
-    test('parse casts BigInt fields from strings', () => {
-        let schema = object({ big: BIGINT });
-        let obj = { big: '99999999999999999' };
-        expect(conform(obj, schema)).toBe(true);
-        expect(typeof obj.big).toBe('bigint');
-    });
-
     test('parse rejects wrong native types', () => {
         let schema = object({ s: STRING, n: NUMBER });
         expect(conform({ s: 42, n: 42 }, schema)).toBe(false);
@@ -200,19 +178,6 @@ describe.skip('parse: objects', () => {
         expect(conform({ a: 'hello', b: 42 }, schema)).toBe(true);
         expect(conform({ a: 'hello', b: 'nope' }, schema)).toBe(false);
     });
-
-    test('parse nested object with rich types', () => {
-        let schema = object({
-            meta: {
-                created: DATE,
-                url: URI | NULL
-            }
-        });
-        let obj = { meta: { created: '2024-01-01', url: 'https://vilhelm.se' } };
-        expect(conform(obj, schema)).toBe(true);
-        expect(obj.meta.created).toBeInstanceOf(Date);
-        expect(obj.meta.url).toBeInstanceOf(URL);
-    });
 });
 
 describe('object: field with all types allowed', () => {
@@ -221,9 +186,6 @@ describe('object: field with all types allowed', () => {
         expect(validate({ any: 'string' }, schema)).toBe(true);
         expect(validate({ any: 42 }, schema)).toBe(true);
         expect(validate({ any: true }, schema)).toBe(true);
-        expect(validate({ any: BigInt(1) }, schema)).toBe(true);
-        expect(validate({ any: new Date() }, schema)).toBe(true);
-        expect(validate({ any: new URL('https://vilhelm.se') }, schema)).toBe(true);
         expect(validate({ any: null }, schema)).toBe(true);
         expect(validate({ any: undefined }, schema)).toBe(true);
         expect(validate({}, schema)).toBe(true);  // any is undefined

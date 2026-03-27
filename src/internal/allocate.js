@@ -2,7 +2,7 @@
 import {
     COMPLEX, NULLABLE, OPTIONAL,
     TRUE, FALSE, NEVER,
-    STRING, NUMBER, BOOLEAN, BIGINT, DATE, URI, INTEGER,
+    STRING, NUMBER, BOOLEAN, INTEGER,
     PRIM_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
@@ -514,9 +514,6 @@ function allocators(cat) {
         string: (opts) => valueImpl(ctx, STRING, opts),
         number: (opts) => valueImpl(ctx, NUMBER, opts),
         boolean: (opts) => valueImpl(ctx, BOOLEAN, opts),
-        bigint: (opts) => valueImpl(ctx, BIGINT, opts),
-        date: (opts) => valueImpl(ctx, DATE, opts),
-        uri: (opts) => valueImpl(ctx, URI, opts),
         refine: (typedef, fn) => refineImpl(ctx, typedef, fn),
         tuple: (first, second, third) => tupleArrayImpl(ctx, normalizeTypeArgs(first, second, third)),
         record: (valueType) => recordImpl(ctx, valueType),

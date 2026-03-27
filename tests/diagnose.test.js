@@ -1,7 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    UNDEFINED, NULL, BOOLEAN, NUMBER,
-    STRING, BIGINT, DATE, URI
+    UNDEFINED, NULL, BOOLEAN, NUMBER, STRING
 } from 'uvd';
 import { catalog, allocators, createDiagnose } from 'uvd/core';
 

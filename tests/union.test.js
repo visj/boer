@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    UNDEFINED, NULL, NUMBER, STRING, DATE
+    UNDEFINED, NULL, NUMBER, STRING
 } from 'uvd';
 import { catalog, allocators, createConform } from 'uvd/core';
 
@@ -85,22 +85,6 @@ describe('validate: union with many variants', () => {
 
     test('wrong fields for variant', () => {
         expect(validate({ event: 'click', key: 'a' }, EventUnion)).toBe(false);
-    });
-});
-
-describe('validate: union with rich types', () => {
-    let LogEntry = union('level', {
-        info: object({ level: STRING, message: STRING, ts: DATE }),
-        error: object({ level: STRING, message: STRING, ts: DATE, stack: STRING })
-    });
-
-    test('validates with Date instances', () => {
-        expect(validate({ level: 'info', message: 'ok', ts: new Date() }, LogEntry)).toBe(true);
-        expect(validate({ level: 'error', message: 'fail', ts: new Date(), stack: 'at...' }, LogEntry)).toBe(true);
-    });
-
-    test('rejects with string dates (validate is strict)', () => {
-        expect(validate({ level: 'info', message: 'ok', ts: '2024-01-01' }, LogEntry)).toBe(false);
     });
 });
 
@@ -204,28 +188,6 @@ describe('validate: array of unions', () => {
             { type: 'text', body: 'hello' },
             { type: 'video', src: 'x.mp4' }  // unknown variant
         ], type)).toBe(false);
-    });
-});
-
-describe.skip('parse: unions', () => {
-    let ItemUnion = union('kind', {
-        product: object({ kind: STRING, name: STRING, price: NUMBER }),
-        service: object({ kind: STRING, name: STRING, hourly: NUMBER, since: DATE })
-    });
-
-    test('parse validates native types strictly', () => {
-        expect(conform({ kind: 'product', name: 'Widget', price: 9.99 }, ItemUnion)).toBe(true);
-        expect(conform({ kind: 'product', name: 'Widget', price: '9.99' }, ItemUnion)).toBe(false);
-    });
-
-    test('parse casts rich types (Date)', () => {
-        let obj = { kind: 'service', name: 'Consulting', hourly: 150, since: '2024-01-01' };
-        expect(conform(obj, ItemUnion)).toBe(true);
-        expect(obj.since).toBeInstanceOf(Date);
-    });
-
-    test('parse nullable union', () => {
-        expect(conform(null, ItemUnion | NULL)).toBe(true);
     });
 });
 
