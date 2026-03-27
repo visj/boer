@@ -10,10 +10,10 @@ const { validate } = cat;
 const conform = createConform(cat);
 
 describe('discriminated: schema builder', () => {
-    test('returns a complex typedef (bit 31 set)', () => {
+    test('returns a complex typedef (bit 0 set)', () => {
         let type = union('kind', { a: object({ kind: STRING }), b: object({ kind: STRING }) });
         expect(typeof type).toBe('number');
-        expect(type >>> 31).toBe(1);
+        expect(type & 1).toBe(1);
     });
 
     test('throws on null variants', () => {

@@ -1,7 +1,7 @@
 /// <reference path="../../global.d.ts" />
 import {
     COMPLEX, NULLABLE, OPTIONAL,
-    ANY, REST, SIMPLE, PRIM_MASK, KIND_MASK,
+    ANY, REST, SIMPLE, PRIM_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
@@ -33,7 +33,14 @@ function createConform(cat) {
     function _parseSlot(holder, slot, type, reify) {
         let data = holder[slot];
         if (data == null) {
-            return (data === null ? (type & NULLABLE) : (type & OPTIONAL)) !== 0;
+            if ((data === null ? (type & NULLABLE) : (type & OPTIONAL)) !== 0) {
+                return true;
+            }
+            /** ANY (bit 3) without NULLABLE/OPTIONAL still accepts null/undefined */
+            if ((type & COMPLEX) === 0 && (type & ANY) !== 0) {
+                return true;
+            }
+            return false;
         }
         if (type & COMPLEX) {
             return _conform(data, type, reify);
@@ -57,16 +64,23 @@ function createConform(cat) {
      * @returns {boolean}
      */
     function _conform(data, typedef, reify) {
-        if (typedef & ANY) {
-            return true;
-        }
         if (data == null) {
-            return (data === null ? (typedef & NULLABLE) : (typedef & OPTIONAL)) !== 0;
+            if ((data === null ? (typedef & NULLABLE) : (typedef & OPTIONAL)) !== 0) {
+                return true;
+            }
+            /**
+             * Primitive typedef: ANY accepts everything (including null/undefined).
+             * ANY = bit 3 is safe to check here since COMPLEX = bit 0 would be 0.
+             */
+            if (!(typedef & COMPLEX) && (typedef & ANY)) {
+                return true;
+            }
+            return false;
         }
         if (typedef & COMPLEX) {
             let hp = HEAP;
             let kinds = hp.KINDS;
-            let ptr = typedef & KIND_MASK;
+            let ptr = typedef >>> 3;
             let header = kinds[ptr];
             let ct = header & KIND_ENUM_MASK;
 
@@ -78,7 +92,13 @@ function createConform(cat) {
                 if (ct === K_RECORD || ct === K_OBJECT) {
                     return typeof data === 'object' && data !== null && !Array.isArray(data);
                 }
-                return false;
+                /**
+                 * K_PRIMITIVE + K_ANY_INNER: the original type included ANY.
+                 * Fall through to K_PRIMITIVE dispatch which skips the type check.
+                 */
+                if (ct !== K_PRIMITIVE) {
+                    return false;
+                }
             }
 
             let ri = kinds[ptr + 1];
@@ -86,6 +106,15 @@ function createConform(cat) {
             switch (ct) {
                 case K_PRIMITIVE: {
                     let vm = header & SIMPLE;
+                    /**
+                     * K_ANY_INNER means the type included ANY — accept any non-null value.
+                     * If VALUE bits are present, still try to coerce (e.g. string→number).
+                     * If no VALUE bits (pure ANY), accept unconditionally.
+                     */
+                    if (header & K_ANY_INNER) {
+                        if (vm === 0) { return true; }
+                        return parseValue(data, vm, reify) !== FAIL;
+                    }
                     return vm !== 0 && parseValue(data, vm, reify) !== FAIL;
                 }
                 case K_OBJECT: {
@@ -245,9 +274,9 @@ function createConform(cat) {
                     let thenType = slab[offset + 1];
                     let elseType = slab[offset + 2];
                     if (_conform(data, ifType, reify)) {
-                        return thenType === 0 ? true : _conform(data, thenType, reify);
+                        return _conform(data, thenType, reify);
                     } else {
-                        return elseType === 0 ? true : _conform(data, elseType, reify);
+                        return _conform(data, elseType, reify);
                     }
                 }
                 default: {

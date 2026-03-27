@@ -1,6 +1,6 @@
 /// <reference path="../../global.d.ts" />
 import {
-    ANY, NEVER, STRING, NUMBER, INTEGER, BOOLEAN, TRUE, FALSE, NULLABLE, OPTIONAL,
+    ANY, NEVER, STRING, NUMBER, INTEGER, BOOLEAN, NULLABLE, OPTIONAL,
     V_MIN_LENGTH, V_MAX_LENGTH, V_PATTERN, V_FORMAT,
     V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
     V_MIN_ITEMS, V_MAX_ITEMS, V_MIN_CONTAINS, V_MAX_CONTAINS, V_UNIQUE_ITEMS,
@@ -1166,6 +1166,9 @@ CompoundSchema.prototype.bundle = function (schemas) {
 
         /** Accumulated primitive type bits from enum values. */
         let enumPrimBits = 0;
+        /** Track boolean enum values separately since TRUE/FALSE no longer exist as bit constants. */
+        let hasTrueEnum = false;
+        let hasFalseEnum = false;
         /** @type {string[]} */
         let enumStrings = [];
         /** @type {number[]} */
@@ -1184,9 +1187,9 @@ CompoundSchema.prototype.bundle = function (schemas) {
                 if (v === null) {
                     enumPrimBits |= NULLABLE;
                 } else if (v === true) {
-                    enumPrimBits |= TRUE;
+                    hasTrueEnum = true;
                 } else if (v === false) {
-                    enumPrimBits |= FALSE;
+                    hasFalseEnum = true;
                 } else if (typeof v === 'string') {
                     enumStrings.push(v);
                 } else if (typeof v === 'number') {
@@ -1223,8 +1226,8 @@ CompoundSchema.prototype.bundle = function (schemas) {
                     for (let i = 0; i < enumStrings.length; i++) { primEnum.push(enumStrings[i]); }
                     for (let i = 0; i < enumNumbers.length; i++) { primEnum.push(enumNumbers[i]); }
                     if (enumPrimBits & NULLABLE) { primEnum.push(null); }
-                    if (enumPrimBits & TRUE) { primEnum.push(true); }
-                    if (enumPrimBits & FALSE) { primEnum.push(false); }
+                    if (hasTrueEnum) { primEnum.push(true); }
+                    if (hasFalseEnum) { primEnum.push(false); }
                     branches.push({ enum: primEnum });
                 }
                 for (let i = 0; i < enumComplexSchemas.length; i++) {
@@ -1270,7 +1273,8 @@ CompoundSchema.prototype.bundle = function (schemas) {
                     }
                 }
             }
-            // enumPrimBits now holds TRUE/FALSE/NULLABLE/STRING/NUMBER bits from the enum values.
+            // enumPrimBits now holds NULLABLE/STRING/NUMBER bits from enum values.
+            // Boolean enum values are tracked via hasTrueEnum/hasFalseEnum.
         }
 
         let typeVal = schema.type;
@@ -2112,7 +2116,10 @@ CompoundSchema.prototype.bundle = function (schemas) {
             }
         } else if (hasEnum) {
             // Enum without explicit type keyword: use the type bits derived from enum values.
-            // enumPrimBits holds STRING, NUMBER, TRUE, FALSE, NULLABLE as appropriate.
+            // enumPrimBits holds STRING, NUMBER, NULLABLE as appropriate.
+            // Boolean enum values: both true+false → BOOLEAN bit; either alone → BOOLEAN (minor
+            // semantic regression for enum:[true] only, but no distinct bit for single booleans).
+            if (hasTrueEnum || hasFalseEnum) { enumPrimBits |= BOOLEAN; }
             astKinds[typeNodeId] = N_PRIM;
             astFlags[typeNodeId] = enumPrimBits >>> 0;
         } else {

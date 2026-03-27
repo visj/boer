@@ -1,8 +1,8 @@
 import {
     COMPLEX, NULLABLE, OPTIONAL,
-    ANY, NEVER, FALSE, TRUE, BOOLEAN,
+    ANY, BOOLEAN,
     NUMBER, STRING, INTEGER,
-    SIMPLE, PRIM_MASK, KIND_MASK,
+    SIMPLE, PRIM_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
@@ -148,7 +148,7 @@ function parseValue(raw, mask, reify) {
     }
     let jsType = typeof raw;
     if (jsType === 'boolean') {
-        return (raw ? (mask & TRUE) : (mask & FALSE)) ? raw : FAIL;
+        return (mask & BOOLEAN) ? raw : FAIL;
     }
     if (jsType === 'number') {
         if (mask & NUMBER) {
@@ -179,7 +179,7 @@ function _isValue(raw, mask) {
     return (
         jsType === 'string' ? (mask & STRING) !== 0 :
             jsType === 'number' ? ((mask & NUMBER) !== 0 || ((mask & INTEGER) !== 0 && Number.isInteger(raw))) :
-                jsType === 'boolean' ? (raw ? (mask & TRUE) : (mask & FALSE)) !== 0 :
+                jsType === 'boolean' ? (mask & BOOLEAN) !== 0 :
                     false
     );
 }
@@ -193,16 +193,10 @@ function _isValue(raw, mask) {
  */
 function describePrimBits(bits, parts) {
     if (bits & ANY) { parts.push('any'); return; }
-    if (bits & NEVER) { parts.push('never'); return; }
-    if ((bits & BOOLEAN) === BOOLEAN) {
-        parts.push('boolean');
-    } else {
-        if (bits & TRUE) parts.push('true');
-        if (bits & FALSE) parts.push('false');
-    }
-    if (bits & NUMBER) parts.push('number');
-    if (bits & STRING) parts.push('string');
-    if (bits & INTEGER) parts.push('integer');
+    if (bits & BOOLEAN) { parts.push('boolean'); }
+    if (bits & NUMBER) { parts.push('number'); }
+    if (bits & STRING) { parts.push('string'); }
+    if (bits & INTEGER) { parts.push('integer'); }
 }
 
 /**
@@ -221,7 +215,7 @@ function describeType(type, kinds) {
         parts.push('null');
     }
     if (type & COMPLEX) {
-        let ptr = type & KIND_MASK;
+        let ptr = type >>> 3;
         let header = kinds[ptr];
         let ct = header & KIND_ENUM_MASK;
         switch (ct) {

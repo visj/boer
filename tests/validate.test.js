@@ -23,11 +23,11 @@ describe('validate: primitive builders — no args', () => {
 describe('validate: primitive builders — with validators', () => {
     test('string({minLength}) returns a COMPLEX typedef', () => {
         let td = string({ minLength: 5 });
-        expect(td >>> 31).toBe(1);
+        expect(td & 1).toBe(1);
     });
     test('number({minimum}) returns a COMPLEX typedef', () => {
         let td = number({ minimum: 0 });
-        expect(td >>> 31).toBe(1);
+        expect(td & 1).toBe(1);
     });
 });
 

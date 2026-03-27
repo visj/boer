@@ -1,7 +1,7 @@
 /// <reference path="../../global.d.ts" />
 import {
     COMPLEX, NULLABLE, OPTIONAL,
-    TRUE, FALSE, NEVER,
+    ANY,
     STRING, NUMBER, BOOLEAN, INTEGER,
     PRIM_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
@@ -129,8 +129,8 @@ function tupleArrayImpl(ctx, types) {
 /**
  * Encodes a single literal value as a zero-allocation typedef.
  *   null    → NULLABLE pointer
- *   true    → TRUE primitive bit
- *   false   → FALSE primitive bit
+ *   true    → K_REFINE(BOOLEAN, v => v === true)
+ *   false   → K_REFINE(BOOLEAN, v => v === false)
  *   string  → K_PRIMITIVE | STRING | K_VALIDATOR with V_ENUM [1, keyId]
  *   number  → K_PRIMITIVE | NUMBER | K_VALIDATOR with V_ENUM [1, num]
  *   array   → K_TUPLE with each element recursively desugared
@@ -141,8 +141,8 @@ function tupleArrayImpl(ctx, types) {
  */
 function literalImpl(ctx, value) {
     if (value === null) { return NULLABLE; }
-    if (value === true) { return TRUE; }
-    if (value === false) { return FALSE; }
+    if (value === true) { return refineImpl(ctx, BOOLEAN, v => v === true); }
+    if (value === false) { return refineImpl(ctx, BOOLEAN, v => v === false); }
     if (typeof value === 'string') {
         let keyId = ctx.lookup(value);
         let valIdx = ctx.allocValidator(V_ENUM, [1, keyId]);
@@ -169,7 +169,7 @@ function literalImpl(ctx, value) {
         }
         return objectImpl(ctx, def, { additionalProperties: false });
     }
-    return NEVER;
+    return 0;
 }
 
 /**
@@ -186,22 +186,32 @@ function literalImpl(ctx, value) {
  * @returns {number}
  */
 function enumImpl(ctx, values) {
-    if (!Array.isArray(values) || values.length === 0) { return NEVER; }
+    if (!Array.isArray(values) || values.length === 0) { return 0; }
     /** @type {string[]} */
     let strings = [];
     /** @type {number[]} */
     let numbers = [];
     let enumPrimBits = 0;
+    let hasTrueFlag = false;
+    let hasFalseFlag = false;
     /** @type {number[]} */
     let complexTypes = [];
     for (let i = 0; i < values.length; i++) {
         let v = values[i];
         if (v === null) { enumPrimBits |= NULLABLE; }
-        else if (v === true) { enumPrimBits |= TRUE; }
-        else if (v === false) { enumPrimBits |= FALSE; }
+        else if (v === true) { hasTrueFlag = true; }
+        else if (v === false) { hasFalseFlag = true; }
         else if (typeof v === 'string') { strings.push(v); }
         else if (typeof v === 'number') { numbers.push(v); }
         else { complexTypes.push(literalImpl(ctx, v)); }
+    }
+    /** Merge boolean flags: both present → BOOLEAN bit; only one → K_REFINE for exact match */
+    if (hasTrueFlag && hasFalseFlag) {
+        enumPrimBits |= BOOLEAN;
+    } else if (hasTrueFlag) {
+        complexTypes.push(literalImpl(ctx, true));
+    } else if (hasFalseFlag) {
+        complexTypes.push(literalImpl(ctx, false));
     }
     let primType = 0;
     let payloadBits = enumPrimBits;
@@ -326,11 +336,13 @@ function notImpl(ctx, typedef) {
  */
 function whenImpl(ctx, config) {
     // Always store 3 slots: [if, then, else]
-    // Use 0 as sentinel for "no constraint" (always passes)
+    // Use ANY|NULLABLE|OPTIONAL as the "absent branch" sentinel (accepts any value).
+    // We cannot use 0 because NEVER = 0 would be indistinguishable from "no constraint".
+    let absentBranch = (ANY | NULLABLE | OPTIONAL) >>> 0;
     let types = [
         config.if >>> 0,
-        config.then !== void 0 ? config.then >>> 0 : 0,
-        config.else !== void 0 ? config.else >>> 0 : 0
+        config.then !== void 0 ? config.then >>> 0 : absentBranch,
+        config.else !== void 0 ? config.else >>> 0 : absentBranch
     ];
     return ctx.malloc(K_CONDITIONAL, 0, types, types.length, 0, null);
 }
@@ -352,11 +364,11 @@ function objectImpl(ctx, definition, opts) {
         let key = keys[i];
         let type = definition[key];
         if (isNumber(type)) {
-            let isComplex = (type >>> 31) === 1;
+            let isComplex = (type & COMPLEX) !== 0;
             if (isComplex) {
-                let payload = type & PRIM_MASK;
+                let kIndex = type >>> 3;
                 let kindLimit = ctx.HEAP.KIND_PTR;
-                if (payload >= kindLimit) {
+                if (kIndex >= kindLimit) {
                     throw new Error('Object corruption at key ' + key + '. You cannot use the bitwise OR operator (|) to combine a complex type with a primitive type');
                 }
             }

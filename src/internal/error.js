@@ -1,7 +1,7 @@
 /// <reference path="../../global.d.ts" />
 import {
     COMPLEX, NULLABLE, OPTIONAL,
-    ANY, REST, SIMPLE, PRIM_MASK, KIND_MASK,
+    ANY, REST, SIMPLE, PRIM_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
@@ -32,14 +32,16 @@ function createDiagnose(cat) {
      */
     function _diagnose(data, typedef, path, errors) {
         const kinds = HEAP.KINDS;
+        /** ANY (primitive, bit 3) accepts everything including null/undefined */
+        let isAny = (typedef & COMPLEX) === 0 && (typedef & ANY) !== 0;
         if (data === void 0) {
-            if (!(typedef & OPTIONAL)) {
+            if (!isAny && !(typedef & OPTIONAL)) {
                 errors.push({ path, message: 'unexpected undefined, expected ' + describeType(typedef, kinds) });
             }
             return;
         }
         if (data === null) {
-            if (!(typedef & NULLABLE)) {
+            if (!isAny && !(typedef & NULLABLE)) {
                 errors.push({ path, message: 'unexpected null, expected ' + describeType(typedef, kinds) });
             }
             return;
@@ -47,7 +49,7 @@ function createDiagnose(cat) {
         if (typedef & COMPLEX) {
             let hp = HEAP;
             let kinds = hp.KINDS;
-            let ptr = typedef & KIND_MASK;
+            let ptr = typedef >>> 3;
             let header = kinds[ptr];
             let ct = header & KIND_ENUM_MASK;
 
@@ -57,12 +59,20 @@ function createDiagnose(cat) {
                     if (!Array.isArray(data)) {
                         errors.push({ path, message: 'expected array, got ' + typeof data });
                     }
+                    return;
                 } else if (ct === K_RECORD || ct === K_OBJECT) {
                     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                         errors.push({ path, message: 'expected object, got ' + typeof data });
                     }
+                    return;
                 }
-                return;
+                /**
+                 * K_PRIMITIVE + K_ANY_INNER: the original type included ANY.
+                 * Fall through to K_PRIMITIVE dispatch which skips the _isValue check.
+                 */
+                if (ct !== K_PRIMITIVE) {
+                    return;
+                }
             }
 
             let ri = kinds[ptr + 1];
@@ -70,6 +80,13 @@ function createDiagnose(cat) {
             switch (ct) {
                 case K_PRIMITIVE: {
                     let primBits = header & SIMPLE;
+                    /**
+                     * K_ANY_INNER means ANY was set — accept any non-null value.
+                     * Skip the type check when there are no specific VALUE bits.
+                     */
+                    if ((header & K_ANY_INNER) && primBits === 0) {
+                        return;
+                    }
                     if (primBits === 0 || !_isValue(data, primBits)) {
                         /** @type {string} */
                         let type = typeof data;
@@ -251,13 +268,9 @@ function createDiagnose(cat) {
                     let thenType = slab[offset + 1];
                     let elseType = slab[offset + 2];
                     if (_validate(data, ifType)) {
-                        if (thenType !== 0) {
-                            _diagnose(data, thenType, path, errors);
-                        }
+                        _diagnose(data, thenType, path, errors);
                     } else {
-                        if (elseType !== 0) {
-                            _diagnose(data, elseType, path, errors);
-                        }
+                        _diagnose(data, elseType, path, errors);
                     }
                     return;
                 }

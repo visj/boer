@@ -250,4 +250,40 @@ group('Enterprise JSON Schema Validation (1.5KB Payload)', () => {
 
 });
 
+group('Enterprise JSON Schema Validation (1.5KB Payload)', () => {
+
+    bench('Recursive Baseline (Theoretical Floor)', function* () {
+        yield {
+            [0]() { return JSON.parse(jsonStr); },
+            bench(data) { theoreticalBaseline(data); }
+        };
+    });
+
+    bench('Zod (AST Interpreter)', function* () {
+        yield {
+            [0]() { return JSON.parse(jsonStr); },
+            // safeParse is equivalent here, avoiding try/catch deopts 
+            // and returning a pure boolean indicator (success).
+            bench(data) { return ZodOrder.safeParse(data).success; }
+        };
+    });
+
+    bench('Ajv (v8) - Draft 7', function* () {
+        yield {
+            [0]() { return JSON.parse(jsonStr); },
+            bench(data) { return ajvValidate(data); }
+        };
+    });
+
+    bench('uvd (In-Place Bitwise VM)', function* () {
+        yield {
+            [0]() { return JSON.parse(jsonStr); },
+            bench(data) { 
+                return validate(data, uvdRootPtr);
+            }
+        };
+    });
+
+});
+
 await run({ colors: true });

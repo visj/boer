@@ -18,8 +18,8 @@ describe('arrays.test.js', () => {
             expect(typeof array(NUMBER)).toBe('number');
         });
 
-        test('returns a complex typedef (bit 31 set)', () => {
-            expect(array(NUMBER) >>> 31).toBe(1);
+        test('returns a complex typedef (bit 0 set)', () => {
+            expect(array(NUMBER) & 1).toBe(1);
         });
 
         test('throws on non-number element type', () => {

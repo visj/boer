@@ -9,7 +9,7 @@ import {
     BARE_ARRAY, BARE_OBJECT, BARE_RECORD
 } from "./catalog.js";
 
-import { popcnt16, REST, ANY, STRING, NUMBER, INTEGER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS, V_ENUM, V_CONTAINS, V_PROPERTY_NAMES, K_HAS_ITEMS } from "./const.js";
+import { popcnt16, REST, ANY, STRING, NUMBER, INTEGER, VALUE, K_ANY_INNER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS, V_ENUM, V_CONTAINS, V_PROPERTY_NAMES, K_HAS_ITEMS } from "./const.js";
 
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
@@ -205,7 +205,15 @@ export function compile(cat, ast) {
                 }
                 /** K_PRIMITIVE stores the validator index as inline (KINDS slot 1). */
                 let valIdx = allocValidator(vHeader, nodePayloads);
-                let result = malloc(K_PRIMITIVE | K_VALIDATOR | primBits, valIdx, null, 0, 0, null);
+                /**
+                 * Strip ANY (bit 3) from the KINDS header bits to avoid K_TUPLE (=8)
+                 * collision with KIND_ENUM_MASK. Store only VALUE bits (4-7) in the header.
+                 * Signal the ANY case via K_ANY_INNER instead.
+                 */
+                let kindHeaderBits = primBits & VALUE;
+                let kindFlags = K_PRIMITIVE | K_VALIDATOR | kindHeaderBits;
+                if (primBits & ANY) { kindFlags = (kindFlags | K_ANY_INNER) >>> 0; }
+                let result = malloc(kindFlags, valIdx, null, 0, 0, null);
                 // Preserve NULLABLE / OPTIONAL on the typedef pointer so the null/undefined
                 // fast-paths in _validate fire correctly (primBits NULLABLE/OPTIONAL are
                 // stripped by `header & SIMPLE` inside K_PRIMITIVE dispatch).
@@ -278,7 +286,11 @@ export function compile(cat, ast) {
                 // Circular dependency — reserve kind slots for later patching
                 let kindPtr = HEAP.KIND_PTR;
                 HEAP.KIND_PTR += 2;
-                astCompiled[nodeId] = (COMPLEX | kindPtr) >>> 0;
+                /**
+                 * New encoding: COMPLEX bit at 0, KINDS index in bits 3+.
+                 * Must use (1 | (kindPtr << 3)) not (COMPLEX | kindPtr).
+                 */
+                astCompiled[nodeId] = (1 | (kindPtr << 3)) >>> 0;
                 astState[nodeId] = COMPILED;
                 circularPatches.push([nodeId, targetId, kindPtr]);
                 continue;
@@ -509,8 +521,15 @@ export function compile(cat, ast) {
 
                 // propertyNames child (bit 3)
                 let propertyNamesType = 0;
+                /**
+                 * Track whether propertyNames was provided separately from its compiled value.
+                 * We cannot use `propertyNamesType !== 0` because `false` schema compiles to
+                 * NEVER = 0, which would be indistinguishable from "not provided".
+                 */
+                let hasPropertyNames = false;
                 if (objFlags & 8) {
                     propertyNamesType = astCompiled[astEdges[extraOff]] >>> 0;
+                    hasPropertyNames = true;
                     extraOff++;
                 }
 
@@ -538,7 +557,7 @@ export function compile(cat, ast) {
                 if (patPayloads !== null || additionalType !== 0
                     || (astVHeaders[nodeId] & V_ADDITIONAL_PROPERTIES)
                     || (astVHeaders[nodeId] & V_DEPENDENT_REQUIRED)
-                    || propertyNamesType !== 0
+                    || hasPropertyNames
                     || depSchemaPayloads !== null) {
                     let vHeader = astVHeaders[nodeId];
                     let off = astVOffset[nodeId];
@@ -566,7 +585,7 @@ export function compile(cat, ast) {
                     }
 
                     // 3. V_PROPERTY_NAMES (1 slot: compiled typedef)
-                    if (propertyNamesType !== 0) {
+                    if (hasPropertyNames) {
                         vHeader |= V_PROPERTY_NAMES;
                         nodePayloads.push(propertyNamesType);
                     }
@@ -710,8 +729,14 @@ export function compile(cat, ast) {
             case N_CONDITIONAL: {
                 let base = astChild0[nodeId];
                 let ifType = astCompiled[astEdges[base]];
-                let thenType = astEdges[base + 1] !== SENTINEL ? astCompiled[astEdges[base + 1]] : 0;
-                let elseType = astEdges[base + 2] !== SENTINEL ? astCompiled[astEdges[base + 2]] : 0;
+                /**
+                 * Use ANY|NULLABLE|OPTIONAL (= 14) as the "absent branch" sentinel.
+                 * We cannot use 0 because NEVER = 0 (false schema) also produces 0,
+                 * and K_CONDITIONAL must distinguish "no constraint" from "reject all".
+                 */
+                let absentBranch = (ANY | NULLABLE | OPTIONAL) >>> 0;
+                let thenType = astEdges[base + 1] !== SENTINEL ? astCompiled[astEdges[base + 1]] : absentBranch;
+                let elseType = astEdges[base + 2] !== SENTINEL ? astCompiled[astEdges[base + 2]] : absentBranch;
                 let types = [ifType, thenType, elseType];
                 astCompiled[nodeId] = malloc(K_CONDITIONAL, 0, types, types.length, 0, null);
                 break;
@@ -821,12 +846,20 @@ export function compile(cat, ast) {
         let [refNodeId, targetId, kindPtr] = circularPatches[i];
         let compiled = astCompiled[targetId];
         if ((compiled & COMPLEX) === 0) {
-            // Raw primitive → promote to K_PRIMITIVE
-            HEAP.KINDS[kindPtr] = K_PRIMITIVE | compiled;
+            /**
+             * Primitive typedef → promote to K_PRIMITIVE in KINDS.
+             * Strip ANY (bit 3) from the header to avoid K_TUPLE (=8) collision with
+             * KIND_ENUM_MASK. Store only VALUE bits (4-7) in the header and use
+             * K_ANY_INNER to signal that the original type included ANY.
+             */
+            let primBits = compiled & VALUE;
+            let kindHeader = K_PRIMITIVE | primBits;
+            if (compiled & ANY) { kindHeader = (kindHeader | K_ANY_INNER) >>> 0; }
+            HEAP.KINDS[kindPtr] = kindHeader;
             HEAP.KINDS[kindPtr + 1] = 0;
         } else {
             // Complex type → copy the kind entry
-            let realPtr = compiled & KIND_MASK;
+            let realPtr = compiled >>> 3;
             HEAP.KINDS[kindPtr] = HEAP.KINDS[realPtr];
             HEAP.KINDS[kindPtr + 1] = HEAP.KINDS[realPtr + 1];
         }
@@ -838,7 +871,7 @@ export function compile(cat, ast) {
     for (let i = 0; i < dynRefPatches.length; i++) {
         let [targetId, dynRefType] = dynRefPatches[i];
         let compiled = astCompiled[targetId] >>> 0;
-        let ptr = dynRefType & KIND_MASK;
+        let ptr = dynRefType >>> 3;
         let ri = HEAP.KINDS[ptr + 1];
         let offset = HEAP.SHAPES[ri * 2];
         HEAP.SLAB[offset + 1] = compiled;

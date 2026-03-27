@@ -2,7 +2,7 @@
 import { config, heap } from './config.js';
 import {
     COMPLEX, NULLABLE, OPTIONAL,
-    ANY, NEVER, REST, SIMPLE, PRIM_MASK, KIND_MASK,
+    ANY, REST, SIMPLE, PRIM_MASK,
     STRING,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
@@ -27,11 +27,12 @@ import {
 
 /**
  * Pre-allocated typedef pointers for common bare complex types.
- * These point directly into KINDS[0..2] and avoid any registry allocation.
+ * KINDS[0] = K_ARRAY|K_ANY_INNER, KINDS[1] = K_OBJECT|K_ANY_INNER, KINDS[2] = K_RECORD|K_ANY_INNER.
+ * Encoding: (1 | (ptr << 3)) where ptr is the raw KINDS array index.
  */
-export const BARE_ARRAY = (COMPLEX | 0) >>> 0;
-export const BARE_OBJECT = (COMPLEX | 1) >>> 0;
-export const BARE_RECORD = (COMPLEX | 2) >>> 0;
+export const BARE_ARRAY = (1 | (0 << 3)) >>> 0;   // KINDS[0]
+export const BARE_OBJECT = (1 | (1 << 3)) >>> 0;  // KINDS[1]
+export const BARE_RECORD = (1 | (2 << 3)) >>> 0;  // KINDS[2]
 
 /**
  * @template {symbol} R
@@ -228,7 +229,8 @@ function catalog(cfg) {
         HEAP.KINDS[ptr + 1] = ri;
         if (slots === 3) { HEAP.KINDS[ptr + 2] = valIdx; }
         HEAP.KIND_PTR += slots;
-        return (COMPLEX | ptr) >>> 0;
+        /** COMPLEX = bit 0, KINDS index encoded in bits 3+: (1 | (ptr << 3)) */
+        return (1 | (ptr << 3)) >>> 0;
     }
 
     /**
@@ -591,10 +593,29 @@ function catalog(cfg) {
      * @param {number} type
      * @returns {boolean}
      */
+    /**
+     * Whether a primitive (non-complex) typedef accepts null or undefined via ANY.
+     * ANY = bit 3; COMPLEX = bit 0. Safe to check after confirming !(type & COMPLEX).
+     * @param {number} type
+     * @returns {boolean}
+     */
+    function _primitiveAcceptsNull(type) {
+        return (type & COMPLEX) === 0 && (type & ANY) !== 0;
+    }
+
     function _validateSlot(raw, type) {
         return (
+            /**
+             * undefined = absent field: only OPTIONAL bit permits this.
+             * ANY (bit 3) does NOT make absent fields valid — that would break
+             * JSON Schema `required` keyword semantics.
+             */
             raw === void 0 ? (type & OPTIONAL) !== 0 :
-                raw === null ? (type & NULLABLE) !== 0 :
+                /**
+                 * null: NULLABLE permits it; for primitive ANY without NULLABLE,
+                 * _primitiveAcceptsNull handles the fallback.
+                 */
+                raw === null ? (type & NULLABLE) !== 0 || _primitiveAcceptsNull(type) :
                     (type & COMPLEX) ? _validate(raw, type, 0, 0) :
                         (type & SIMPLE) ? _isValue(raw, type & PRIM_MASK) :
                             false
@@ -609,18 +630,21 @@ function catalog(cfg) {
      * @returns {boolean}
      */
     function _validate(data, typedef, trackPtr, snapPtr) {
-        if (typedef & ANY) {
-            return true;
-        }
         if (data == null) {
             let nullBit = data === null ? NULLABLE : OPTIONAL;
             if (typedef & nullBit) return true;
-            // For non-COMPLEX types, null/undefined is a mismatch
-            if (!(typedef & COMPLEX)) return false;
+            if (!(typedef & COMPLEX)) {
+                /**
+                 * Primitive typedef: ANY accepts everything (including null/undefined).
+                 * ANY = bit 3 is safe to check here since COMPLEX = bit 0 is 0.
+                 */
+                if (typedef & ANY) return true;
+                return false;
+            }
             // COMPLEX types: fall through to kind handler (needed for K_CONDITIONAL)
         }
         if (typedef & COMPLEX) {
-            let ptr = typedef & KIND_MASK;
+            let ptr = typedef >>> 3;
             let kinds = KINDS;
             let header = kinds[ptr];
             let ct = header & KIND_ENUM_MASK;
@@ -633,7 +657,13 @@ function catalog(cfg) {
                 if (ct === K_RECORD || ct === K_OBJECT) {
                     return typeof data === 'object' && data !== null && !Array.isArray(data);
                 }
-                return false;
+                /**
+                 * K_PRIMITIVE + K_ANY_INNER: the original type included ANY.
+                 * Fall through to K_PRIMITIVE dispatch which skips the _isValue check.
+                 */
+                if (ct !== K_PRIMITIVE) {
+                    return false;
+                }
             }
 
             let ri = kinds[ptr + 1];
@@ -641,7 +671,11 @@ function catalog(cfg) {
             switch (ct) {
                 case K_PRIMITIVE: {
                     let primBits = header & SIMPLE;
-                    if (!_isValue(data, primBits)) {
+                    /**
+                     * K_ANY_INNER means the type included ANY — skip the _isValue type check.
+                     * We still run the validator (minimum, pattern etc.) if K_VALIDATOR is set.
+                     */
+                    if (!(header & K_ANY_INNER) && !_isValue(data, primBits)) {
                         return false;
                     }
                     if (header & K_VALIDATOR) {
@@ -956,9 +990,9 @@ function catalog(cfg) {
                         ifPassed = _validate(data, ifType, 0, 0);
                     }
                     if (ifPassed) {
-                        return thenType === 0 ? true : _validate(data, thenType, trackPtr, snapPtr);
+                        return _validate(data, thenType, trackPtr, snapPtr);
                     } else {
-                        return elseType === 0 ? true : _validate(data, elseType, trackPtr, snapPtr);
+                        return _validate(data, elseType, trackPtr, snapPtr);
                     }
                 }
                 case K_DYN_ANCHOR: {

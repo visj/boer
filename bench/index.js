@@ -3,7 +3,7 @@ import { z } from 'zod';
 import * as v from 'valibot';
 import { Type } from '@sinclair/typebox';
 import Ajv from 'ajv';
-import { object, union, array, validate, NUMBER, DATE, STRING, BOOLEAN, UNDEFINED, URI } from 'uvd';
+import { object, union, array, validate, NUMBER, STRING, BOOLEAN, UNDEFINED } from 'uvd';
 import { catalog, allocators } from 'uvd/core';
 
 const rawData = {
@@ -99,7 +99,7 @@ const TypeBoxItem = Type.Intersect([
 
 const TypeBoxOrder = Type.Object({
     id: Type.Number(),
-    createdAt: Type.String({ format: 'date-time' }),
+    createdAt: Type.String(),
     status: Type.String(),
     customer: Type.Object({
         id: Type.Number(),
@@ -113,7 +113,7 @@ const TypeBoxOrder = Type.Object({
     items: Type.Array(TypeBoxItem)
 });
 
-const ajv = new Ajv({ coerceTypes: false, formats: { uri: true, 'date-time': true } });
+const ajv = new Ajv({ coerceTypes: false });
 const ajvValidate = ajv.compile(TypeBoxOrder);
 
 const setupCatalog = catalog();
@@ -143,18 +143,18 @@ group('Building schema (Setup time)', () => {
             }),
             items: z.array(ZodItem)
         });
+        return ZodOrder;
     });
 
     bench('uvd (In-Place Bitwise)', function () {
-        const { t } = setupCatalog;
         const UvdItem = s_union("type", {
             physical: s_object({ type: STRING, sku: STRING, weight: NUMBER }),
-            digital: s_object({ type: STRING, sku: STRING, downloadUrl: URI })
+            digital: s_object({ type: STRING, sku: STRING, downloadUrl: STRING })
         });
 
         const UvdOrder = s_object({
             id: NUMBER,
-            createdAt: DATE,
+            createdAt: STRING,
             status: STRING,
             customer: s_object({
                 id: NUMBER,
@@ -167,17 +167,18 @@ group('Building schema (Setup time)', () => {
             }),
             items: s_array(UvdItem)
         });
+        return UvdOrder;
     });
 
     bench('Valibot', function () {
         const ValibotItem = v.variant("type", [
             v.object({ type: v.literal("physical"), sku: v.string(), weight: v.number() }),
-            v.object({ type: v.literal("digital"), sku: v.string(), downloadUrl: v.pipe(v.string(), v.url()) })
+            v.object({ type: v.literal("digital"), sku: v.string(), downloadUrl: v.string() })
         ]);
 
         const ValibotOrder = v.object({
             id: v.number(),
-            createdAt: v.pipe(v.string(), v.transform((input) => new Date(input))),
+            createdAt: v.string(),
             status: v.string(),
             customer: v.object({
                 id: v.number(),
@@ -190,6 +191,7 @@ group('Building schema (Setup time)', () => {
             }),
             items: v.array(ValibotItem)
         });
+        return ValibotOrder;
     });
 
     bench('AJV + TypeBox (Theoretical Max)', function () {
@@ -198,13 +200,13 @@ group('Building schema (Setup time)', () => {
             Type.Object({ type: Type.String() }),
             Type.Union([
                 Type.Object({ type: Type.Literal("physical"), sku: Type.String(), weight: Type.Number() }),
-                Type.Object({ type: Type.Literal("digital"), sku: Type.String(), downloadUrl: Type.String({ format: 'uri' }) })
+                Type.Object({ type: Type.Literal("digital"), sku: Type.String(), downloadUrl: Type.String() })
             ])
         ]);
 
         const TypeBoxOrder = Type.Object({
             id: Type.Number(),
-            createdAt: Type.String({ format: 'date-time' }),
+            createdAt: Type.String(),
             status: Type.String(),
             customer: Type.Object({
                 id: Type.Number(),
@@ -218,8 +220,9 @@ group('Building schema (Setup time)', () => {
             items: Type.Array(TypeBoxItem)
         });
 
-        const ajv = new Ajv({ coerceTypes: false, formats: { uri: true, 'date-time': true } });
+        const ajv = new Ajv({ coerceTypes: false });
         const ajvValidate = ajv.compile(TypeBoxOrder);
+        return ajvValidate;
     });
 });
 

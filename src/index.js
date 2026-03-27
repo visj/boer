@@ -1,7 +1,7 @@
 import {
     VALUE, NULL, UNDEFINED, BOOLEAN,
     NUMBER, STRING,
-    ANY, NEVER, TRUE, FALSE
+    ANY, NEVER
 } from './internal/const.js';
 import {
     catalog
@@ -40,6 +40,6 @@ export {
 export {
     VALUE, NULL, UNDEFINED, BOOLEAN,
     NUMBER, STRING,
-    ANY, NEVER, TRUE, FALSE,
+    ANY, NEVER,
     ARRAY, OBJECT,
 }

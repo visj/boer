@@ -1,82 +1,65 @@
 // --- BIT LAYOUT ---
-// Bit 31:  COMPLEX   (0 = primitive typedef, 1 = complex typedef)
-// Bit 30:  (reserved)
-// Bit 29:  NULLABLE  (typedef accepts null)
-// Bit 28:  OPTIONAL  (typedef accepts undefined)
-// Bits 0-27:
-//   If COMPLEX=0: primitive type flags (layered bit mask)
-//   If COMPLEX=1: index into KIND table
+// Bit 0:   COMPLEX   (0 = primitive typedef, 1 = complex typedef)
+// Bit 1:   NULLABLE  (typedef accepts null)
+// Bit 2:   OPTIONAL  (typedef accepts undefined)
+// Bits 3-7 (primitive, COMPLEX=0): primitive type flags
+//   3: ANY     4: STRING     5: NUMBER     6: INTEGER    7: BOOLEAN
+// Bits 3+ (complex, COMPLEX=1): raw KINDS array index
+//   Store: (1 | (ptr << 3)) >>> 0
+//   Extract: typedef >>> 3
 
-const COMPLEX = (1 << 31) >>> 0;
-const NULLABLE = 1 << 29;
-const OPTIONAL = 1 << 28;
+const COMPLEX = 1;
+const NULLABLE = 2;
+const OPTIONAL = 4;
 
 /**
- * Primitive type bits (bits 20-27)
+ * Primitive type bits (bits 3-7, only valid when COMPLEX=0)
  *
- * Layer 1: Meta types
- *   27: ANY    - matches everything (JSON Schema true/{})
- *   26: NEVER  - matches nothing (JSON Schema false)
- *   25: REST   - marks a tuple rest element on the SLAB
+ *   3: ANY     - matches everything (JSON Schema true/{})
+ *   4: STRING  - JS string
+ *   5: NUMBER  - JS number
+ *   6: INTEGER - JS integer (subset of NUMBER)
+ *   7: BOOLEAN - JS boolean (true or false)
  *
- * Layer 2: JS value types
- *   24: FALSE    23: TRUE     (BOOLEAN = FALSE | TRUE)
- *   22: NUMBER   21: STRING   20: INTEGER
- *
+ * NEVER is implicitly 0: a typedef of 0 has no type bits set and matches nothing.
+ * REST marks a tuple rest element in the SLAB; stored at bit 31 (above typedef range).
  * ARRAY and OBJECT are complex-only types (K_ARRAY, K_OBJECT).
- * They are no longer primitive value bits.
  *
- * Bits 0-19: Reserved for future use
+ * Bits 8-52: reserved for future inline validator payloads.
  */
-const ANY = 1 << 27;
-const NEVER = 1 << 26;
-const REST = 1 << 25 >>> 0;
-const FALSE = 1 << 24;
-const TRUE = 1 << 23;
-const BOOLEAN = FALSE | TRUE;
-const NUMBER = 1 << 22;
-const STRING = 1 << 21;
-const INTEGER = 1 << 20;
+const ANY = 1 << 3;
+const STRING = 1 << 4;
+const NUMBER = 1 << 5;
+const INTEGER = 1 << 6;
+const BOOLEAN = 1 << 7;
+/** NEVER is implicitly 0 — a typedef of 0 has no type bits and matches nothing. */
+const NEVER = 0;
+/** REST marks a tuple rest element on the SLAB (internal, not a typedef bit). */
+const REST = (1 << 31) >>> 0;
 
 /**
- * SIMPLE: all non-header, non-container type bits (used for K_PRIMITIVE headers)
- * VALUE: true value types only (no containers, no meta types)
+ * SIMPLE: all primitive type bits (used for K_PRIMITIVE headers to mask type info)
+ * VALUE: value types only (no ANY meta type)
+ * PRIM_MASK: all bits 0-7 (covers COMPLEX + NULLABLE + OPTIONAL + primitive bits)
  */
-const SIMPLE = (ANY | NEVER | REST | FALSE | TRUE | NUMBER | STRING | INTEGER);
-const VALUE = (FALSE | TRUE | NUMBER | STRING | INTEGER);
-const PRIM_MASK = 0x0FFFFFFF;
-const KIND_MASK = 0x0FFFFFFF;
+const SIMPLE = (ANY | STRING | NUMBER | INTEGER | BOOLEAN);
+const VALUE = (STRING | NUMBER | INTEGER | BOOLEAN);
+const PRIM_MASK = 0xFF;
 
 /**
- * The KINDS type matches the bit layout of the `typedef`.
- * The 2 uppermost bits contain global metadata. Since
- * null and undefined actually belong in the primitive space,
- * we cannot use any more bits, because then the null/undefined
- * would be overridden in the fast K_PRIMITIVE case where we inline 
- * primitive bits into the kinds header
- * Bit 31:  K_VALIDATOR   
- * Bit 30:  K_ANY_INNER
- */
-
-/**
- * When this bit is toggled, we have stored a pointer to the VALIDATORS
- * registry in the KINDS vtable.
- */
-const K_VALIDATOR = (1 << 31) >>> 0;
-/**
- * K_ANY_INNER: when set on a KINDS header, the inner type is ANY
- * and no registry entry exists. The KINDS slot is only 1 wide.
+ * K_VALIDATOR: set on the KINDS header when a VALIDATORS entry is attached.
+ * K_ANY_INNER: set on a KINDS header when the inner type is ANY (no registry entry).
  * Used for bare `type: "array"`, `type: "object"`, `record(ANY)`, etc.
  */
+const K_VALIDATOR = (1 << 31) >>> 0;
 const K_ANY_INNER = 1 << 30;
 
 const K_STRICT = 1 << 27;
 const K_HAS_ITEMS = 1 << 26;
 
-// ── Complex KINDS enum (bits 0-3, values 0-11) ──
-// The KINDS vtable header stores the enum in the lower 4 bits,
-// followed by HAS_VALIDATOR at bit 4 and K_ANY_INNER at bit 8.
-// Every kind has a unique value — no sub-groups or inner-type bit flags.
+// ── Complex KINDS enum (bits 0-3, values 0-14) ──
+// The KINDS vtable header stores the enum in the lower 4 bits.
+// Every kind has a unique value.
 const K_PRIMITIVE   = 0;
 const K_OBJECT      = 1;
 const K_ARRAY       = 2;
@@ -199,9 +182,9 @@ const hasOwnProperty = Object.prototype.hasOwnProperty;
 
 export {
     COMPLEX, NULLABLE, OPTIONAL,
-    ANY, NEVER, REST, FALSE, TRUE, BOOLEAN,
+    ANY, NEVER, REST, BOOLEAN,
     NUMBER, STRING, INTEGER,
-    SIMPLE, VALUE, PRIM_MASK, KIND_MASK,
+    SIMPLE, VALUE, PRIM_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
@@ -222,5 +205,3 @@ export {
 
 // Backward-compatible aliases
 export { NULLABLE as NULL, OPTIONAL as UNDEFINED };
-
-// SCRATCH was removed — bit 30 is reserved.
