@@ -438,70 +438,62 @@ function catalog(cfg) {
     }
 
     /**
+     * Validates object-level constraints (min/maxProperties, patternProperties,
+     * propertyNames, dependentRequired, dependentSchemas, additionalProperties).
+     *
+     * Optimized to avoid Object.keys() allocation. Direct-lookup validators
+     * (dependentRequired, dependentSchemas) run first with O(1) hasOwnProperty
+     * checks. Only if iteration-based validators exist do we enter a single
+     * for..in loop over the object's own keys.
+     *
      * @param {!Record<string,any>} data
      * @param {number} valIdx
-     * @param {number} ri
+     * @param {number} ri - SHAPES registry index for this object
      * @param {number} trackPtr - tracking frame pointer (0 = no tracking)
      * @param {number} snapPtr
      * @returns {boolean}
      */
     function runObjectValidator(data, valIdx, ri, trackPtr, snapPtr) {
         let vals = VALIDATORS;
-        let regexCache = REGEX_CACHE;
         let vHeader = vals[valIdx] | 0;
+
+        /**
+         * Payload is stored in bit order (low bits first). We advance a cursor
+         * through the payload sequentially, recording offsets for sections we
+         * need to revisit in the iteration loop.
+         */
         let p = valIdx + 1;
-        let keys = Object.keys(data);
-        let keyCount = keys.length;
+
+        // ── 1. SKIP PAST ITERATION-BASED PAYLOADS to reach direct-lookup validators ──
+        let pMinProps = p;
         if (vHeader & V_MIN_PROPERTIES) {
-            if (keyCount < vals[p++]) {
-                return false;
-            }
+            p++;
         }
         if (vHeader & V_MAX_PROPERTIES) {
-            if (keyCount > vals[p++]) {
-                return false;
-            }
+            p++;
         }
+        let pPatternStart = p;
         if (vHeader & V_PATTERN_PROPERTIES) {
             let patternCount = vals[p++] | 0;
-            for (let pi = 0; pi < patternCount; pi++) {
-                let reIdx = vals[p++] | 0;
-                let schemaType = vals[p++] >>> 0;
-                let re = regexCache[reIdx];
-                for (let ki = 0; ki < keyCount; ki++) {
-                    if (re.test(keys[ki])) {
-                        if (!_validate(data[keys[ki]], schemaType, 0, 0)) {
-                            return false;
-                        }
-                        if (trackPtr) {
-                            let kid = resolveTrackingKey(keys[ki]);
-                            if (kid !== void 0) {
-                                markEvaluated(trackPtr, snapPtr, kid);
-                            }
-                        }
-                    }
-                }
-            }
+            /** Each pattern has [reIdx, schemaType] */
+            p += patternCount * 2;
         }
+        let pPropertyNames = p;
         if (vHeader & V_PROPERTY_NAMES) {
-            let nameSchema = vals[p++] >>> 0;
-            for (let ki = 0; ki < keyCount; ki++) {
-                if (!_validate(keys[ki], nameSchema, 0, 0)) {
-                    return false;
-                }
-            }
+            p++;
         }
+
+        // ── 2. DIRECT LOOKUP VALIDATORS ──
+        // These use O(1) hasOwnProperty lookups — no key iteration needed.
+
         if (vHeader & V_DEPENDENT_REQUIRED) {
             let triggerCount = vals[p++] | 0;
             for (let ti = 0; ti < triggerCount; ti++) {
-                let triggerKeyId = vals[p++] | 0;
+                let triggerKey = KEY_INDEX[vals[p++] | 0];
                 let depCount = vals[p++] | 0;
-                let triggerKey = KEY_INDEX[triggerKeyId];
-                // Use hasOwnProperty so that null/false/0 values still count as "present".
                 if (triggerKey !== void 0 && hasOwnProperty.call(data, triggerKey)) {
                     for (let di = 0; di < depCount; di++) {
-                        let depKeyId = vals[p++] | 0;
-                        let depKey = KEY_INDEX[depKeyId];
+                        let depKey = KEY_INDEX[vals[p++] | 0];
                         if (depKey === void 0 || !hasOwnProperty.call(data, depKey)) {
                             return false;
                         }
@@ -511,12 +503,12 @@ function catalog(cfg) {
                 }
             }
         }
+
         if (vHeader & V_DEPENDENT_SCHEMAS) {
             let depCount = vals[p++] | 0;
             for (let di = 0; di < depCount; di++) {
-                let triggerKeyId = vals[p++] | 0;
-                let depSchemaType = vals[p++] >>> 0;
-                let triggerKey = KEY_INDEX[triggerKeyId];
+                let triggerKey = KEY_INDEX[vals[p++] | 0];
+                let depSchemaType = vals[p++];
                 if (triggerKey !== void 0 && data[triggerKey] !== void 0) {
                     if (!_validate(data, depSchemaType, trackPtr, snapPtr)) {
                         return false;
@@ -524,23 +516,78 @@ function catalog(cfg) {
                 }
             }
         }
+
+        // ── 3. FAST EXIT: check if any iteration-based validators exist ──
+        let needsIter = vHeader & (V_MIN_PROPERTIES | V_MAX_PROPERTIES | V_PATTERN_PROPERTIES | V_PROPERTY_NAMES | V_ADDITIONAL_PROPERTIES);
+        if (!needsIter) {
+            return true;
+        }
+
+        // ── 4. Unpack limits and SLAB info once ──
+        let minProps = (vHeader & V_MIN_PROPERTIES) ? vals[pMinProps] : 0;
+        let hasMaxProps = (vHeader & V_MAX_PROPERTIES) !== 0;
+        let maxProps = hasMaxProps ? vals[pMinProps + ((vHeader & V_MIN_PROPERTIES) ? 1 : 0)] : 0;
+
+        let addType = 0;
+        let slabOffset = 0;
+        let slabLength = 0;
         if (vHeader & V_ADDITIONAL_PROPERTIES) {
-            let addType = vals[p++] >>> 0;
-            let shapes = SHAPES;
-            let slab = SLAB;
-            let offset = shapes[ri * 2];
-            let length = shapes[ri * 2 + 1];
-            for (let ki = 0; ki < keyCount; ki++) {
-                let keyId = KEY_DICT.get(keys[ki]);
-                let declared = false;
+            addType = vals[p];
+            /**
+             * Object properties are stored in SLAB via SHAPES registry.
+             * SHAPES[ri*2] = slab offset, SHAPES[ri*2+1] = property count.
+             */
+            slabOffset = SHAPES[ri * 2];
+            slabLength = SHAPES[ri * 2 + 1];
+        }
+
+        let nameSchema = (vHeader & V_PROPERTY_NAMES) ? vals[pPropertyNames] : 0;
+
+        let hasPatterns = (vHeader & V_PATTERN_PROPERTIES) !== 0;
+        let hasAdditional = (vHeader & V_ADDITIONAL_PROPERTIES) !== 0;
+        let hasPropertyNames = (vHeader & V_PROPERTY_NAMES) !== 0;
+
+        // ── 5. Single zero-allocation loop over all own keys ──
+        let keyCount = 0;
+        let slab = SLAB;
+        let regexCache = REGEX_CACHE;
+
+        for (let key in data) {
+            if (!hasOwnProperty.call(data, key)) {
+                continue;
+            }
+
+            keyCount++;
+            /** maxProperties early exit */
+            if (hasMaxProps && keyCount > maxProps) {
+                return false;
+            }
+
+            /** propertyNames: validate the key itself against the name schema */
+            if (hasPropertyNames) {
+                if (!_validate(key, nameSchema, 0, 0)) {
+                    return false;
+                }
+            }
+
+            let isDeclared = false;
+            let patternMatched = false;
+
+            /**
+             * additionalProperties needs to know if this key is declared
+             * in the object's static properties. Binary search on SLAB
+             * where properties are stored sorted by keyId.
+             */
+            if (hasAdditional) {
+                let keyId = KEY_DICT.get(key);
                 if (keyId !== void 0) {
                     let lo = 0;
-                    let hi = length - 1;
+                    let hi = slabLength - 1;
                     while (lo <= hi) {
                         let mid = (lo + hi) >>> 1;
-                        let sk = slab[offset + (mid << 1)];
+                        let sk = slab[slabOffset + (mid << 1)];
                         if (sk === keyId) {
-                            declared = true;
+                            isDeclared = true;
                             break;
                         }
                         if (sk < keyId) {
@@ -550,41 +597,52 @@ function catalog(cfg) {
                         }
                     }
                 }
-                if (!declared) {
-                    // Check if matched by patternProperties
-                    let patternMatched = false;
-                    if (vHeader & V_PATTERN_PROPERTIES) {
-                        let pp = valIdx + 1;
-                        if (vHeader & V_MIN_PROPERTIES) pp++;
-                        if (vHeader & V_MAX_PROPERTIES) pp++;
-                        let patternCount = vals[pp++] | 0;
-                        for (let pi = 0; pi < patternCount; pi++) {
-                            let reIdx = vals[pp++] | 0;
-                            pp++; // skip schemaType
-                            if (regexCache[reIdx].test(keys[ki])) {
-                                patternMatched = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (!patternMatched) {
-                        if (addType === 0) {
+            }
+
+            /** patternProperties: test key against each regex pattern */
+            if (hasPatterns) {
+                let pp = pPatternStart;
+                let patternCount = vals[pp++] | 0;
+                for (let pi = 0; pi < patternCount; pi++) {
+                    let reIdx = vals[pp++] | 0;
+                    let schemaType = vals[pp++];
+                    if (regexCache[reIdx].test(key)) {
+                        patternMatched = true;
+                        if (!_validate(data[key], schemaType, 0, 0)) {
                             return false;
                         }
-                        if (!_validate(data[keys[ki]], addType, 0, 0)) {
-                            return false;
-                        }
-                        /** Mark property as evaluated by additionalProperties */
                         if (trackPtr) {
-                            let markKid = resolveTrackingKey(keys[ki]);
-                            if (markKid !== void 0) {
-                                markEvaluated(trackPtr, snapPtr, markKid);
+                            let kid = resolveTrackingKey(key);
+                            if (kid !== void 0) {
+                                markEvaluated(trackPtr, snapPtr, kid);
                             }
                         }
                     }
                 }
             }
+
+            /** additionalProperties: validate undeclared, unmatched keys */
+            if (hasAdditional && !isDeclared && !patternMatched) {
+                if (addType === 0) {
+                    return false;
+                }
+                if (!_validate(data[key], addType, 0, 0)) {
+                    return false;
+                }
+                if (trackPtr) {
+                    let markKid = resolveTrackingKey(key);
+                    if (markKid !== void 0) {
+                        markEvaluated(trackPtr, snapPtr, markKid);
+                    }
+                }
+            }
         }
+
+        /** minProperties: checked after the loop since we need the final count */
+        if (keyCount < minProps) {
+            return false;
+        }
+
         return true;
     }
 
