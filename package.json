@@ -25,6 +25,7 @@
   ],
   "scripts": {
     "make": "node scripts/build.js",
+    "bench": "node --expose-gc bench/bench.js",
     "inspect": "bun test --expose-gc --inspect-brk --sourcemap=inline ./tests/suite.test.js"
   },
   "devDependencies": {

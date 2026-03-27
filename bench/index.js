@@ -28,12 +28,12 @@ const jsonStr = JSON.stringify(rawData);
 
 const UvdItem = union("type", {
     physical: object({ type: STRING, sku: STRING, weight: NUMBER }),
-    digital: object({ type: STRING, sku: STRING, downloadUrl: URI })
+    digital: object({ type: STRING, sku: STRING, downloadUrl: STRING })
 });
 
 const UvdOrder = object({
     id: NUMBER,
-    createdAt: DATE,
+    createdAt: STRING,
     status: STRING,
     customer: object({
         id: NUMBER,
@@ -46,23 +46,6 @@ const UvdOrder = object({
     }),
     items: array(UvdItem)
 });
-const PTR = Symbol();
-
-/**
- * @constructor
- * @param {number} ptr 
- */
-function Pointer(ptr) {
-    this[PTR] = ptr;
-}
-
-Object.defineProperty(Pointer.prototype, '__ptr', {
-    get: function() {
-        return this[PTR];
-    }
-})
-
-const UvdOrderPointer = new Pointer(UvdOrder);
 
 const ZodItem = z.discriminatedUnion("type", [
     z.object({ type: z.literal("physical"), sku: z.string(), weight: z.number() }),
@@ -135,6 +118,8 @@ const ajvValidate = ajv.compile(TypeBoxOrder);
 
 const setupCatalog = catalog();
 const { object: s_object, union: s_union, array: s_array } = allocators(setupCatalog);
+
+
 
 group('Building schema (Setup time)', () => {
     bench('Zod', function () {
@@ -253,8 +238,6 @@ group('Pure Parsing (Setup Time Excluded)', () => {
         yield {
             [0]() { return JSON.parse(jsonStr); },
             bench(data) {
-                // const ptr = UvdOrderPointer.__ptr; 
-                // validate(data, ptr);
                 validate(data, UvdOrder);
             }
         };
@@ -280,21 +263,21 @@ group('Pure Parsing (Second time after JIT is warmed up)', () => {
     bench('Zod', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { ZodOrder.parse(data); }
+            bench(data) { return ZodOrder.safeParse(data).success; }
         };
     });
 
     bench('Valibot', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { v.parse(ValibotOrder, data); }
+            bench(data) { return v.safeParse(ValibotOrder, data).success; }
         };
     });
 
     bench('AJV + TypeBox (Theoretical Max)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { ajvValidate(data); }
+            bench(data) { return ajvValidate(data); }
         };
     });
 
@@ -302,13 +285,10 @@ group('Pure Parsing (Second time after JIT is warmed up)', () => {
         yield {
             [0]() { return JSON.parse(jsonStr); },
             bench(data) { 
-                validate(data, UvdOrder);
+                return validate(data, UvdOrder);
             }
         };
     });
 });
 
-await run({
-    colors: true,
-    garbage_collection: true,
-});
+await run();
