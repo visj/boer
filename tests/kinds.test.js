@@ -3,11 +3,10 @@ import {
     BOOLEAN, NUMBER, STRING,
     BIGINT, DATE, URI
 } from 'uvd';
-import { catalog, allocators, $allocators, createConform, createDiagnose } from 'uvd/core';
+import { catalog, allocators, createConform, createDiagnose } from 'uvd/core';
 
 const cat = catalog();
 const { object, array, tuple, record, or, exclusive, intersect, not, when, string, nullable, optional } = allocators(cat);
-const { $object, $tuple, $record, $or, $exclusive, $intersect, $not, $when } = $allocators(cat);
 const { validate } = cat;
 const conform = createConform(cat);
 const diagnose = createDiagnose(cat);
@@ -95,7 +94,7 @@ describe('K_TUPLE', () => {
     });
 
     test('volatile tuple', () => {
-        let tup = $tuple(STRING, NUMBER);
+        let tup = tuple(STRING, NUMBER);
         expect(validate(['hello', 42], tup)).toBe(true);
         expect(validate([42, 'hello'], tup)).toBe(false);
     });
@@ -154,7 +153,7 @@ describe('K_RECORD', () => {
     });
 
     test('volatile record', () => {
-        let rec = $record(NUMBER);
+        let rec = record(NUMBER);
         expect(validate({ a: 1 }, rec)).toBe(true);
         expect(validate({ a: 'x' }, rec)).toBe(false);
     });
@@ -227,15 +226,15 @@ describe('K_OR (anyOf)', () => {
     });
 
     test('volatile or', () => {
-        let orType = $or(STRING, NUMBER);
+        let orType = or(STRING, NUMBER);
         // volatile all-primitive should still use fast path
         expect(validate('hi', orType)).toBe(true);
         expect(validate(42, orType)).toBe(true);
     });
 
     test('volatile or with complex types', () => {
-        let obj = $object({ a: STRING });
-        let orType = $or(obj, NUMBER);
+        let obj = object({ a: STRING });
+        let orType = or(obj, NUMBER);
         expect(validate({ a: 'hi' }, orType)).toBe(true);
         expect(validate(42, orType)).toBe(true);
         expect(validate('hi', orType)).toBe(false);
@@ -303,7 +302,7 @@ describe('K_EXCLUSIVE (oneOf)', () => {
     });
 
     test('volatile exclusive', () => {
-        let excl = $exclusive(STRING, NUMBER);
+        let excl = exclusive(STRING, NUMBER);
         expect(validate('hi', excl)).toBe(true);
         expect(validate(42, excl)).toBe(true);
         expect(validate(true, excl)).toBe(false);
@@ -352,9 +351,9 @@ describe('K_INTERSECT (allOf)', () => {
     });
 
     test('volatile intersect', () => {
-        let obj1 = $object({ x: STRING });
-        let obj2 = $object({ y: NUMBER });
-        let inter = $intersect(obj1, obj2);
+        let obj1 = object({ x: STRING });
+        let obj2 = object({ y: NUMBER });
+        let inter = intersect(obj1, obj2);
         expect(validate({ x: 'hi', y: 1 }, inter)).toBe(true);
         expect(validate({ x: 'hi' }, inter)).toBe(false);
     });
@@ -405,7 +404,7 @@ describe('K_NOT', () => {
     });
 
     test('volatile not', () => {
-        let notStr = $not(STRING);
+        let notStr = not(STRING);
         expect(validate('hello', notStr)).toBe(false);
         expect(validate(42, notStr)).toBe(true);
     });
@@ -496,10 +495,10 @@ describe('K_CONDITIONAL (when)', () => {
     });
 
     test('volatile conditional', () => {
-        let schema = $when({
-            if: $object({ a: STRING }),
-            then: $object({ b: NUMBER }),
-            else: $object({ c: BOOLEAN })
+        let schema = when({
+            if: object({ a: STRING }),
+            then: object({ b: NUMBER }),
+            else: object({ c: BOOLEAN })
         });
         expect(validate({ a: 'hi', b: 42 }, schema)).toBe(true);
         expect(validate({ c: true }, schema)).toBe(true);

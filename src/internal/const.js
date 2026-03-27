@@ -1,6 +1,6 @@
 // --- BIT LAYOUT ---
 // Bit 31:  COMPLEX   (0 = primitive typedef, 1 = complex typedef)
-// Bit 30:  SCRATCH   (typedef lives in scratch storage)
+// Bit 30:  (reserved)
 // Bit 29:  NULLABLE  (typedef accepts null)
 // Bit 28:  OPTIONAL  (typedef accepts undefined)
 // Bits 0-27:
@@ -8,7 +8,6 @@
 //   If COMPLEX=1: index into KIND table
 
 const COMPLEX = (1 << 31) >>> 0;
-const SCRATCH = 1 << 30;
 const NULLABLE = 1 << 29;
 const OPTIONAL = 1 << 28;
 
@@ -206,7 +205,7 @@ const toString = Object.prototype.toString;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 
 export {
-    COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
+    COMPLEX, NULLABLE, OPTIONAL,
     ANY, NEVER, REST, FALSE, TRUE, BOOLEAN,
     NUMBER, STRING, INTEGER, BIGINT,
     DATE, URI,
@@ -231,3 +230,5 @@ export {
 
 // Backward-compatible aliases
 export { NULLABLE as NULL, OPTIONAL as UNDEFINED };
+
+// SCRATCH was removed — bit 30 is reserved.

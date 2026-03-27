@@ -1,6 +1,6 @@
 /// <reference path="../../global.d.ts" />
 import {
-    COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
+    COMPLEX, NULLABLE, OPTIONAL,
     ANY, REST, SIMPLE, PRIM_MASK, KIND_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
@@ -20,7 +20,6 @@ import { _isValue, describeType } from './util.js';
 function createDiagnose(cat) {
     let h = cat.__heap;
     let HEAP = h.HEAP;
-    let SCR_HEAP = h.SCR_HEAP;
     let DICT = h.DICT;
     let _validate = h._validate;
 
@@ -32,7 +31,7 @@ function createDiagnose(cat) {
      * @returns {void}
      */
     function _diagnose(data, typedef, path, errors) {
-        const kinds = (typedef & SCRATCH) === 0 ? HEAP.KINDS : SCR_HEAP.KINDS;
+        const kinds = HEAP.KINDS;
         if (data === void 0) {
             if (!(typedef & OPTIONAL)) {
                 errors.push({ path, message: 'unexpected undefined, expected ' + describeType(typedef, kinds) });
@@ -46,8 +45,7 @@ function createDiagnose(cat) {
             return;
         }
         if (typedef & COMPLEX) {
-            let scratch = (typedef & SCRATCH) !== 0;
-            let hp = scratch ? SCR_HEAP : HEAP;
+            let hp = HEAP;
             let kinds = hp.KINDS;
             let ptr = typedef & KIND_MASK;
             let header = kinds[ptr];
@@ -294,7 +292,6 @@ function createDiagnose(cat) {
      * @returns {!Array<uvd.PathError>}
      */
     function diagnose(data, typedef) {
-        h.setRewindPending();
         /** @type {!Array<uvd.PathError>} */
         let errors = [];
         _diagnose(data, typedef, '', errors);

@@ -2,7 +2,6 @@
 import { assertIsNumber, ERR_CONFIG_FIELD_MUST_BE_NUMBER } from "./error.js";
 
 const DEFAULT_HEAP = { slab: 16384, shapes: 4096, kinds: 2048, validators: 512 };
-const DEFAULT_SCRATCH = { slab: 1024, shapes: 256, kinds: 512, validators: 128 };
 /**
  * @type {readonly (keyof uvd.HeapConfig)[]}
  */
@@ -14,8 +13,7 @@ const CONFIG_KEYS = ['slab', 'shapes', 'kinds', 'validators'];
  */
 function config(cfg) {
     /** @type {uvd.HeapConfig} */
-    let heap = { slab: DEFAULT_HEAP.slab, shapes: DEFAULT_HEAP.shapes, kinds: DEFAULT_HEAP.kinds, validators: DEFAULT_HEAP.validators };
-    let scratch = { slab: DEFAULT_SCRATCH.slab, shapes: DEFAULT_SCRATCH.shapes, kinds: DEFAULT_SCRATCH.kinds, validators: DEFAULT_SCRATCH.validators };
+    let h = { slab: DEFAULT_HEAP.slab, shapes: DEFAULT_HEAP.shapes, kinds: DEFAULT_HEAP.kinds, validators: DEFAULT_HEAP.validators };
     if (cfg) {
         const cfgHeap = cfg.heap;
         if (cfgHeap) {
@@ -23,20 +21,11 @@ function config(cfg) {
                 let key = CONFIG_KEYS[i];
                 const val = cfgHeap[key];
                 assertIsNumber(val, ERR_CONFIG_FIELD_MUST_BE_NUMBER);
-                heap[key] = val;
-            }
-        }
-        const cfgScratch = cfg.scratch;
-        if (cfgScratch) {
-            for (let i = 0; i < CONFIG_KEYS.length; i++) {
-                let key = CONFIG_KEYS[i];
-                const val = cfgScratch[key];
-                assertIsNumber(val, ERR_CONFIG_FIELD_MUST_BE_NUMBER);
-                scratch[key] = val;
+                h[key] = val;
             }
         }
     }
-    return { heap, scratch };
+    return { heap: h };
 }
 
 /**

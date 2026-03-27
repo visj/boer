@@ -1,6 +1,6 @@
 /// <reference path="../../global.d.ts" />
 import {
-    COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
+    COMPLEX, NULLABLE, OPTIONAL,
     ANY, REST, SIMPLE, PRIM_MASK, KIND_MASK,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
@@ -21,7 +21,6 @@ import { parseValue } from './util.js';
 function createConform(cat) {
     let h = cat.__heap;
     let HEAP = h.HEAP;
-    let SCR_HEAP = h.SCR_HEAP;
     let DICT = h.DICT;
 
     /**
@@ -65,8 +64,7 @@ function createConform(cat) {
             return (data === null ? (typedef & NULLABLE) : (typedef & OPTIONAL)) !== 0;
         }
         if (typedef & COMPLEX) {
-            let scratch = (typedef & SCRATCH) !== 0;
-            let hp = scratch ? SCR_HEAP : HEAP;
+            let hp = HEAP;
             let kinds = hp.KINDS;
             let ptr = typedef & KIND_MASK;
             let header = kinds[ptr];
@@ -275,7 +273,6 @@ function createConform(cat) {
         if (typeof typedef !== 'number') {
             return false;
         }
-        h.setRewindPending();
         return _conform(data, typedef, !preserve);
     }
 

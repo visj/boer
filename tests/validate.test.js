@@ -3,11 +3,10 @@ import {
     BOOLEAN, NUMBER, STRING,
     BIGINT, DATE, URI
 } from 'uvd';
-import { catalog, allocators, $allocators } from 'uvd/core';
+import { catalog, allocators } from 'uvd/core';
 
 const cat = catalog();
 const { object, array, string, number, boolean, bigint, date, uri, nullable, optional, refine, union } = allocators(cat);
-const { $object, $array, $string, $refine } = $allocators(cat);
 const { validate } = cat;
 
 describe('validate: primitive builders — no args', () => {
@@ -246,12 +245,12 @@ describe('validate: plain primitives (no validators)', () => {
 
 describe('validate: scratch validated types', () => {
     test('$string with validators works', () => {
-        let td = $string({ minLength: 3 });
+        let td = string({ minLength: 3 });
         expect(validate('abc', td)).toBe(true);
         expect(validate('ab', td)).toBe(false);
     });
     test('$array with validators works', () => {
-        let td = $array(STRING, { minItems: 1 });
+        let td = array(STRING, { minItems: 1 });
         expect(validate(['a'], td)).toBe(true);
         expect(validate([], td)).toBe(false);
     });
@@ -469,24 +468,24 @@ describe('validate: object dependentRequired', () => {
 
 describe('validate: scratch new validators', () => {
     test('$string with format works', () => {
-        let td = $string({ format: 'email' });
+        let td = string({ format: 'email' });
         expect(validate('user@example.com', td)).toBe(true);
         expect(validate('invalid', td)).toBe(false);
     });
     test('$array with contains works', () => {
-        let td = $array(NUMBER, { contains: NUMBER, minContains: 2 });
+        let td = array(NUMBER, { contains: NUMBER, minContains: 2 });
         expect(validate([1, 2, 3], td)).toBe(true);
         expect(validate([1], td)).toBe(false);
     });
     test('$object with patternProperties works', () => {
-        let td = $object({ id: NUMBER }, {
+        let td = object({ id: NUMBER }, {
             patternProperties: { '^S_': STRING }
         });
         expect(validate({ id: 1, S_name: 'Alice' }, td)).toBe(true);
         expect(validate({ id: 1, S_name: 42 }, td)).toBe(false);
     });
     test('$object with dependentRequired works', () => {
-        let td = $object({
+        let td = object({
             name: STRING,
             email: optional(STRING),
             phone: optional(STRING),
@@ -575,15 +574,15 @@ describe('validate: refine — nullable/optional', () => {
     });
 });
 
-describe('validate: $refine — scratch', () => {
-    test('$refine on primitive', () => {
-        let td = $refine(NUMBER, n => n > 0);
+describe('validate: refine', () => {
+    test('refine on primitive', () => {
+        let td = refine(NUMBER, n => n > 0);
         expect(validate(5, td)).toBe(true);
         expect(validate(-1, td)).toBe(false);
     });
-    test('$refine on object', () => {
-        let schema = $object({ a: NUMBER });
-        let td = $refine(schema, obj => obj.a < 100);
+    test('refine on object', () => {
+        let schema = object({ a: NUMBER });
+        let td = refine(schema, obj => obj.a < 100);
         expect(validate({ a: 50 }, td)).toBe(true);
         expect(validate({ a: 200 }, td)).toBe(false);
     });
@@ -616,8 +615,8 @@ describe('validate: additionalProperties: false', () => {
         expect(validate({ name: 'Alice' }, td)).toBe(true);
         expect(validate({ name: 'Alice', extra: 1 }, td)).toBe(false);
     });
-    test('scratch $object with additionalProperties', () => {
-        let td = $object({ x: NUMBER }, { additionalProperties: false });
+    test('object with additionalProperties (permanent)', () => {
+        let td = object({ x: NUMBER }, { additionalProperties: false });
         expect(validate({ x: 1 }, td)).toBe(true);
         expect(validate({ x: 1, y: 2 }, td)).toBe(false);
     });

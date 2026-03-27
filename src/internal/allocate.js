@@ -1,6 +1,6 @@
 /// <reference path="../../global.d.ts" />
 import {
-    COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
+    COMPLEX, NULLABLE, OPTIONAL,
     TRUE, FALSE, NEVER,
     STRING, NUMBER, BOOLEAN, BIGINT, DATE, URI, INTEGER,
     PRIM_MASK,
@@ -61,7 +61,7 @@ const OBJ_MASK = V_MIN_PROPERTIES | V_MAX_PROPERTIES | V_PATTERN_PROPERTIES
  * replaces the -1 placeholders in `result` with the resulting cache indices.
  * Consumes PAYLOAD_QUEUE.REGEX entries in order.
  * @param {!Array<number>} result — [vHeader, ...payloads] from packValidators
- * @param {!Array<RegExp>} cache — the regex cache to push into (REGEX_CACHE or S_REGEX_CACHE)
+ * @param {!Array<RegExp>} cache — the regex cache to push into (REGEX_CACHE)
  */
 function migrateRegex(result, cache) {
     let ri = 0;
@@ -77,41 +77,37 @@ function migrateRegex(result, cache) {
 /**
  * @param {*} ctx
  * @param {number} primConst
- * @param {boolean} scratch
  * @param {!Object=} opts
  * @returns {number}
  */
-function valueImpl(ctx, primConst, scratch, opts) {
+function valueImpl(ctx, primConst, opts) {
     if (opts === void 0) {
         return primConst;
     }
     let mask = (primConst & STRING) ? STR_MASK : NUM_MASK;
     let result = packValidators(opts, mask, null);
-    let cache = scratch ? ctx.S_REGEX_CACHE : ctx.REGEX_CACHE;
-    migrateRegex(result, cache);
+    migrateRegex(result, ctx.REGEX_CACHE);
     let vHeader = result[0];
     let payloads = result.slice(1);
     /** K_PRIMITIVE stores the validator index as inline (KINDS slot 1), no SLAB entry. */
-    let valIdx = ctx.allocValidator(vHeader, payloads, scratch);
-    return ctx.malloc(K_PRIMITIVE | K_VALIDATOR | primConst, scratch, valIdx, null, 0, 0, null);
+    let valIdx = ctx.allocValidator(vHeader, payloads);
+    return ctx.malloc(K_PRIMITIVE | K_VALIDATOR | primConst, valIdx, null, 0, 0, null);
 }
 
 /**
  * @param {*} ctx
  * @param {number} typedef
  * @param {function(*): boolean} fn
- * @param {boolean} scratch
  * @returns {number}
  */
-function refineImpl(ctx, typedef, fn, scratch) {
+function refineImpl(ctx, typedef, fn) {
     assertIsNumber(typedef, 0);
-    let callbacks = scratch ? ctx.S_CALLBACKS : ctx.CALLBACKS;
-    let callbackIdx = callbacks.push(fn) - 1;
+    let callbackIdx = ctx.CALLBACKS.push(fn) - 1;
     /** Store [innerType, callbackIdx] on SLAB; KINDS slot 1 = SHAPES index. */
     let slabData = new Uint32Array(2);
     slabData[0] = typedef >>> 0;
     slabData[1] = callbackIdx;
-    let result = ctx.malloc(K_REFINE, scratch, 0, slabData, 2, 0, null);
+    let result = ctx.malloc(K_REFINE, 0, slabData, 2, 0, null);
     if (typedef & NULLABLE) {
         result |= NULLABLE;
     }
@@ -124,11 +120,10 @@ function refineImpl(ctx, typedef, fn, scratch) {
 /**
  * @param {*} ctx
  * @param {!Array<number>} types
- * @param {boolean} scratch
  * @returns {number}
  */
-function tupleArrayImpl(ctx, types, scratch) {
-    return ctx.malloc(K_TUPLE | K_STRICT, scratch, 0, types, types.length, 0, null);
+function tupleArrayImpl(ctx, types) {
+    return ctx.malloc(K_TUPLE | K_STRICT, 0, types, types.length, 0, null);
 }
 
 /**
@@ -142,38 +137,37 @@ function tupleArrayImpl(ctx, types, scratch) {
  *   object  → K_OBJECT with each property recursively desugared + additionalProperties:false
  * @param {*} ctx
  * @param {*} value
- * @param {boolean} scratch
  * @returns {number}
  */
-function literalImpl(ctx, value, scratch) {
+function literalImpl(ctx, value) {
     if (value === null) { return NULLABLE; }
     if (value === true) { return TRUE; }
     if (value === false) { return FALSE; }
     if (typeof value === 'string') {
         let keyId = ctx.lookup(value);
-        let valIdx = ctx.allocValidator(V_ENUM, [1, keyId], scratch);
-        return ctx.malloc(K_PRIMITIVE | K_VALIDATOR | STRING, scratch, valIdx, null, 0, 0, null);
+        let valIdx = ctx.allocValidator(V_ENUM, [1, keyId]);
+        return ctx.malloc(K_PRIMITIVE | K_VALIDATOR | STRING, valIdx, null, 0, 0, null);
     }
     if (typeof value === 'number') {
-        let valIdx = ctx.allocValidator(V_ENUM, [1, value], scratch);
-        return ctx.malloc(K_PRIMITIVE | K_VALIDATOR | NUMBER, scratch, valIdx, null, 0, 0, null);
+        let valIdx = ctx.allocValidator(V_ENUM, [1, value]);
+        return ctx.malloc(K_PRIMITIVE | K_VALIDATOR | NUMBER, valIdx, null, 0, 0, null);
     }
     if (Array.isArray(value)) {
         /** Desugar to exact-length K_TUPLE: each element becomes its own literal type. */
         let elemTypes = new Array(value.length);
         for (let i = 0; i < value.length; i++) {
-            elemTypes[i] = literalImpl(ctx, value[i], scratch);
+            elemTypes[i] = literalImpl(ctx, value[i]);
         }
-        return tupleArrayImpl(ctx, elemTypes, scratch);
+        return tupleArrayImpl(ctx, elemTypes);
     }
     if (typeof value === 'object') {
         /** Desugar to K_OBJECT with additionalProperties:false: each property is a literal type. */
         let keys = Object.keys(value);
         let def = {};
         for (let i = 0; i < keys.length; i++) {
-            def[keys[i]] = literalImpl(ctx, value[keys[i]], scratch);
+            def[keys[i]] = literalImpl(ctx, value[keys[i]]);
         }
-        return objectImpl(ctx, def, scratch, { additionalProperties: false });
+        return objectImpl(ctx, def, { additionalProperties: false });
     }
     return NEVER;
 }
@@ -189,10 +183,9 @@ function literalImpl(ctx, value, scratch) {
  * Heterogeneous enums with complex types (Rule C.2) are wrapped in K_OR.
  * @param {*} ctx
  * @param {!Array<*>} values
- * @param {boolean} scratch
  * @returns {number}
  */
-function enumImpl(ctx, values, scratch) {
+function enumImpl(ctx, values) {
     if (!Array.isArray(values) || values.length === 0) { return NEVER; }
     /** @type {string[]} */
     let strings = [];
@@ -208,7 +201,7 @@ function enumImpl(ctx, values, scratch) {
         else if (v === false) { enumPrimBits |= FALSE; }
         else if (typeof v === 'string') { strings.push(v); }
         else if (typeof v === 'number') { numbers.push(v); }
-        else { complexTypes.push(literalImpl(ctx, v, scratch)); }
+        else { complexTypes.push(literalImpl(ctx, v)); }
     }
     let primType = 0;
     let payloadBits = enumPrimBits;
@@ -230,8 +223,8 @@ function enumImpl(ctx, values, scratch) {
     if (payload.length > 0) {
         // Build K_PRIMITIVE with V_ENUM validator; re-attach NULLABLE / OPTIONAL on the pointer.
         let primBits = payloadBits & ~(NULLABLE | OPTIONAL);
-        let valIdx = ctx.allocValidator(V_ENUM, payload, scratch);
-        primType = ctx.malloc(K_PRIMITIVE | K_VALIDATOR | primBits, scratch, valIdx, null, 0, 0, null);
+        let valIdx = ctx.allocValidator(V_ENUM, payload);
+        primType = ctx.malloc(K_PRIMITIVE | K_VALIDATOR | primBits, valIdx, null, 0, 0, null);
         if (payloadBits & NULLABLE) { primType = (primType | NULLABLE) >>> 0; }
         if (payloadBits & OPTIONAL) { primType = (primType | OPTIONAL) >>> 0; }
     } else if (payloadBits !== 0) {
@@ -242,27 +235,25 @@ function enumImpl(ctx, values, scratch) {
     // Rule C.2: mix of structural + primitive types → K_OR.
     let branches = complexTypes.slice();
     if (primType !== 0) { branches.unshift(primType); }
-    return orImpl(ctx, branches, scratch);
+    return orImpl(ctx, branches);
 }
 
 /**
  * @param {*} ctx
  * @param {number} valueType
- * @param {boolean} scratch
  * @returns {number}
  */
-function recordImpl(ctx, valueType, scratch) {
+function recordImpl(ctx, valueType) {
     assertIsNumber(valueType, 0);
-    return ctx.malloc(K_RECORD, scratch, valueType >>> 0, null, 0, 0, null);
+    return ctx.malloc(K_RECORD, valueType >>> 0, null, 0, 0, null);
 }
 
 /**
  * @param {*} ctx
  * @param {!Array<number>} types
- * @param {boolean} scratch
  * @returns {number}
  */
-function orImpl(ctx, types, scratch) {
+function orImpl(ctx, types) {
     // Fast path: if all inputs are raw primitives (no COMPLEX bit),
     // just OR the bits together — no allocation needed.
     let allPrimitive = true;
@@ -287,7 +278,7 @@ function orImpl(ctx, types, scratch) {
     if (allPrimitive) {
         return merged >>> 0;
     }
-    let result = ctx.malloc(K_OR, scratch, 0, types, types.length, 0, null);
+    let result = ctx.malloc(K_OR, 0, types, types.length, 0, null);
     for (; j < length; j++) {
         const type = /** @type {number} */(types[j]);
         if (type & NULLABLE) {
@@ -303,41 +294,37 @@ function orImpl(ctx, types, scratch) {
 /**
  * @param {*} ctx
  * @param {!Array<number>} types
- * @param {boolean} scratch
  * @returns {number}
  */
-function exclusiveImpl(ctx, types, scratch) {
-    return ctx.malloc(K_EXCLUSIVE, scratch, 0, types, types.length, 0, null);
+function exclusiveImpl(ctx, types) {
+    return ctx.malloc(K_EXCLUSIVE, 0, types, types.length, 0, null);
 }
 
 /**
  * @param {*} ctx
  * @param {!Array<number>} types
- * @param {boolean} scratch
  * @returns {number}
  */
-function intersectImpl(ctx, types, scratch) {
-    return ctx.malloc(K_INTERSECT, scratch, 0, types, types.length, 0, null);
+function intersectImpl(ctx, types) {
+    return ctx.malloc(K_INTERSECT, 0, types, types.length, 0, null);
 }
 
 /**
  * @param {*} ctx
  * @param {number} typedef
- * @param {boolean} scratch
  * @returns {number}
  */
-function notImpl(ctx, typedef, scratch) {
+function notImpl(ctx, typedef) {
     assertIsNumber(typedef, 0);
-    return ctx.malloc(K_NOT, scratch, typedef >>> 0, null, 0, 0, null);
+    return ctx.malloc(K_NOT, typedef >>> 0, null, 0, 0, null);
 }
 
 /**
  * @param {*} ctx
  * @param {!uvd.WhenValidators} config
- * @param {boolean} scratch
  * @returns {number}
  */
-function whenImpl(ctx, config, scratch) {
+function whenImpl(ctx, config) {
     // Always store 3 slots: [if, then, else]
     // Use 0 as sentinel for "no constraint" (always passes)
     let types = [
@@ -345,18 +332,17 @@ function whenImpl(ctx, config, scratch) {
         config.then !== void 0 ? config.then >>> 0 : 0,
         config.else !== void 0 ? config.else >>> 0 : 0
     ];
-    return ctx.malloc(K_CONDITIONAL, scratch, 0, types, types.length, 0, null);
+    return ctx.malloc(K_CONDITIONAL, 0, types, types.length, 0, null);
 }
 
 /**
  * @template {symbol} R
  * @param {*} ctx
  * @param {uvd.Schema<R>} definition
- * @param {boolean} scratch
  * @param {uvd.ObjectValidators=} opts
  * @returns {number}
  */
-function objectImpl(ctx, definition, scratch, opts) {
+function objectImpl(ctx, definition, opts) {
     let keys = Object.keys(definition);
     let count = keys.length;
     let required = count * 2;
@@ -369,13 +355,13 @@ function objectImpl(ctx, definition, scratch, opts) {
             let isComplex = (type >>> 31) === 1;
             if (isComplex) {
                 let payload = type & PRIM_MASK;
-                let kindLimit = (type & SCRATCH) ? ctx.SCR_HEAP.KIND_PTR : ctx.HEAP.KIND_PTR;
+                let kindLimit = ctx.HEAP.KIND_PTR;
                 if (payload >= kindLimit) {
                     throw new Error('Object corruption at key ' + key + '. You cannot use the bitwise OR operator (|) to combine a complex type with a primitive type');
                 }
             }
         } else if (isObject(type)) {
-            type = objectImpl(ctx, /** @type {uvd.Schema<R>} */(type), scratch);
+            type = objectImpl(ctx, /** @type {uvd.Schema<R>} */(type));
         } else {
             throw new Error('Invalid type for key ' + key);
         }
@@ -388,23 +374,21 @@ function objectImpl(ctx, definition, scratch, opts) {
     let payloads = null;
     if (hasValidator) {
         let result = packValidators(opts, OBJ_MASK, ctx.lookup);
-        let cache = scratch ? ctx.S_REGEX_CACHE : ctx.REGEX_CACHE;
-        migrateRegex(result, cache);
+        migrateRegex(result, ctx.REGEX_CACHE);
         vHeader = result[0];
         payloads = result.slice(1);
     }
     let kindHeader = hasValidator ? (K_OBJECT | K_VALIDATOR) : K_OBJECT;
-    return ctx.malloc(kindHeader, scratch, 0, resolved, count, vHeader, payloads);
+    return ctx.malloc(kindHeader, 0, resolved, count, vHeader, payloads);
 }
 
 /**
  * @param {*} ctx
  * @param {number} elemType
- * @param {boolean} scratch
  * @param {uvd.ArrayValidators=} opts
  * @returns {number}
  */
-function arrayImpl(ctx, elemType, scratch, opts) {
+function arrayImpl(ctx, elemType, opts) {
     assertIsNumber(elemType, ERR_ARRAY_ELEMENT_MUST_BE_NUMBER);
     const hasVal = opts !== void 0;
     let vHeader = 0;
@@ -416,17 +400,16 @@ function arrayImpl(ctx, elemType, scratch, opts) {
     }
     /** K_ARRAY stores elemType as inline (KINDS slot 1); no SLAB or SHAPES entry. */
     let kindHeader = (hasVal ? (K_ARRAY | K_VALIDATOR) : K_ARRAY) | K_HAS_ITEMS;
-    return ctx.malloc(kindHeader, scratch, elemType >>> 0, null, 0, vHeader, payloads);
+    return ctx.malloc(kindHeader, elemType >>> 0, null, 0, vHeader, payloads);
 }
 
 /**
  * @param {*} ctx
  * @param {string} discriminator
  * @param {!Object} variants
- * @param {boolean} scratch
  * @returns {number}
  */
-function unionImpl(ctx, discriminator, variants, scratch) {
+function unionImpl(ctx, discriminator, variants) {
     if (!isObject(variants) || Array.isArray(variants)) {
         throw new Error('discriminated variants must be an object literal { key: type }');
     }
@@ -455,237 +438,112 @@ function unionImpl(ctx, discriminator, variants, scratch) {
     for (let i = 0; i < count * 2; i++) {
         slabData[1 + i] = resolved[i];
     }
-    return ctx.malloc(K_UNION, scratch, 0, slabData, count, 0, null);
+    return ctx.malloc(K_UNION, 0, slabData, count, 0, null);
 }
 
 // --- Allocator factories ---
 
 function objectAllocator(cat) {
     let ctx = cat.__heap;
-    return (def, opts) => objectImpl(ctx, def, false, opts);
-}
-
-function $objectAllocator(cat) {
-    let ctx = cat.__heap;
-    return (def, opts) => {
-        if (ctx.rewindPending()) ctx.rewind();
-        return objectImpl(ctx, def, true, opts);
-    };
+    return (def, opts) => objectImpl(ctx, def, opts);
 }
 
 function arrayAllocator(cat) {
     let ctx = cat.__heap;
-    return (type, opts) => arrayImpl(ctx, type, false, opts);
-}
-
-function $arrayAllocator(cat) {
-    let ctx = cat.__heap;
-    return (type, opts) => {
-        if (ctx.rewindPending()) ctx.rewind();
-        return arrayImpl(ctx, type, true, opts);
-    };
+    return (type, opts) => arrayImpl(ctx, type, opts);
 }
 
 function unionAllocator(cat) {
     let ctx = cat.__heap;
-    return (disc, variants) => unionImpl(ctx, disc, variants, false);
-}
-
-function $unionAllocator(cat) {
-    let ctx = cat.__heap;
-    return (disc, variants) => {
-        if (ctx.rewindPending()) ctx.rewind();
-        return unionImpl(ctx, disc, variants, true);
-    };
+    return (disc, variants) => unionImpl(ctx, disc, variants);
 }
 
 function valueAllocator(cat, primConst) {
     let ctx = cat.__heap;
-    return (opts) => valueImpl(ctx, primConst, false, opts);
-}
-
-function $valueAllocator(cat, primConst) {
-    let ctx = cat.__heap;
-    return (opts) => {
-        if (ctx.rewindPending()) ctx.rewind();
-        return valueImpl(ctx, primConst, true, opts);
-    };
+    return (opts) => valueImpl(ctx, primConst, opts);
 }
 
 function refineAllocator(cat) {
     let ctx = cat.__heap;
-    return (typedef, fn) => refineImpl(ctx, typedef, fn, false);
-}
-
-function $refineAllocator(cat) {
-    let ctx = cat.__heap;
-    return (typedef, fn) => {
-        if (ctx.rewindPending()) ctx.rewind();
-        return refineImpl(ctx, typedef, fn, true);
-    };
+    return (typedef, fn) => refineImpl(ctx, typedef, fn);
 }
 
 function tupleAllocator(cat) {
     let ctx = cat.__heap;
-    return (first, second, third) => tupleArrayImpl(ctx, normalizeTypeArgs(first, second, third), false);
-}
-
-function $tupleAllocator(cat) {
-    let ctx = cat.__heap;
-    return (first, second, third) => {
-        if (ctx.rewindPending()) ctx.rewind();
-        return tupleArrayImpl(ctx, normalizeTypeArgs(first, second, third), true);
-    };
+    return (first, second, third) => tupleArrayImpl(ctx, normalizeTypeArgs(first, second, third));
 }
 
 function recordAllocator(cat) {
     let ctx = cat.__heap;
-    return (valueType) => recordImpl(ctx, valueType, false);
-}
-
-function $recordAllocator(cat) {
-    let ctx = cat.__heap;
-    return (valueType) => {
-        if (ctx.rewindPending()) ctx.rewind();
-        return recordImpl(ctx, valueType, true);
-    };
+    return (valueType) => recordImpl(ctx, valueType);
 }
 
 function orAllocator(cat) {
     let ctx = cat.__heap;
-    return (first, second, third) => orImpl(ctx, normalizeTypeArgs(first, second, third), false);
-}
-
-function $orAllocator(cat) {
-    let ctx = cat.__heap;
-    return (first, second, third) => {
-        if (ctx.rewindPending()) ctx.rewind();
-        return orImpl(ctx, normalizeTypeArgs(first, second, third), true);
-    };
+    return (first, second, third) => orImpl(ctx, normalizeTypeArgs(first, second, third));
 }
 
 function exclusiveAllocator(cat) {
     let ctx = cat.__heap;
-    return (first, second, third) => exclusiveImpl(ctx, normalizeTypeArgs(first, second, third), false);
-}
-
-function $exclusiveAllocator(cat) {
-    let ctx = cat.__heap;
-    return (first, second, third) => {
-        if (ctx.rewindPending()) ctx.rewind();
-        return exclusiveImpl(ctx, normalizeTypeArgs(first, second, third), true);
-    };
+    return (first, second, third) => exclusiveImpl(ctx, normalizeTypeArgs(first, second, third));
 }
 
 function intersectAllocator(cat) {
     let ctx = cat.__heap;
-    return (first, second, third) => intersectImpl(ctx, normalizeTypeArgs(first, second, third), false);
-}
-
-function $intersectAllocator(cat) {
-    let ctx = cat.__heap;
-    return (first, second, third) => {
-        if (ctx.rewindPending()) ctx.rewind();
-        return intersectImpl(ctx, normalizeTypeArgs(first, second, third), true);
-    };
+    return (first, second, third) => intersectImpl(ctx, normalizeTypeArgs(first, second, third));
 }
 
 function notAllocator(cat) {
     let ctx = cat.__heap;
-    return (typedef) => notImpl(ctx, typedef, false);
-}
-
-function $notAllocator(cat) {
-    let ctx = cat.__heap;
-    return (typedef) => {
-        if (ctx.rewindPending()) ctx.rewind();
-        return notImpl(ctx, typedef, true);
-    };
+    return (typedef) => notImpl(ctx, typedef);
 }
 
 function whenAllocator(cat) {
     let ctx = cat.__heap;
-    return (config) => whenImpl(ctx, config, false);
+    return (config) => whenImpl(ctx, config);
 }
 
-function $whenAllocator(cat) {
-    let ctx = cat.__heap;
-    return (config) => {
-        if (ctx.rewindPending()) ctx.rewind();
-        return whenImpl(ctx, config, true);
-    };
-}
-
-// --- Convenience bundles ---
+// --- Convenience bundle ---
 
 function allocators(cat) {
     let ctx = cat.__heap;
     return {
-        object: (def, opts) => objectImpl(ctx, def, false, opts),
-        array: (type, opts) => arrayImpl(ctx, type, false, opts),
-        union: (disc, variants) => unionImpl(ctx, disc, variants, false),
-        string: (opts) => valueImpl(ctx, STRING, false, opts),
-        number: (opts) => valueImpl(ctx, NUMBER, false, opts),
-        boolean: (opts) => valueImpl(ctx, BOOLEAN, false, opts),
-        bigint: (opts) => valueImpl(ctx, BIGINT, false, opts),
-        date: (opts) => valueImpl(ctx, DATE, false, opts),
-        uri: (opts) => valueImpl(ctx, URI, false, opts),
-        refine: (typedef, fn) => refineImpl(ctx, typedef, fn, false),
-        tuple: (first, second, third) => tupleArrayImpl(ctx, normalizeTypeArgs(first, second, third), false),
-        record: (valueType) => recordImpl(ctx, valueType, false),
-        or: (first, second, third) => orImpl(ctx, normalizeTypeArgs(first, second, third), false),
-        exclusive: (first, second, third) => exclusiveImpl(ctx, normalizeTypeArgs(first, second, third), false),
-        intersect: (first, second, third) => intersectImpl(ctx, normalizeTypeArgs(first, second, third), false),
-        not: (typedef) => notImpl(ctx, typedef, false),
-        when: (config) => whenImpl(ctx, config, false),
-        literal: (value) => literalImpl(ctx, value, false),
-        enum: (values) => enumImpl(ctx, values, false),
-        optional,
-        nullable,
-    };
-}
-
-function $allocators(cat) {
-    let ctx = cat.__heap;
-    let rp = ctx.rewindPending;
-    let rw = ctx.rewind;
-    return {
-        $object: (def, opts) => { if (rp()) rw(); return objectImpl(ctx, def, true, opts); },
-        $array: (type, opts) => { if (rp()) rw(); return arrayImpl(ctx, type, true, opts); },
-        $union: (disc, variants) => { if (rp()) rw(); return unionImpl(ctx, disc, variants, true); },
-        $string: (opts) => { if (rp()) rw(); return valueImpl(ctx, STRING, true, opts); },
-        $number: (opts) => { if (rp()) rw(); return valueImpl(ctx, NUMBER, true, opts); },
-        $boolean: (opts) => { if (rp()) rw(); return valueImpl(ctx, BOOLEAN, true, opts); },
-        $bigint: (opts) => { if (rp()) rw(); return valueImpl(ctx, BIGINT, true, opts); },
-        $date: (opts) => { if (rp()) rw(); return valueImpl(ctx, DATE, true, opts); },
-        $uri: (opts) => { if (rp()) rw(); return valueImpl(ctx, URI, true, opts); },
-        $refine: (typedef, fn) => { if (rp()) rw(); return refineImpl(ctx, typedef, fn, true); },
-        $tuple: (first, second, third) => { if (rp()) rw(); return tupleArrayImpl(ctx, normalizeTypeArgs(first, second, third), true); },
-        $record: (valueType) => { if (rp()) rw(); return recordImpl(ctx, valueType, true); },
-        $or: (first, second, third) => { if (rp()) rw(); return orImpl(ctx, normalizeTypeArgs(first, second, third), true); },
-        $exclusive: (first, second, third) => { if (rp()) rw(); return exclusiveImpl(ctx, normalizeTypeArgs(first, second, third), true); },
-        $intersect: (first, second, third) => { if (rp()) rw(); return intersectImpl(ctx, normalizeTypeArgs(first, second, third), true); },
-        $not: (typedef) => { if (rp()) rw(); return notImpl(ctx, typedef, true); },
-        $when: (config) => { if (rp()) rw(); return whenImpl(ctx, config, true); },
-        $literal: (value) => { if (rp()) rw(); return literalImpl(ctx, value, true); },
-        $enum: (values) => { if (rp()) rw(); return enumImpl(ctx, values, true); },
+        object: (def, opts) => objectImpl(ctx, def, opts),
+        array: (type, opts) => arrayImpl(ctx, type, opts),
+        union: (disc, variants) => unionImpl(ctx, disc, variants),
+        string: (opts) => valueImpl(ctx, STRING, opts),
+        number: (opts) => valueImpl(ctx, NUMBER, opts),
+        boolean: (opts) => valueImpl(ctx, BOOLEAN, opts),
+        bigint: (opts) => valueImpl(ctx, BIGINT, opts),
+        date: (opts) => valueImpl(ctx, DATE, opts),
+        uri: (opts) => valueImpl(ctx, URI, opts),
+        refine: (typedef, fn) => refineImpl(ctx, typedef, fn),
+        tuple: (first, second, third) => tupleArrayImpl(ctx, normalizeTypeArgs(first, second, third)),
+        record: (valueType) => recordImpl(ctx, valueType),
+        or: (first, second, third) => orImpl(ctx, normalizeTypeArgs(first, second, third)),
+        exclusive: (first, second, third) => exclusiveImpl(ctx, normalizeTypeArgs(first, second, third)),
+        intersect: (first, second, third) => intersectImpl(ctx, normalizeTypeArgs(first, second, third)),
+        not: (typedef) => notImpl(ctx, typedef),
+        when: (config) => whenImpl(ctx, config),
+        literal: (value) => literalImpl(ctx, value),
+        enum: (values) => enumImpl(ctx, values),
         optional,
         nullable,
     };
 }
 
 export {
-    allocators, $allocators,
-    objectAllocator, $objectAllocator,
-    arrayAllocator, $arrayAllocator,
-    unionAllocator, $unionAllocator,
-    valueAllocator, $valueAllocator,
-    refineAllocator, $refineAllocator,
-    tupleAllocator, $tupleAllocator,
-    recordAllocator, $recordAllocator,
-    orAllocator, $orAllocator,
-    exclusiveAllocator, $exclusiveAllocator,
-    intersectAllocator, $intersectAllocator,
-    notAllocator, $notAllocator,
-    whenAllocator, $whenAllocator,
+    allocators,
+    objectAllocator,
+    arrayAllocator,
+    unionAllocator,
+    valueAllocator,
+    refineAllocator,
+    tupleAllocator,
+    recordAllocator,
+    orAllocator,
+    exclusiveAllocator,
+    intersectAllocator,
+    notAllocator,
+    whenAllocator,
 };

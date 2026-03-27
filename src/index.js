@@ -6,7 +6,7 @@ import {
 import {
     catalog
 } from "./internal/catalog.js";
-import { allocators, $allocators } from './internal/allocate.js';
+import { allocators } from './internal/allocate.js';
 import { createConform } from './internal/transform.js';
 import { createDiagnose } from './internal/error.js';
 
@@ -25,13 +25,6 @@ const {
     optional, nullable,
 } = allocators(uvd);
 
-const {
-    $object, $array, $union,
-    $string, $number, $boolean, $bigint, $date, $uri,
-    $refine, $tuple, $record,
-    $or, $exclusive, $intersect, $not, $when,
-} = $allocators(uvd);
-
 export const conform = createConform(uvd);
 export const validate = uvd.validate;
 export const diagnose = createDiagnose(uvd);
@@ -42,13 +35,6 @@ export {
     refine, tuple, record,
     or, exclusive, intersect, not, when,
     optional, nullable,
-}
-
-export {
-    $object, $array, $union,
-    $string, $number, $boolean, $bigint, $date, $uri,
-    $refine, $tuple, $record,
-    $or, $exclusive, $intersect, $not, $when,
 }
 
 export {

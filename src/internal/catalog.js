@@ -1,7 +1,7 @@
 /// <reference path="../../global.d.ts" />
 import { config, heap } from './config.js';
 import {
-    COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
+    COMPLEX, NULLABLE, OPTIONAL,
     ANY, NEVER, REST, SIMPLE, PRIM_MASK, KIND_MASK,
     STRING,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
@@ -41,9 +41,7 @@ export const BARE_RECORD = (COMPLEX | 2) >>> 0;
 function catalog(cfg) {
     cfg = config(cfg);
     let HEAP = heap(cfg.heap);
-    let SCR_HEAP = heap(cfg.scratch);
 
-    // Primary heap store
     let SLAB = HEAP.SLAB;
     let SHAPES = HEAP.SHAPES;
     let KINDS = HEAP.KINDS;
@@ -51,15 +49,7 @@ function catalog(cfg) {
     let REGEX_CACHE = HEAP.REGEX_CACHE;
     let CALLBACKS = HEAP.CALLBACKS;
 
-    // Scratch heap store
-    let S_SLAB = SCR_HEAP.SLAB;
-    let S_SHAPES = SCR_HEAP.SHAPES;
-    let S_KINDS = SCR_HEAP.KINDS;
-    let S_VALIDATORS = SCR_HEAP.VALIDATORS;
-    let S_REGEX_CACHE = SCR_HEAP.REGEX_CACHE;
-    let S_CALLBACKS = SCR_HEAP.CALLBACKS;
-
-    // --- KEY DICTIONARY (shared between permanent and scratch) ---
+    // --- KEY DICTIONARY ---
     /** @type {number} */
     let keyseq = 1;
     /** @const @type {!Map<string,number>} */
@@ -76,7 +66,6 @@ function catalog(cfg) {
     KINDS[2] = K_RECORD | K_ANY_INNER;
     HEAP.KIND_PTR = 3;
 
-    let REWIND_PENDING = false;
 
     /** Global stack tracking active dynamic scope boundaries during validation. */
     const DYN_ANCHORS = new Uint32Array(512);
@@ -168,19 +157,6 @@ function catalog(cfg) {
     }
 
     /**
-     * @returns {void}
-     */
-    function rewindScratch() {
-        SCR_HEAP.PTR = 0;
-        SCR_HEAP.SHAPE_COUNT = 0;
-        SCR_HEAP.KIND_PTR = 0;
-        SCR_HEAP.VAL_PTR = 0;
-        S_REGEX_CACHE.length = 0;
-        S_CALLBACKS.length = 0;
-        REWIND_PENDING = false;
-    }
-
-    /**
      * @param {string} key
      * @returns {number}
      */
@@ -256,8 +232,7 @@ function catalog(cfg) {
     }
 
     /**
-     * Internal allocator for the Scratch Heap. Identical logic to _malloc
-     * but targets SCR_HEAP buffers. Returns a scratch COMPLEX typedef pointer.
+     * Public allocation interface. Allocates on the permanent heap.
      *
      * @param {number} header
      * @param {number} inline
@@ -267,93 +242,17 @@ function catalog(cfg) {
      * @param {Array<number>|null} vPayloads
      * @returns {number}
      */
-    function _smalloc(header, inline, slabData, shapeLen, vHeader, vPayloads) {
-        let ri = inline;
-        if (slabData !== null) {
-            let count = slabData.length;
-            if (SCR_HEAP.PTR + count > SCR_HEAP.SLAB_LEN) {
-                let buffer = new Uint32Array(SCR_HEAP.SLAB_LEN *= 2);
-                buffer.set(S_SLAB);
-                SCR_HEAP.SLAB = S_SLAB = buffer;
-            }
-            let offset = SCR_HEAP.PTR;
-            SCR_HEAP.SLAB.set(slabData, offset);
-            SCR_HEAP.PTR += count;
-            ri = SCR_HEAP.SHAPE_COUNT++;
-            if ((ri + 1) * 2 > SCR_HEAP.SHAPE_LEN) {
-                let buffer = new Uint32Array(SCR_HEAP.SHAPE_LEN *= 2);
-                buffer.set(S_SHAPES);
-                SCR_HEAP.SHAPES = S_SHAPES = buffer;
-            }
-            SCR_HEAP.SHAPES[ri * 2] = offset;
-            SCR_HEAP.SHAPES[ri * 2 + 1] = shapeLen;
-        }
-        let valIdx = 0, slots = 2;
-        if (vHeader !== 0 && vPayloads !== null) {
-            slots = 3;
-            let vCount = vPayloads.length;
-            if (SCR_HEAP.VAL_PTR + vCount + 1 > SCR_HEAP.VAL_LEN) {
-                let buffer = new Float64Array(SCR_HEAP.VAL_LEN *= 2);
-                buffer.set(S_VALIDATORS);
-                SCR_HEAP.VALIDATORS = S_VALIDATORS = buffer;
-            }
-            valIdx = SCR_HEAP.VAL_PTR;
-            SCR_HEAP.VALIDATORS[valIdx] = vHeader;
-            SCR_HEAP.VALIDATORS.set(vPayloads, valIdx + 1);
-            SCR_HEAP.VAL_PTR += vCount + 1;
-        }
-        let ptr = SCR_HEAP.KIND_PTR;
-        if (ptr + slots > SCR_HEAP.KIND_LEN) {
-            let buffer = new Uint32Array(SCR_HEAP.KIND_LEN *= 2);
-            buffer.set(S_KINDS);
-            SCR_HEAP.KINDS = S_KINDS = buffer;
-        }
-        SCR_HEAP.KINDS[ptr] = header;
-        SCR_HEAP.KINDS[ptr + 1] = ri;
-        if (slots === 3) { SCR_HEAP.KINDS[ptr + 2] = valIdx; }
-        SCR_HEAP.KIND_PTR += slots;
-        return (COMPLEX | SCRATCH | ptr) >>> 0;
-    }
-
-    /**
-     * Public allocation interface. Dispatches to _malloc (permanent) or
-     * _smalloc (scratch) based on the scratch flag.
-     *
-     * @param {number} header
-     * @param {boolean} scratch
-     * @param {number} inline
-     * @param {Array<number>|Uint32Array|null} slabData
-     * @param {number} shapeLen
-     * @param {number} vHeader
-     * @param {Array<number>|null} vPayloads
-     * @returns {number}
-     */
-    function malloc(header, scratch, inline, slabData, shapeLen, vHeader, vPayloads) {
-        return (scratch ? _smalloc : _malloc)(header, inline, slabData, shapeLen, vHeader, vPayloads);
+    function malloc(header, inline, slabData, shapeLen, vHeader, vPayloads) {
+        return _malloc(header, inline, slabData, shapeLen, vHeader, vPayloads);
     }
 
     /**
      * @param {number} vHeader
      * @param {!Array<number>} payloads
-     * @param {boolean} scratch
      * @returns {number}
      */
-    function allocValidator(vHeader, payloads, scratch) {
+    function allocValidator(vHeader, payloads) {
         let needed = 1 + payloads.length;
-        if (scratch) {
-            if (SCR_HEAP.VAL_PTR + needed > SCR_HEAP.VAL_LEN) {
-                let buffer = new Float64Array(SCR_HEAP.VAL_LEN *= 2);
-                buffer.set(S_VALIDATORS);
-                SCR_HEAP.VALIDATORS = S_VALIDATORS = buffer;
-            }
-            let ptr = SCR_HEAP.VAL_PTR;
-            S_VALIDATORS[ptr] = vHeader;
-            for (let i = 0; i < payloads.length; i++) {
-                S_VALIDATORS[ptr + 1 + i] = payloads[i];
-            }
-            SCR_HEAP.VAL_PTR += needed;
-            return ptr;
-        }
         if (HEAP.VAL_PTR + needed > HEAP.VAL_LEN) {
             let buffer = new Float64Array(HEAP.VAL_LEN *= 2);
             buffer.set(VALIDATORS);
@@ -396,11 +295,10 @@ function catalog(cfg) {
      * @param {*} value
      * @param {number} primBits
      * @param {number} valIdx
-     * @param {boolean} scratch
      * @returns {boolean}
      */
-    function runPrimValidator(value, primBits, valIdx, scratch) {
-        let vals = scratch ? S_VALIDATORS : VALIDATORS;
+    function runPrimValidator(value, primBits, valIdx) {
+        let vals = VALIDATORS;
         let vHeader = vals[valIdx] | 0;
         let base = valIdx + 1;
         if (typeof value === 'string') {
@@ -418,8 +316,7 @@ function catalog(cfg) {
             }
             if (vHeader & V_PATTERN) {
                 let p = base + popcnt16(vHeader & (V_PATTERN - 1));
-                let regexCache = scratch ? S_REGEX_CACHE : REGEX_CACHE;
-                if (!regexCache[vals[p] | 0].test(value)) {
+                if (!REGEX_CACHE[vals[p] | 0].test(value)) {
                     return false;
                 }
             }
@@ -482,13 +379,12 @@ function catalog(cfg) {
     /**
      * @param {!Array<*>} data
      * @param {number} valIdx
-     * @param {boolean} scratch
      * @param {number} trackPtr
      * @param {number} snapPtr
      * @returns {boolean}
      */
-    function runArrayValidator(data, valIdx, scratch, trackPtr, snapPtr) {
-        let vals = scratch ? S_VALIDATORS : VALIDATORS;
+    function runArrayValidator(data, valIdx, trackPtr, snapPtr) {
+        let vals = VALIDATORS;
         let vHeader = vals[valIdx] | 0;
         let base = valIdx + 1;
         if (vHeader & V_MIN_ITEMS) {
@@ -542,15 +438,14 @@ function catalog(cfg) {
     /**
      * @param {!Record<string,any>} data
      * @param {number} valIdx
-     * @param {boolean} scratch
      * @param {number} ri
      * @param {number} trackPtr - tracking frame pointer (0 = no tracking)
      * @param {number} snapPtr
      * @returns {boolean}
      */
-    function runObjectValidator(data, valIdx, scratch, ri, trackPtr, snapPtr) {
-        let vals = scratch ? S_VALIDATORS : VALIDATORS;
-        let regexCache = scratch ? S_REGEX_CACHE : REGEX_CACHE;
+    function runObjectValidator(data, valIdx, ri, trackPtr, snapPtr) {
+        let vals = VALIDATORS;
+        let regexCache = REGEX_CACHE;
         let vHeader = vals[valIdx] | 0;
         let p = valIdx + 1;
         let keys = Object.keys(data);
@@ -629,8 +524,8 @@ function catalog(cfg) {
         }
         if (vHeader & V_ADDITIONAL_PROPERTIES) {
             let addType = vals[p++] >>> 0;
-            let shapes = scratch ? S_SHAPES : SHAPES;
-            let slab = scratch ? S_SLAB : SLAB;
+            let shapes = SHAPES;
+            let slab = SLAB;
             let offset = shapes[ri * 2];
             let length = shapes[ri * 2 + 1];
             for (let ki = 0; ki < keyCount; ki++) {
@@ -725,9 +620,8 @@ function catalog(cfg) {
             // COMPLEX types: fall through to kind handler (needed for K_CONDITIONAL)
         }
         if (typedef & COMPLEX) {
-            let scratch = (typedef & SCRATCH) !== 0;
             let ptr = typedef & KIND_MASK;
-            let kinds = scratch ? S_KINDS : KINDS;
+            let kinds = KINDS;
             let header = kinds[ptr];
             let ct = header & KIND_ENUM_MASK;
 
@@ -751,7 +645,7 @@ function catalog(cfg) {
                         return false;
                     }
                     if (header & K_VALIDATOR) {
-                        return runPrimValidator(data, primBits, ri, scratch);
+                        return runPrimValidator(data, primBits, ri);
                     }
                     return true;
                 }
@@ -759,8 +653,8 @@ function catalog(cfg) {
                     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                         return false;
                     }
-                    let shapes = scratch ? S_SHAPES : SHAPES;
-                    let slab = scratch ? S_SLAB : SLAB;
+                    let shapes = SHAPES;
+                    let slab = SLAB;
                     let offset = shapes[ri * 2];
                     let length = shapes[ri * 2 + 1];
                     for (let i = 0; i < length; i++) {
@@ -786,7 +680,7 @@ function catalog(cfg) {
                         }
                     }
                     if (header & K_VALIDATOR) {
-                        return runObjectValidator(data, kinds[ptr + 2], scratch, ri, trackPtr, snapPtr);
+                        return runObjectValidator(data, kinds[ptr + 2], ri, trackPtr, snapPtr);
                     }
                     return true;
                 }
@@ -809,7 +703,7 @@ function catalog(cfg) {
                         }
                     }
                     if (header & K_VALIDATOR) {
-                        return runArrayValidator(data, kinds[ptr + 2], scratch, trackPtr, snapPtr);
+                        return runArrayValidator(data, kinds[ptr + 2], trackPtr, snapPtr);
                     }
                     return true;
                 }
@@ -828,8 +722,8 @@ function catalog(cfg) {
                     return true;
                 }
                 case K_OR: {
-                    let shapes = scratch ? S_SHAPES : SHAPES;
-                    let slab = scratch ? S_SLAB : SLAB;
+                    let shapes = SHAPES;
+                    let slab = SLAB;
                     let offset = shapes[ri * 2];
                     let count = shapes[ri * 2 + 1];
                     if (trackPtr) {
@@ -878,8 +772,8 @@ function catalog(cfg) {
                     return false;
                 }
                 case K_EXCLUSIVE: {
-                    let shapes = scratch ? S_SHAPES : SHAPES;
-                    let slab = scratch ? S_SLAB : SLAB;
+                    let shapes = SHAPES;
+                    let slab = SLAB;
                     let offset = shapes[ri * 2];
                     let count = shapes[ri * 2 + 1];
                     if (trackPtr) {
@@ -937,8 +831,8 @@ function catalog(cfg) {
                     return matchCount === 1;
                 }
                 case K_INTERSECT: {
-                    let shapes = scratch ? S_SHAPES : SHAPES;
-                    let slab = scratch ? S_SLAB : SLAB;
+                    let shapes = SHAPES;
+                    let slab = SLAB;
                     let offset = shapes[ri * 2];
                     let count = shapes[ri * 2 + 1];
                     for (let i = 0; i < count; i++) {
@@ -952,8 +846,8 @@ function catalog(cfg) {
                     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                         return false;
                     }
-                    let shapes = scratch ? S_SHAPES : SHAPES;
-                    let slab = scratch ? S_SLAB : SLAB;
+                    let shapes = SHAPES;
+                    let slab = SLAB;
                     let offset = shapes[ri * 2];
                     let length = shapes[ri * 2 + 1];
                     // slab[offset] is the discriminator key id; variants follow at offset+1
@@ -976,8 +870,8 @@ function catalog(cfg) {
                     if (!Array.isArray(data)) {
                         return false;
                     }
-                    let shapes = scratch ? S_SHAPES : SHAPES;
-                    let slab = scratch ? S_SLAB : SLAB;
+                    let shapes = SHAPES;
+                    let slab = SLAB;
                     let offset = shapes[ri * 2];
                     let count = shapes[ri * 2 + 1];
                     let hasRest = count > 0 && (slab[offset + count - 1] & REST) !== 0;
@@ -1016,20 +910,20 @@ function catalog(cfg) {
                         }
                     }
                     if (header & K_VALIDATOR) {
-                        return runArrayValidator(data, kinds[ptr + 2], scratch, trackPtr, snapPtr);
+                        return runArrayValidator(data, kinds[ptr + 2], trackPtr, snapPtr);
                     }
                     return true;
                 }
                 case K_REFINE: {
-                    let shapes = scratch ? S_SHAPES : SHAPES;
-                    let slab = scratch ? S_SLAB : SLAB;
+                    let shapes = SHAPES;
+                    let slab = SLAB;
                     let offset = shapes[ri * 2];
                     let innerType = slab[offset];
                     let callbackIdx = slab[offset + 1];
                     if (!_validate(data, innerType, trackPtr, snapPtr)) {
                         return false;
                     }
-                    let callbacks = scratch ? S_CALLBACKS : CALLBACKS;
+                    let callbacks = CALLBACKS;
                     return !!callbacks[callbackIdx](data);
                 }
                 case K_NOT: {
@@ -1037,8 +931,8 @@ function catalog(cfg) {
                     return !_validate(data, ri, 0, 0);
                 }
                 case K_CONDITIONAL: {
-                    let shapes = scratch ? S_SHAPES : SHAPES;
-                    let slab = scratch ? S_SLAB : SLAB;
+                    let shapes = SHAPES;
+                    let slab = SLAB;
                     let offset = shapes[ri * 2];
                     let ifType = slab[offset];
                     let thenType = slab[offset + 1];
@@ -1074,28 +968,26 @@ function catalog(cfg) {
                     }
                 }
                 case K_DYN_ANCHOR: {
-                    let shapes = scratch ? S_SHAPES : SHAPES;
-                    let slab = scratch ? S_SLAB : SLAB;
+                    let shapes = SHAPES;
+                    let slab = SLAB;
                     let offset = shapes[ri * 2];
-                    DYN_ANCHORS[DYN_PTR++] = scratch ? (ri | 0x80000000) : ri;
+                    DYN_ANCHORS[DYN_PTR++] = ri;
                     let valid = _validate(data, slab[offset], trackPtr, snapPtr);
                     DYN_PTR--;
                     return valid;
                 }
                 case K_DYN_REF: {
-                    let shapes = scratch ? S_SHAPES : SHAPES;
-                    let slab = scratch ? S_SLAB : SLAB;
+                    let shapes = SHAPES;
+                    let slab = SLAB;
                     let offset = shapes[ri * 2];
                     let anchorKeyId = slab[offset];
                     let targetType = slab[offset + 1];
                     // Search the scope stack outermost (0) to innermost (DYN_PTR - 1).
                     // The first match wins per Draft 2020-12 spec.
                     scan: for (let i = 0; i < DYN_PTR; i++) {
-                        let entry = DYN_ANCHORS[i];
-                        let scopeScratch = (entry & 0x80000000) !== 0;
-                        let scopeRi = entry & 0x7FFFFFFF;
-                        let scopeShapes = scopeScratch ? S_SHAPES : SHAPES;
-                        let scopeSlab = scopeScratch ? S_SLAB : SLAB;
+                        let scopeRi = DYN_ANCHORS[i];
+                        let scopeShapes = SHAPES;
+                        let scopeSlab = SLAB;
                         let scopeOffset = scopeShapes[scopeRi * 2];
                         let count = scopeShapes[scopeRi * 2 + 1];
                         // Binary search the sorted [anchorKeyId, targetType] pairs.
@@ -1132,8 +1024,8 @@ function catalog(cfg) {
                      * TRACK_TAIL advances by 1 + count; bit words fit inside since
                      * words = (count + 31) >>> 5 <= count for count >= 1.
                      */
-                    let shapes = scratch ? S_SHAPES : SHAPES;
-                    let slab = scratch ? S_SLAB : SLAB;
+                    let shapes = SHAPES;
+                    let slab = SLAB;
                     let offset = shapes[ri * 2];
                     let innerType = slab[offset];
                     let unevalType = slab[offset + 1];
@@ -1305,27 +1197,15 @@ function catalog(cfg) {
         SNAP_TAIL = 1;
         TRACK_TAIL = 1;
         UNKNOWN_TAIL = 0;
-        REWIND_PENDING = true;
         return _validate(data, typedef, 0, 0);
     }
 
-    function setRewindPending() {
-        REWIND_PENDING = true;
-    }
-
-    function rewindPending() {
-        return REWIND_PENDING;
-    }
-
     const __heap = {
-        HEAP, SCR_HEAP, DICT: { KEY_DICT, KEY_INDEX },
-        REGEX_CACHE, CALLBACKS, S_REGEX_CACHE, S_CALLBACKS,
+        HEAP, DICT: { KEY_DICT, KEY_INDEX },
+        REGEX_CACHE, CALLBACKS,
         malloc, allocValidator, lookup,
         _validate,
         BARE_ARRAY, BARE_OBJECT, BARE_RECORD,
-        setRewindPending,
-        rewindPending,
-        rewind: rewindScratch,
     };
 
     return { validate, __heap };
@@ -1333,7 +1213,7 @@ function catalog(cfg) {
 
 export {
     catalog, sortByKeyId,
-    COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
+    COMPLEX, NULLABLE, OPTIONAL,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,

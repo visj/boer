@@ -2,19 +2,15 @@ import { describe, test, expect } from 'bun:test';
 import {
     STRING, NUMBER, NULL, UNDEFINED,
 } from 'uvd';
-import { catalog, allocators, $allocators, createConform, createDiagnose } from 'uvd/core';
+import { catalog, allocators, createConform, createDiagnose } from 'uvd/core';
 
 describe('catalog: isolation', () => {
     test('catalog() returns an object with validate, etc.', () => {
         let r = catalog();
         let { object, array, union } = allocators(r);
-        let { $object, $array, $union } = $allocators(r);
         expect(typeof object).toBe('function');
         expect(typeof array).toBe('function');
         expect(typeof union).toBe('function');
-        expect(typeof $object).toBe('function');
-        expect(typeof $array).toBe('function');
-        expect(typeof $union).toBe('function');
         expect(typeof r.validate).toBe('function');
         expect(typeof createConform(r)).toBe('function');
         expect(typeof createDiagnose(r)).toBe('function');

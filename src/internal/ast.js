@@ -1,6 +1,6 @@
 /// <reference path="../../global.d.ts" />
 import {
-    COMPLEX, NULLABLE, OPTIONAL, SCRATCH,
+    COMPLEX, NULLABLE, OPTIONAL,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
@@ -82,8 +82,6 @@ export function compile(cat, ast) {
     let malloc = heap.malloc;
     let allocValidator = heap.allocValidator;
     let lookup = heap.lookup;
-
-    let scratch = false;
 
     let {
         astKinds, astFlags, astChild0, astChild1,
@@ -206,8 +204,8 @@ export function compile(cat, ast) {
                     }
                 }
                 /** K_PRIMITIVE stores the validator index as inline (KINDS slot 1). */
-                let valIdx = allocValidator(vHeader, nodePayloads, scratch);
-                let result = malloc(K_PRIMITIVE | K_VALIDATOR | primBits, scratch, valIdx, null, 0, 0, null);
+                let valIdx = allocValidator(vHeader, nodePayloads);
+                let result = malloc(K_PRIMITIVE | K_VALIDATOR | primBits, valIdx, null, 0, 0, null);
                 // Preserve NULLABLE / OPTIONAL on the typedef pointer so the null/undefined
                 // fast-paths in _validate fire correctly (primBits NULLABLE/OPTIONAL are
                 // stripped by `header & SIMPLE` inside K_PRIMITIVE dispatch).
@@ -231,7 +229,7 @@ export function compile(cat, ast) {
             let vp = compileValidator(nodeId);
             if (vp !== null) {
                 /** K_ARRAY inline = ANY|NULLABLE elemType; validator in slot 2. */
-                astCompiled[nodeId] = malloc(K_ARRAY | K_VALIDATOR, scratch,
+                astCompiled[nodeId] = malloc(K_ARRAY | K_VALIDATOR,
                     (ANY | NULLABLE) >>> 0, null, 0, vp.vHeader, vp.nodePayloads);
             } else {
                 astCompiled[nodeId] = BARE_ARRAY;
@@ -243,7 +241,7 @@ export function compile(cat, ast) {
             let vp = compileValidator(nodeId);
             if (vp !== null) {
                 /** Empty slab for zero-property object; validator in slot 2. */
-                astCompiled[nodeId] = malloc(K_OBJECT | K_VALIDATOR, scratch,
+                astCompiled[nodeId] = malloc(K_OBJECT | K_VALIDATOR,
                     0, [], 0, vp.vHeader, vp.nodePayloads);
             } else {
                 astCompiled[nodeId] = BARE_OBJECT;
@@ -307,7 +305,7 @@ export function compile(cat, ast) {
                     let slabData = new Uint32Array(2);
                     slabData[0] = anchorKeyId;
                     slabData[1] = fallbackType;
-                    astCompiled[nodeId] = malloc(K_DYN_REF, scratch, 0, slabData, 2, 0, null);
+                    astCompiled[nodeId] = malloc(K_DYN_REF, 0, slabData, 2, 0, null);
                     astState[nodeId] = COMPILED;
                 } else {
                     stack[sp++] = nodeId;
@@ -324,7 +322,7 @@ export function compile(cat, ast) {
                 let slabData = new Uint32Array(2);
                 slabData[0] = anchorKeyId;
                 slabData[1] = fallbackType;
-                astCompiled[nodeId] = malloc(K_DYN_REF, scratch, 0, slabData, 2, 0, null);
+                astCompiled[nodeId] = malloc(K_DYN_REF, 0, slabData, 2, 0, null);
                 astState[nodeId] = COMPILED;
                 continue;
             }
@@ -338,7 +336,7 @@ export function compile(cat, ast) {
                 let slabData = new Uint32Array(2);
                 slabData[0] = anchorKeyId;
                 slabData[1] = 0; // placeholder fallback
-                let result = malloc(K_DYN_REF, scratch, 0, slabData, 2, 0, null);
+                let result = malloc(K_DYN_REF, 0, slabData, 2, 0, null);
                 astCompiled[nodeId] = result;
                 astState[nodeId] = COMPILED;
                 dynRefPatches.push([targetId, result]);
@@ -611,7 +609,7 @@ export function compile(cat, ast) {
 
                 let hasVal = finalPayloads !== null;
                 let kindHeader = hasVal ? (K_OBJECT | K_VALIDATOR) : K_OBJECT;
-                astCompiled[nodeId] = malloc(kindHeader, scratch, 0,
+                astCompiled[nodeId] = malloc(kindHeader, 0,
                     resolved, count, hasVal ? finalVHeader : 0, finalPayloads);
                 break;
             }
@@ -649,7 +647,7 @@ export function compile(cat, ast) {
                 }
 
                 /** K_ARRAY inline = elemType (KINDS slot 1); no SHAPES entry. */
-                astCompiled[nodeId] = malloc(kindHeader, scratch, elemType >>> 0,
+                astCompiled[nodeId] = malloc(kindHeader, elemType >>> 0,
                     null, 0, vp !== null ? vp.vHeader : 0, vp !== null ? vp.nodePayloads : null);
                 break;
             }
@@ -671,7 +669,7 @@ export function compile(cat, ast) {
                 if (allPrimitive) {
                     astCompiled[nodeId] = merged >>> 0;
                 } else {
-                    let result = malloc(K_OR, scratch, 0, types, types.length, 0, null);
+                    let result = malloc(K_OR, 0, types, types.length, 0, null);
                     for (let i = 0; i < types.length; i++) {
                         if (types[i] & NULLABLE) result |= NULLABLE;
                         if (types[i] & OPTIONAL) result |= OPTIONAL;
@@ -688,7 +686,7 @@ export function compile(cat, ast) {
                 for (let i = 0; i < count; i++) {
                     types[i] = astCompiled[astEdges[offset + i]];
                 }
-                astCompiled[nodeId] = malloc(K_EXCLUSIVE, scratch, 0, types, types.length, 0, null);
+                astCompiled[nodeId] = malloc(K_EXCLUSIVE, 0, types, types.length, 0, null);
                 break;
             }
 
@@ -699,13 +697,13 @@ export function compile(cat, ast) {
                 for (let i = 0; i < count; i++) {
                     types[i] = astCompiled[astEdges[offset + i]];
                 }
-                astCompiled[nodeId] = malloc(K_INTERSECT, scratch, 0, types, types.length, 0, null);
+                astCompiled[nodeId] = malloc(K_INTERSECT, 0, types, types.length, 0, null);
                 break;
             }
 
             case N_NOT: {
                 let innerType = astCompiled[astChild0[nodeId]];
-                astCompiled[nodeId] = malloc(K_NOT, scratch, innerType >>> 0, null, 0, 0, null);
+                astCompiled[nodeId] = malloc(K_NOT, innerType >>> 0, null, 0, 0, null);
                 break;
             }
 
@@ -715,7 +713,7 @@ export function compile(cat, ast) {
                 let thenType = astEdges[base + 1] !== SENTINEL ? astCompiled[astEdges[base + 1]] : 0;
                 let elseType = astEdges[base + 2] !== SENTINEL ? astCompiled[astEdges[base + 2]] : 0;
                 let types = [ifType, thenType, elseType];
-                astCompiled[nodeId] = malloc(K_CONDITIONAL, scratch, 0, types, types.length, 0, null);
+                astCompiled[nodeId] = malloc(K_CONDITIONAL, 0, types, types.length, 0, null);
                 break;
             }
 
@@ -757,7 +755,7 @@ export function compile(cat, ast) {
                     }
                 }
                 let kindHeader = (vp !== null) ? (K_TUPLE | K_VALIDATOR) : K_TUPLE;
-                astCompiled[nodeId] = malloc(kindHeader, scratch, 0,
+                astCompiled[nodeId] = malloc(kindHeader, 0,
                     types, totalCount, vp !== null ? vp.vHeader : 0, vp !== null ? vp.nodePayloads : null);
                 break;
             }
@@ -770,7 +768,7 @@ export function compile(cat, ast) {
                 let slabData = new Uint32Array(2);
                 slabData[0] = innerType >>> 0;
                 slabData[1] = callbackIdx;
-                let result = malloc(K_REFINE, scratch, 0, slabData, 2, 0, null);
+                let result = malloc(K_REFINE, 0, slabData, 2, 0, null);
                 if (innerType & NULLABLE) result |= NULLABLE;
                 if (innerType & OPTIONAL) result |= OPTIONAL;
                 astCompiled[nodeId] = result >>> 0;
@@ -798,7 +796,7 @@ export function compile(cat, ast) {
                 for (let i = 0; i < pairCount * 2; i++) {
                     slabData[1 + i] = pairs[i];
                 }
-                astCompiled[nodeId] = malloc(K_DYN_ANCHOR, scratch, 0, slabData, pairCount, 0, null);
+                astCompiled[nodeId] = malloc(K_DYN_ANCHOR, 0, slabData, pairCount, 0, null);
                 break;
             }
 
@@ -811,7 +809,7 @@ export function compile(cat, ast) {
                 slabData[0] = innerType;
                 slabData[1] = unevalType;
                 slabData[2] = unevalMode;
-                astCompiled[nodeId] = malloc(K_UNEVALUATED, scratch, 0, slabData, 3, 0, null);
+                astCompiled[nodeId] = malloc(K_UNEVALUATED, 0, slabData, 3, 0, null);
                 break;
             }
         }
