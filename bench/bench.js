@@ -283,7 +283,6 @@ group('Enterprise JSON Schema Validation (1.5KB Payload)', () => {
             }
         };
     });
-
 });
 
 await run({ colors: true });
