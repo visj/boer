@@ -3,7 +3,7 @@ import { run, bench, group } from 'mitata';
 import Ajv from 'ajv';
 import * as z from "zod";
 
-import { catalog, CompoundSchema, compile } from '../src/core.js';
+import { catalog, CompoundSchema, compile } from '../dist/core.js';
 
 // ────────────────────────────────────────────────────────────────────────────
 // 1. THE SCHEMA (Massive B2B Logistics & Fraud Telemetry)
@@ -192,7 +192,7 @@ const complexSchema = {
     }
 };
 
-// const ZodOrder = z.fromJSONSchema(complexSchema);
+const ZodOrder = z.fromJSONSchema(complexSchema);
 
 // ────────────────────────────────────────────────────────────────────────────
 // 2. THE PAYLOAD (~15KB of Deeply Nested Enterprise Data)
@@ -332,15 +332,15 @@ const rawData = {
     }
 };
 
-// const jsonStr = JSON.stringify(rawData);
+const jsonStr = JSON.stringify(rawData);
 
 // ────────────────────────────────────────────────────────────────────────────
 // 3. COMPILE AJV
 // ────────────────────────────────────────────────────────────────────────────
-// const ajv = new Ajv({ 
-//     coerceTypes: false,
-// });
-// const ajvValidate = ajv.compile(complexSchema);
+const ajv = new Ajv({ 
+    coerceTypes: false,
+});
+const ajvValidate = ajv.compile(complexSchema);
 
 // ────────────────────────────────────────────────────────────────────────────
 // 4. COMPILE UVD
@@ -353,10 +353,6 @@ const refIdx = compound.add(complexSchema);
 const ast = compound.bundle(refIdx);
 const compiled = compile(cat, ast);
 const uvdRootPtr = compiled[0].schema;
-
-validate(rawData, uvdRootPtr);
-
-process.exit();
 
 // ────────────────────────────────────────────────────────────────────────────
 // 5. THE BENCHMARK
