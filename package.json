@@ -27,7 +27,7 @@
     "make": "node scripts/build.js",
     "bench": "node --expose-gc bench/bench.js",
     "inspect": "bun test --expose-gc --inspect-brk --sourcemap=inline ./tests/suite.test.js",
-    "coverage": "c8 --reporter=html node --expose-gc bench/bench_huge.js"
+    "coverage": "c8 --reporter=clover node --expose-gc bench/bench_huge.js"
   },
   "devDependencies": {
     "@sinclair/typebox": "^0.34.48",

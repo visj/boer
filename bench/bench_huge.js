@@ -4,7 +4,6 @@ import Ajv from 'ajv';
 import * as z from "zod";
 
 import { catalog, CompoundSchema, compile } from '../src/core.js';
-import * as inspector from 'node:inspector';
 
 // ────────────────────────────────────────────────────────────────────────────
 // 1. THE SCHEMA (Massive B2B Logistics & Fraud Telemetry)
@@ -193,7 +192,7 @@ const complexSchema = {
     }
 };
 
-const ZodOrder = z.fromJSONSchema(complexSchema);
+// const ZodOrder = z.fromJSONSchema(complexSchema);
 
 // ────────────────────────────────────────────────────────────────────────────
 // 2. THE PAYLOAD (~15KB of Deeply Nested Enterprise Data)
@@ -333,7 +332,7 @@ const rawData = {
     }
 };
 
-const jsonStr = JSON.stringify(rawData);
+// const jsonStr = JSON.stringify(rawData);
 
 // ────────────────────────────────────────────────────────────────────────────
 // 3. COMPILE AJV
