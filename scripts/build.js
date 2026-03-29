@@ -35,8 +35,22 @@ async function buildFormat(format, ext, isModule) {
 
         const fileName = chunk.fileName;
 
-        const minified = { code: chunk.code, map: JSON.stringify(chunk.map) };
-
+        // const minified = { code: chunk.code, map: JSON.stringify(chunk.map) };
+        const minified = await minify(chunk.code, {
+            sourceMap: {
+                // Pass the bundler's map so Terser chains it correctly
+                content: chunk.map, 
+                url: `${path.basename(fileName)}.map`
+            },
+            compress: {
+                // A good default for VMs: run compression twice to squeeze out dead code
+                passes: 2, 
+                inline: false,         // Never inline functions into hot paths
+                reduce_funcs: false,   // Don't rewrite function declarations
+                hoist_funs: true       // Do hoist functions to the top level to avoid closur
+            },
+            mangle: true
+        });
         const outputPath = path.resolve(outputDir, fileName);
         const outputDirName = path.dirname(outputPath);
 

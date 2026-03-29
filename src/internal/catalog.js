@@ -1010,13 +1010,17 @@ function catalog(cfg) {
                         } else if (type < 256) {
                             let mask = type & PRIM_MASK;
                             if (!(mask & ANY)) {
-                                let jt = typeof val;
-                                if (!(
-                                    jt === 'string' ? (mask & STRING) :
-                                        jt === 'number' ? ((mask & NUMBER) || ((mask & INTEGER) && Number.isInteger(val))) :
-                                            jt === 'boolean' ? (mask & BOOLEAN) :
-                                                false
-                                )) {
+                                let jt = typeof val; // Or `typeof el` / `typeof data` depending on the loop
+                                if (jt === 'string') {
+                                    if (!(mask & STRING)) return false; // Or primBits & STRING
+                                } else if (jt === 'number') {
+                                    if (!(mask & NUMBER)) {
+                                        if (!(mask & INTEGER) || !Number.isInteger(val)) return false;
+                                    }
+                                } else if (jt === 'boolean') {
+                                    if (!(mask & BOOLEAN)) return false;
+                                } else {
+                                    // Instantly fails for objects, arrays, undefined, symbols, functions
                                     return false;
                                 }
                             }
@@ -1066,13 +1070,17 @@ function catalog(cfg) {
                         } else if (type < 256) {
                             let mask = type & PRIM_MASK;
                             if (!(mask & ANY)) {
-                                let jt = typeof val;
-                                if (!(
-                                    jt === 'string' ? (mask & STRING) :
-                                        jt === 'number' ? ((mask & NUMBER) || ((mask & INTEGER) && Number.isInteger(val))) :
-                                            jt === 'boolean' ? (mask & BOOLEAN) :
-                                                false
-                                )) {
+                                let jt = typeof val; // Or `typeof el` / `typeof data` depending on the loop
+                                if (jt === 'string') {
+                                    if (!(mask & STRING)) return false; // Or primBits & STRING
+                                } else if (jt === 'number') {
+                                    if (!(mask & NUMBER)) {
+                                        if (!(mask & INTEGER) || !Number.isInteger(val)) return false;
+                                    }
+                                } else if (jt === 'boolean') {
+                                    if (!(mask & BOOLEAN)) return false;
+                                } else {
+                                    // Instantly fails for objects, arrays, undefined, symbols, functions
                                     return false;
                                 }
                             }
@@ -1137,13 +1145,17 @@ function catalog(cfg) {
                                     return false;
                                 }
                             } else if (!acceptsAny) {
-                                let jt = typeof el;
-                                if (!(
-                                    jt === 'string' ? (mask & STRING) :
-                                        jt === 'number' ? ((mask & NUMBER) || ((mask & INTEGER) && Number.isInteger(el))) :
-                                            jt === 'boolean' ? (mask & BOOLEAN) :
-                                                false
-                                )) {
+                                let jt = typeof el; // Or `typeof el` / `typeof data` depending on the loop
+                                if (jt === 'string') {
+                                    if (!(mask & STRING)) return false; // Or primBits & STRING
+                                } else if (jt === 'number') {
+                                    if (!(mask & NUMBER)) {
+                                        if (!(mask & INTEGER) || !Number.isInteger(el)) return false;
+                                    }
+                                } else if (jt === 'boolean') {
+                                    if (!(mask & BOOLEAN)) return false;
+                                } else {
+                                    // Instantly fails for objects, arrays, undefined, symbols, functions
                                     return false;
                                 }
                             }
@@ -1183,13 +1195,17 @@ function catalog(cfg) {
                 if (!(header & K_ANY_INNER)) {
                     /** Inlined _isValue: direct typeof dispatch */
                     if (!(primBits & ANY)) {
-                        let jt = typeof data;
-                        if (!(
-                            jt === 'string' ? (primBits & STRING) :
-                                jt === 'number' ? ((primBits & NUMBER) || ((primBits & INTEGER) && Number.isInteger(data))) :
-                                    jt === 'boolean' ? (primBits & BOOLEAN) :
-                                        false
-                        )) {
+                        let jt = typeof data; // Or `typeof el` / `typeof data` depending on the loop
+                        if (jt === 'string') {
+                            if (!(primBits & STRING)) return false; // Or primBits & STRING
+                        } else if (jt === 'number') {
+                            if (!(primBits & NUMBER)) {
+                                if (!(primBits & INTEGER) || !Number.isInteger(data)) return false;
+                            }
+                        } else if (jt === 'boolean') {
+                            if (!(primBits & BOOLEAN)) return false;
+                        } else {
+                            // Instantly fails for objects, arrays, undefined, symbols, functions
                             return false;
                         }
                     }
