@@ -1696,13 +1696,15 @@ function catalog(cfg) {
         if (typeof typedef !== 'number') {
             return false;
         }
+        if (UNKNOWN_TAIL > 0) {
+            UNKNOWN_KEYS.fill(null, 0, UNKNOWN_TAIL);
+            UNKNOWN_TAIL = 0;
+        }
         /** GC: null out unknown key strings BEFORE resetting the counter */
-        UNKNOWN_KEYS.fill(null, 0, UNKNOWN_TAIL);
         // TODO I might refactor this later and send -1 so we can actually use index 0, it just makes more sense...
         DYN_PTR = 0;
         SNAP_TAIL = 1;
         TRACK_TAIL = 1;
-        UNKNOWN_TAIL = 0;
         return _validate(data, typedef, 0, 0);
     }
 
