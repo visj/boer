@@ -142,7 +142,9 @@ export function compile(cat, ast) {
      */
     function compileValidator(nodeId) {
         let vHeader = astVHeaders[nodeId];
-        if (vHeader === 0) return null;
+        if (vHeader === 0) {
+            return null;
+        }
         let off = astVOffset[nodeId];
         let count = popcnt16(vHeader & 0xFFFF);
         let regexCache = heap.REGEX_CACHE;

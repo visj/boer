@@ -1371,9 +1371,6 @@ function catalog(cfg) {
              * K_ANY_INNER and rare kinds routed to _validateRareKind.
              */
             if (ct === K_OBJECT) {
-                if (header & K_ANY_INNER) {
-                    return typeof data === 'object' && data !== null && !Array.isArray(data);
-                }
                 if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                     return false;
                 }
@@ -1465,14 +1462,10 @@ function catalog(cfg) {
                 }
                 return true;
             } else if (ct === K_ARRAY) {
-                if (header & K_ANY_INNER) {
-                    return Array.isArray(data);
-                }
                 if (!Array.isArray(data)) {
                     return false;
                 }
-                let hasItems = (header & K_HAS_ITEMS) !== 0;
-                if (hasItems) {
+                if ((header & K_HAS_ITEMS) !== 0) {
                     let innerType = ri;
                     let length = data.length;
                     /**
