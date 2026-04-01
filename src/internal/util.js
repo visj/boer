@@ -215,8 +215,8 @@ function describeType(type, kinds) {
         parts.push('null');
     }
     if (type & COMPLEX) {
-        let ptr = type >>> 3;
-        let header = kinds[ptr];
+        let kindsIdx = (type >>> 3) << 1;
+        let header = kinds[kindsIdx];
         let ct = header & KIND_ENUM_MASK;
         switch (ct) {
             case K_PRIMITIVE:

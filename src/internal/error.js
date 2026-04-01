@@ -50,8 +50,8 @@ function createDiagnose(cat) {
         if (typedef & COMPLEX) {
             let hp = HEAP;
             let kinds = hp.KINDS;
-            let ptr = typedef >>> 3;
-            let header = kinds[ptr];
+            let kindsIdx = (typedef >>> 3) << 1;
+            let header = kinds[kindsIdx];
             let ct = header & KIND_ENUM_MASK;
 
             /** Fast path: K_ANY_INNER means no registry entry, just a type check */
@@ -75,8 +75,6 @@ function createDiagnose(cat) {
                     return;
                 }
             }
-
-            let ri = kinds[ptr + 1];
 
             switch (ct) {
                 case K_PRIMITIVE: {
@@ -107,17 +105,17 @@ function createDiagnose(cat) {
                         errors.push({ path, message: 'expected object, got ' + typeof data });
                         return;
                     }
-                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = shapes[ri * 2];
-                    let length = shapes[ri * 2 + 1];
+                    let slabOffset = kinds[kindsIdx + 1];
+                    let length = slab[slabOffset];
+                    let base = slabOffset + 1;
                     for (let i = 0; i < length; i++) {
-                        let key = KEY_INDEX.get(slab[offset + (i * 2)]);
+                        let key = KEY_INDEX.get(slab[base + (i * 2)]);
                         if (key === void 0) {
                             errors.push({ path, message: '!! CRITICAL ERROR !! Please file an issue at Github !!' });
                             return;
                         }
-                        let type = slab[offset + (i * 2) + 1];
+                        let type = slab[base + (i * 2) + 1];
                         let fieldPath = path + (path ? '.' : '') + key;
                         _diagnose(data[key], type, fieldPath, errors);
                     }
@@ -128,7 +126,7 @@ function createDiagnose(cat) {
                         errors.push({ path, message: 'expected array, got ' + typeof data });
                         return;
                     }
-                    let itemType = ri;
+                    let itemType = kinds[kindsIdx + 1];
                     let length = data.length;
                     for (let i = 0; i < length; i++) {
                         _diagnose(data[i], itemType, path + '[' + i + ']', errors);
@@ -140,19 +138,19 @@ function createDiagnose(cat) {
                         errors.push({ path, message: 'expected object (record), got ' + typeof data });
                         return;
                     }
+                    let valueType = kinds[kindsIdx + 1];
                     let dataKeys = Object.keys(data);
                     for (let i = 0; i < dataKeys.length; i++) {
-                        _diagnose(data[dataKeys[i]], ri, path + (path ? '.' : '') + dataKeys[i], errors);
+                        _diagnose(data[dataKeys[i]], valueType, path + (path ? '.' : '') + dataKeys[i], errors);
                     }
                     return;
                 }
                 case K_OR: {
-                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = shapes[ri * 2];
-                    let count = shapes[ri * 2 + 1];
+                    let slabOffset = kinds[kindsIdx + 1];
+                    let count = slab[slabOffset];
                     for (let i = 0; i < count; i++) {
-                        if (_validate(data, slab[offset + i])) {
+                        if (_validate(data, slab[slabOffset + 1 + i])) {
                             return;
                         }
                     }
@@ -160,13 +158,12 @@ function createDiagnose(cat) {
                     return;
                 }
                 case K_EXCLUSIVE: {
-                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = shapes[ri * 2];
-                    let count = shapes[ri * 2 + 1];
+                    let slabOffset = kinds[kindsIdx + 1];
+                    let count = slab[slabOffset];
                     let matchCount = 0;
                     for (let i = 0; i < count; i++) {
-                        if (_validate(data, slab[offset + i])) {
+                        if (_validate(data, slab[slabOffset + 1 + i])) {
                             matchCount++;
                         }
                     }
@@ -178,24 +175,22 @@ function createDiagnose(cat) {
                     return;
                 }
                 case K_INTERSECT: {
-                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = shapes[ri * 2];
-                    let count = shapes[ri * 2 + 1];
+                    let slabOffset = kinds[kindsIdx + 1];
+                    let count = slab[slabOffset];
                     for (let i = 0; i < count; i++) {
-                        if (!_validate(data, slab[offset + i])) {
-                            _diagnose(data, slab[offset + i], path, errors);
+                        if (!_validate(data, slab[slabOffset + 1 + i])) {
+                            _diagnose(data, slab[slabOffset + 1 + i], path, errors);
                         }
                     }
                     return;
                 }
                 case K_UNION: {
-                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = shapes[ri * 2];
-                    let length = shapes[ri * 2 + 1];
-                    // slab[offset] is the discriminator key id; variants follow at offset+1
-                    let discKey = KEY_INDEX.get(slab[offset]);
+                    let slabOffset = kinds[kindsIdx + 1];
+                    let length = slab[slabOffset];
+                    /** slab[slabOffset+1] is the discriminator keyId; variants follow at slabOffset+2 */
+                    let discKey = KEY_INDEX.get(slab[slabOffset + 1]);
                     if (discKey === void 0) {
                         errors.push({ path, message: '!! CRITICAL ERROR !! Please file an issue at Github !!' });
                         return;
@@ -210,8 +205,8 @@ function createDiagnose(cat) {
                     }
                     let valueId = KEY_DICT.get(data[discKey]);
                     for (let i = 0; i < length; i++) {
-                        if (slab[offset + 1 + i * 2] === valueId) {
-                            _diagnose(data, slab[offset + 2 + i * 2], path, errors);
+                        if (slab[slabOffset + 2 + i * 2] === valueId) {
+                            _diagnose(data, slab[slabOffset + 3 + i * 2], path, errors);
                             return;
                         }
                     }
@@ -223,10 +218,9 @@ function createDiagnose(cat) {
                         errors.push({ path, message: 'expected tuple, got ' + typeof data });
                         return;
                     }
-                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = shapes[ri * 2];
-                    let count = shapes[ri * 2 + 1];
+                    let slabOffset = kinds[kindsIdx + 1];
+                    let count = slab[slabOffset];
                     let hasRest = (header & K_HAS_REST) !== 0;
                     let fixedCount = hasRest ? count - 1 : count;
                     if (data.length < fixedCount) {
@@ -237,11 +231,12 @@ function createDiagnose(cat) {
                         errors.push({ path, message: 'expected tuple of length ' + fixedCount + ', got length ' + data.length });
                         return;
                     }
+                    let base = slabOffset + 1;
                     for (let i = 0; i < fixedCount; i++) {
-                        _diagnose(data[i], slab[offset + i], path + '[' + i + ']', errors);
+                        _diagnose(data[i], slab[base + i], path + '[' + i + ']', errors);
                     }
                     if (hasRest) {
-                        let restType = slab[offset + count - 1];
+                        let restType = slab[base + count - 1];
                         for (let i = fixedCount; i < data.length; i++) {
                             _diagnose(data[i], restType, path + '[' + i + ']', errors);
                         }
@@ -249,25 +244,23 @@ function createDiagnose(cat) {
                     return;
                 }
                 case K_REFINE: {
-                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = shapes[ri * 2];
-                    _diagnose(data, slab[offset], path, errors);
+                    let slabOffset = kinds[kindsIdx + 1];
+                    _diagnose(data, slab[slabOffset + 1], path, errors);
                     return;
                 }
                 case K_NOT: {
-                    if (_validate(data, ri)) {
+                    if (_validate(data, kinds[kindsIdx + 1])) {
                         errors.push({ path, message: 'value should NOT match the given type' });
                     }
                     return;
                 }
                 case K_CONDITIONAL: {
-                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = shapes[ri * 2];
-                    let ifType = slab[offset];
-                    let thenType = slab[offset + 1];
-                    let elseType = slab[offset + 2];
+                    let slabOffset = kinds[kindsIdx + 1];
+                    let ifType = slab[slabOffset + 1];
+                    let thenType = slab[slabOffset + 2];
+                    let elseType = slab[slabOffset + 3];
                     if (_validate(data, ifType)) {
                         _diagnose(data, thenType, path, errors);
                     } else {

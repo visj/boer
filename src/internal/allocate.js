@@ -61,82 +61,78 @@ function normalizeTypeArgs(first, second, third) {
 // --- Heap allocation functions ---
 
 /**
- * Allocates a KINDS entry on the permanent heap. Writes slabData to SLAB,
- * registers a SHAPES entry, optionally writes a validator, then writes a KINDS
- * entry. Returns a permanent COMPLEX typedef pointer.
+ * Allocates a KINDS entry on the permanent heap. Writes length-prefixed
+ * slabData to SLAB, optionally writes validator payloads, then writes a
+ * stride-2 KINDS entry. Returns a permanent COMPLEX typedef pointer.
  *
- * For K_PRIMITIVE (kind === 0), when vHeader/vPayloads are provided the
- * validator index is stored in KINDS slot 1 (inline) with a 2-slot entry.
- * For all other kinds the validator index lands in KINDS slot 2 (3-slot entry).
+ * KINDS layout (stride-2, logical ptr = kindsIdx / 2):
+ *   [kindsIdx]   = header (kind enum | meta bits | K_VALIDATOR)
+ *   [kindsIdx+1] = slab_offset (or inline value for K_ARRAY/K_NOT/K_RECORD)
+ * With K_VALIDATOR set (4 slots):
+ *   [kindsIdx+2] = vHeader (Uint32 bitmask)
+ *   [kindsIdx+3] = val_ptr (offset into VALIDATORS, first payload)
+ *
+ * SLAB layout: [length, data0, data1, ...] where length is the semantic count.
  *
  * @param {*} ctx - the __heap object from catalog
  * @param {number} header
- * @param {number} inline - stored as KINDS[ptr+1] when slabData is null and no validator
+ * @param {number} inline - stored as KINDS[kindsIdx+1] when slabData is null
  * @param {Array<number>|Uint32Array|null} slabData
- * @param {number} shapeLen - semantic length stored in SHAPES slot 1
+ * @param {number} shapeLen - semantic length stored as SLAB length prefix
  * @param {number} vHeader
  * @param {Array<number>|null} vPayloads
  * @returns {number}
  */
 function malloc(ctx, header, inline, slabData, shapeLen, vHeader, vPayloads) {
     let HEAP = ctx.HEAP;
-    let ri = inline;
+    let slabOffset = inline;
     if (slabData !== null) {
         let count = slabData.length;
-        if (HEAP.PTR + count > HEAP.SLAB_LEN) {
+        if (HEAP.PTR + count + 1 > HEAP.SLAB_LEN) {
             let buffer = new Uint32Array(HEAP.SLAB_LEN *= 2);
             buffer.set(HEAP.SLAB);
             HEAP.SLAB = buffer;
             ctx.resizeSlab(buffer);
         }
         let offset = HEAP.PTR;
-        HEAP.SLAB.set(slabData, offset);
-        HEAP.PTR += count;
-        ri = HEAP.SHAPE_COUNT++;
-        if ((ri + 1) * 2 > HEAP.SHAPE_LEN) {
-            let buffer = new Uint32Array(HEAP.SHAPE_LEN *= 2);
-            buffer.set(HEAP.SHAPES);
-            HEAP.SHAPES = buffer;
-            ctx.resizeShapes(buffer);
-        }
-        HEAP.SHAPES[ri * 2] = offset;
-        HEAP.SHAPES[ri * 2 + 1] = shapeLen;
+        /** Length prefix: semantic count stored as first SLAB word */
+        HEAP.SLAB[offset] = shapeLen;
+        HEAP.SLAB.set(slabData, offset + 1);
+        HEAP.PTR += count + 1;
+        slabOffset = offset;
     }
-    let valIdx = 0;
+    let valPtr = 0;
     let slots = 2;
     if (vHeader !== 0 && vPayloads !== null) {
         let vCount = vPayloads.length;
-        if (HEAP.VAL_PTR + vCount + 1 > HEAP.VAL_LEN) {
+        if (HEAP.VAL_PTR + vCount > HEAP.VAL_LEN) {
             let buffer = new Float64Array(HEAP.VAL_LEN *= 2);
             buffer.set(HEAP.VALIDATORS);
             HEAP.VALIDATORS = buffer;
             ctx.resizeValidators(buffer);
         }
-        valIdx = HEAP.VAL_PTR;
-        HEAP.VALIDATORS[valIdx] = vHeader;
-        HEAP.VALIDATORS.set(vPayloads, valIdx + 1);
-        HEAP.VAL_PTR += vCount + 1;
-        /** K_PRIMITIVE (kind=0) stores the validator index in slot 1 (inline); all other kinds use slot 2. */
-        if ((header & KIND_ENUM_MASK) === K_PRIMITIVE) {
-            ri = valIdx;
-        } else {
-            slots = 3;
-        }
+        valPtr = HEAP.VAL_PTR;
+        /** Payloads only — vHeader is stored in KINDS, not VALIDATORS */
+        HEAP.VALIDATORS.set(vPayloads, valPtr);
+        HEAP.VAL_PTR += vCount;
+        slots = 4;
     }
-    let ptr = HEAP.KIND_PTR;
-    if (ptr + slots > HEAP.KIND_LEN) {
+    let kindsIdx = HEAP.KIND_PTR;
+    if (kindsIdx + slots > HEAP.KIND_LEN) {
         let buffer = new Uint32Array(HEAP.KIND_LEN *= 2);
         buffer.set(HEAP.KINDS);
         HEAP.KINDS = buffer;
         ctx.resizeKinds(buffer);
     }
-    HEAP.KINDS[ptr] = header;
-    HEAP.KINDS[ptr + 1] = ri;
-    if (slots === 3) {
-        HEAP.KINDS[ptr + 2] = valIdx;
+    HEAP.KINDS[kindsIdx] = header;
+    HEAP.KINDS[kindsIdx + 1] = slabOffset;
+    if (slots === 4) {
+        HEAP.KINDS[kindsIdx + 2] = vHeader;
+        HEAP.KINDS[kindsIdx + 3] = valPtr;
     }
     HEAP.KIND_PTR += slots;
-    /** COMPLEX = bit 0, KINDS index encoded in bits 3+: (COMPLEX | (ptr << KINDS_SHIFT)) */
+    /** Logical ptr = kindsIdx / 2, encoded in bits 3+: (COMPLEX | (ptr << KINDS_SHIFT)) */
+    let ptr = kindsIdx >>> 1;
     return (COMPLEX | (ptr << KINDS_SHIFT)) >>> 0;
 }
 
@@ -385,7 +381,7 @@ function valueImpl(ctx, primConst, opts) {
 function refineImpl(ctx, typedef, fn) {
     assertIsNumber(typedef, 0);
     let callbackIdx = ctx.CALLBACKS.push(fn) - 1;
-    /** Store [innerType, callbackIdx] on SLAB; KINDS slot 1 = SHAPES index. */
+    /** Store [innerType, callbackIdx] on SLAB; KINDS slot 1 = slab offset. */
     let slabData = new Uint32Array(2);
     slabData[0] = typedef >>> 0;
     slabData[1] = callbackIdx;
@@ -820,7 +816,7 @@ function arrayImpl(ctx, elemType, opts) {
         vHeader = result[0];
         payloads = result.slice(1);
     }
-    /** K_ARRAY stores elemType as inline (KINDS slot 1); no SLAB or SHAPES entry. */
+    /** K_ARRAY stores elemType as inline (KINDS slot 1); no SLAB entry. */
     let kindHeader = (hasVal ? (K_ARRAY | K_VALIDATOR) : K_ARRAY) | K_HAS_ITEMS;
     return malloc(ctx, kindHeader, elemType >>> 0, null, 0, vHeader, payloads);
 }

@@ -81,8 +81,8 @@ function createConform(cat) {
         if (typedef & COMPLEX) {
             let hp = HEAP;
             let kinds = hp.KINDS;
-            let ptr = typedef >>> 3;
-            let header = kinds[ptr];
+            let kindsIdx = (typedef >>> 3) << 1;
+            let header = kinds[kindsIdx];
             let ct = header & KIND_ENUM_MASK;
 
             /** Fast path: K_ANY_INNER means no registry entry, just a type check */
@@ -102,8 +102,6 @@ function createConform(cat) {
                 }
             }
 
-            let ri = kinds[ptr + 1];
-
             switch (ct) {
                 case K_PRIMITIVE: {
                     let vm = header & SIMPLE;
@@ -122,16 +120,16 @@ function createConform(cat) {
                     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                         return false;
                     }
-                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = shapes[ri * 2];
-                    let length = shapes[ri * 2 + 1];
+                    let slabOffset = kinds[kindsIdx + 1];
+                    let length = slab[slabOffset];
+                    let base = slabOffset + 1;
                     for (let i = 0; i < length; i++) {
-                        let key = KEY_INDEX.get(slab[offset + (i * 2)]);
+                        let key = KEY_INDEX.get(slab[base + (i * 2)]);
                         if (key === void 0) {
                             return false;
                         }
-                        let type = slab[offset + (i * 2) + 1];
+                        let type = slab[base + (i * 2) + 1];
                         if (!_parseSlot(data, key, type, reify)) {
                             return false;
                         }
@@ -142,7 +140,7 @@ function createConform(cat) {
                     if (!Array.isArray(data)) {
                         return false;
                     }
-                    let elemType = ri;
+                    let elemType = kinds[kindsIdx + 1];
                     let length = data.length;
                     for (let i = 0; i < length; i++) {
                         if (!_parseSlot(data, i, elemType, reify)) {
@@ -155,34 +153,33 @@ function createConform(cat) {
                     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                         return false;
                     }
+                    let valueType = kinds[kindsIdx + 1];
                     let dataKeys = Object.keys(data);
                     for (let i = 0; i < dataKeys.length; i++) {
-                        if (!_parseSlot(data, dataKeys[i], ri, reify)) {
+                        if (!_parseSlot(data, dataKeys[i], valueType, reify)) {
                             return false;
                         }
                     }
                     return true;
                 }
                 case K_OR: {
-                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = shapes[ri * 2];
-                    let count = shapes[ri * 2 + 1];
+                    let slabOffset = kinds[kindsIdx + 1];
+                    let count = slab[slabOffset];
                     for (let i = 0; i < count; i++) {
-                        if (_conform(data, slab[offset + i], reify)) {
+                        if (_conform(data, slab[slabOffset + 1 + i], reify)) {
                             return true;
                         }
                     }
                     return false;
                 }
                 case K_EXCLUSIVE: {
-                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = shapes[ri * 2];
-                    let count = shapes[ri * 2 + 1];
+                    let slabOffset = kinds[kindsIdx + 1];
+                    let count = slab[slabOffset];
                     let matchCount = 0;
                     for (let i = 0; i < count; i++) {
-                        if (_conform(data, slab[offset + i], reify)) {
+                        if (_conform(data, slab[slabOffset + 1 + i], reify)) {
                             matchCount++;
                             if (matchCount > 1) {
                                 return false;
@@ -192,12 +189,11 @@ function createConform(cat) {
                     return matchCount === 1;
                 }
                 case K_INTERSECT: {
-                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = shapes[ri * 2];
-                    let count = shapes[ri * 2 + 1];
+                    let slabOffset = kinds[kindsIdx + 1];
+                    let count = slab[slabOffset];
                     for (let i = 0; i < count; i++) {
-                        if (!_conform(data, slab[offset + i], reify)) {
+                        if (!_conform(data, slab[slabOffset + 1 + i], reify)) {
                             return false;
                         }
                     }
@@ -207,12 +203,11 @@ function createConform(cat) {
                     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                         return false;
                     }
-                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = shapes[ri * 2];
-                    let length = shapes[ri * 2 + 1];
-                    // slab[offset] is the discriminator key id; variants follow at offset+1
-                    let discKey = KEY_INDEX.get(slab[offset]);
+                    let slabOffset = kinds[kindsIdx + 1];
+                    let length = slab[slabOffset];
+                    /** slab[slabOffset+1] is the discriminator keyId; variants follow at slabOffset+2 */
+                    let discKey = KEY_INDEX.get(slab[slabOffset + 1]);
                     if (discKey === void 0) {
                         return false;
                     }
@@ -221,8 +216,8 @@ function createConform(cat) {
                         return false;
                     }
                     for (let i = 0; i < length; i++) {
-                        if (slab[offset + 1 + i * 2] === valueId) {
-                            return _conform(data, slab[offset + 2 + i * 2], reify);
+                        if (slab[slabOffset + 2 + i * 2] === valueId) {
+                            return _conform(data, slab[slabOffset + 3 + i * 2], reify);
                         }
                     }
                     return false;
@@ -231,10 +226,9 @@ function createConform(cat) {
                     if (!Array.isArray(data)) {
                         return false;
                     }
-                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = shapes[ri * 2];
-                    let count = shapes[ri * 2 + 1];
+                    let slabOffset = kinds[kindsIdx + 1];
+                    let count = slab[slabOffset];
                     let hasRest = (header & K_HAS_REST) !== 0;
                     let fixedCount = hasRest ? count - 1 : count;
                     if (data.length < fixedCount) {
@@ -243,13 +237,14 @@ function createConform(cat) {
                     if (!hasRest && data.length > fixedCount) {
                         return false;
                     }
+                    let base = slabOffset + 1;
                     for (let i = 0; i < fixedCount; i++) {
-                        if (!_parseSlot(data, i, slab[offset + i], reify)) {
+                        if (!_parseSlot(data, i, slab[base + i], reify)) {
                             return false;
                         }
                     }
                     if (hasRest) {
-                        let restType = slab[offset + count - 1];
+                        let restType = slab[base + count - 1];
                         for (let i = fixedCount; i < data.length; i++) {
                             if (!_parseSlot(data, i, restType, reify)) {
                                 return false;
@@ -259,21 +254,19 @@ function createConform(cat) {
                     return true;
                 }
                 case K_REFINE: {
-                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = shapes[ri * 2];
-                    return _conform(data, slab[offset], reify);
+                    let slabOffset = kinds[kindsIdx + 1];
+                    return _conform(data, slab[slabOffset + 1], reify);
                 }
                 case K_NOT: {
-                    return !_conform(data, ri, reify);
+                    return !_conform(data, kinds[kindsIdx + 1], reify);
                 }
                 case K_CONDITIONAL: {
-                    let shapes = hp.SHAPES;
                     let slab = hp.SLAB;
-                    let offset = shapes[ri * 2];
-                    let ifType = slab[offset];
-                    let thenType = slab[offset + 1];
-                    let elseType = slab[offset + 2];
+                    let slabOffset = kinds[kindsIdx + 1];
+                    let ifType = slab[slabOffset + 1];
+                    let thenType = slab[slabOffset + 2];
+                    let elseType = slab[slabOffset + 3];
                     if (_conform(data, ifType, reify)) {
                         return _conform(data, thenType, reify);
                     } else {

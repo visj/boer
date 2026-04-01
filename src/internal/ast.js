@@ -476,14 +476,14 @@ export function compile(cat, ast) {
             }
 
             if (astState[targetId] === VISITING || targetId === nodeId) {
-                // Circular dependency — reserve kind slots for later patching
+                // Circular dependency — reserve 2 kind slots (stride-2) for later patching
                 let kindPtr = HEAP.KIND_PTR;
                 HEAP.KIND_PTR += 2;
                 /**
-                 * New encoding: COMPLEX bit at 0, KINDS index in bits 3+.
-                 * Must use (1 | (kindPtr << 3)) not (COMPLEX | kindPtr).
+                 * Stride-2 encoding: logical ptr = kindsIdx / 2.
+                 * kindPtr is the raw kindsIdx; logical ptr is kindPtr >>> 1.
                  */
-                astCompiled[nodeId] = (COMPLEX | (kindPtr << KINDS_SHIFT)) >>> 0;
+                astCompiled[nodeId] = (COMPLEX | ((kindPtr >>> 1) << KINDS_SHIFT)) >>> 0;
                 astState[nodeId] = COMPILED;
                 circularPatches.push([nodeId, targetId, kindPtr]);
                 continue;
@@ -878,7 +878,7 @@ export function compile(cat, ast) {
                     kindHeader |= K_HAS_ITEMS;
                 }
 
-                /** K_ARRAY inline = elemType (KINDS slot 1); no SHAPES entry. */
+                /** K_ARRAY inline = elemType (KINDS slot 1); no SLAB entry. */
                 astCompiled[nodeId] = malloc(heap, kindHeader, elemType >>> 0,
                     null, 0, vp !== null ? vp.vHeader : 0, vp !== null ? vp.nodePayloads : null);
                 break;
@@ -1005,7 +1005,7 @@ export function compile(cat, ast) {
                 let innerType = astCompiled[astChild0[nodeId]];
                 let cbIdx = astChild1[nodeId];
                 let callbackIdx = heap.CALLBACKS.push(callbacks[cbIdx]) - 1;
-                /** Store [innerType, callbackIdx] on SLAB; KINDS slot 1 = SHAPES index. */
+                /** Store [innerType, callbackIdx] on SLAB; KINDS slot 1 = slab offset. */
                 let slabData = new Uint32Array(2);
                 slabData[0] = innerType >>> 0;
                 slabData[1] = callbackIdx;
@@ -1074,23 +1074,22 @@ export function compile(cat, ast) {
             HEAP.KINDS[kindPtr] = kindHeader;
             HEAP.KINDS[kindPtr + 1] = 0;
         } else {
-            // Complex type → copy the kind entry
-            let realPtr = compiled >>> 3;
-            HEAP.KINDS[kindPtr] = HEAP.KINDS[realPtr];
-            HEAP.KINDS[kindPtr + 1] = HEAP.KINDS[realPtr + 1];
+            // Complex type → copy the stride-2 kind entry
+            let realKindsIdx = (compiled >>> 3) << 1;
+            HEAP.KINDS[kindPtr] = HEAP.KINDS[realKindsIdx];
+            HEAP.KINDS[kindPtr + 1] = HEAP.KINDS[realKindsIdx + 1];
         }
     }
 
     // ── Patch circular $dynamicRef fallback types ──
     // Each entry is [targetNodeId, dynRefTypedef]. We patch the fallback
-    // type (SLAB[offset+1]) with the now-compiled target.
+    // type (SLAB[slabOffset+2]) with the now-compiled target.
     for (let i = 0; i < dynRefPatches.length; i++) {
         let [targetId, dynRefType] = dynRefPatches[i];
         let compiled = astCompiled[targetId] >>> 0;
-        let ptr = dynRefType >>> 3;
-        let ri = HEAP.KINDS[ptr + 1];
-        let offset = HEAP.SHAPES[ri * 2];
-        HEAP.SLAB[offset + 1] = compiled;
+        let kindsIdx = (dynRefType >>> 3) << 1;
+        let slabOffset = HEAP.KINDS[kindsIdx + 1];
+        HEAP.SLAB[slabOffset + 2] = compiled;
     }
 
     /** @type {uvd.SchemaResource<T,R>[]} */

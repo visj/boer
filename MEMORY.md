@@ -55,17 +55,31 @@ When MODIFIER=0, NUMBER/INTEGER (inline number validator):
 
 ### Memory Layout
 ```
-KINDS   [Uint32Array]  — vtable: [header, payload] pairs per complex type
-SHAPES  [Uint32Array]  — registry: [slabOffset, length] pairs
-SLAB    [Uint32Array]  — bulk storage for property keys, types, tuple elements, etc.
-VALIDATORS [Float64Array] — validator headers + payloads (min/max/pattern/etc.)
-CONSTANTS  [Array<*>]  — const values for MOD_ENUM (isSet=0)
-ENUMS      [Array<Set>] — enum Sets for MOD_ENUM (isSet=1), uses Set.has()
+KINDS       [Uint32Array]  — stride-2 vtable: [header, slabOffset] per entry
+                             With K_VALIDATOR: [header, slabOffset, vHeader, valPtr]
+SLAB        [Uint32Array]  — length-prefixed bulk storage: [length, data...]
+VALIDATORS  [Float64Array] — payloads only (vHeader moved to KINDS)
+CONSTANTS   [Array<*>]     — const values for MOD_ENUM (isSet=0)
+ENUMS       [Array<Set>]   — enum Sets for MOD_ENUM (isSet=1), uses Set.has()
+```
+
+SHAPES array has been eliminated. KINDS slot 1 stores slab offset directly;
+SLAB entries are prefixed with their semantic length.
+
+### KINDS Stride-2 Layout
+```
+Logical ptr = kindsIdx / 2.  Raw kindsIdx = (typedef >>> 3) << 1.
+Without validator (2 slots):
+  KINDS[kindsIdx]     = header (kind enum | meta bits)
+  KINDS[kindsIdx + 1] = slab_offset (or inline value for K_ARRAY/K_NOT/K_RECORD)
+With K_VALIDATOR set (4 slots):
+  KINDS[kindsIdx + 2] = vHeader (Uint32 bitmask)
+  KINDS[kindsIdx + 3] = val_ptr (offset into VALIDATORS, first payload)
 ```
 
 ### KINDS Header Bit Layout (upper bits)
 ```
-K_VALIDATOR  = 1 << 30  — has attached VALIDATORS entry
+K_VALIDATOR  = 1 << 30  — has attached VALIDATORS entry (expands to 4 KINDS slots)
 K_ANY_INNER  = 1 << 29  — inner type is ANY (bare array/object/record)
 K_STRICT     = 1 << 28  — strict mode (no extra properties/items)
 K_HAS_ITEMS  = 1 << 27  — array has items type
@@ -104,9 +118,8 @@ Boolean flags (bits 27-30): no payload
 | File | Purpose |
 |------|---------|
 | `src/internal/const.js` | All bit constants, K_ enums, V_ flags, format regexes |
-| `src/internal/config.js` | Heap initialization (`Uint32Array` SLAB/SHAPES/KINDS, `Float64Array` VALIDATORS) |
-| `src/internal/catalog.js` | Core engine: `_validate`, `_validateSlot`, `_validateModEnum`, `runPrimValidator`, `runObjectValidator`, `runArrayValidator`, `malloc`, `allocValidator`, `allocConstant`, `allocEnumSet`, key dictionary |
-| `src/internal/allocate.js` | DSL builders: `objectImpl`, `arrayImpl`, `tupleArrayImpl`, `literalImpl`, `enumImpl`, `orImpl`, `intersectImpl`, `refineImpl`, `recordImpl` |
+| `src/internal/catalog.js` | Core engine: `_validate`, `_validateSlot`, `_validateModEnum`, `runPrimValidator`, `runObjectValidator`, `runArrayValidator`, `allocConstant`, `allocEnumSet`, key dictionary |
+| `src/internal/allocate.js` | `malloc` + DSL builders: `objectImpl`, `arrayImpl`, `tupleArrayImpl`, `literalImpl`, `enumImpl`, `orImpl`, `intersectImpl`, `refineImpl`, `recordImpl` |
 | `src/internal/schema.js` | JSON Schema parser → flat AST (CompoundSchema) |
 | `src/internal/ast.js` | AST compiler → SLAB/KINDS/VALIDATORS allocation |
 | `src/internal/validator.js` | `packValidators` — converts DSL options to validator headers + payloads |

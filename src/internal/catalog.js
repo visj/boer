@@ -55,20 +55,16 @@ export const BARE_RECORD = (COMPLEX | (2 << KINDS_SHIFT)) >>> 0;  // KINDS[2]
 function createHeap(cfg) {
     const useConfig = cfg !== void 0;
     let slabLen = (useConfig && cfg.slab !== void 0) ? cfg.slab : 16384;
-    let shapesLen = (useConfig && cfg.shapes !== void 0) ? cfg.shapes : 4096;
     let kindsLen = (useConfig && cfg.kinds !== void 0) ? cfg.kinds : 2048;
     let valsLen = (useConfig && cfg.validators !== void 0) ? cfg.validators : 512;
     return {
         PTR: 0,
         SLAB_LEN: slabLen,
-        SHAPE_LEN: shapesLen,
-        SHAPE_COUNT: 0,
         KIND_LEN: kindsLen,
         KIND_PTR: 0,
         VAL_LEN: valsLen,
         VAL_PTR: 0,
         SLAB: new Uint32Array(slabLen),
-        SHAPES: new Uint32Array(shapesLen),
         KINDS: new Uint32Array(kindsLen),
         VALIDATORS: new Float64Array(valsLen),
     };
@@ -83,7 +79,6 @@ function catalog(cfg) {
     const HEAP = createHeap(cfg);
 
     let SLAB = HEAP.SLAB;
-    let SHAPES = HEAP.SHAPES;
     let KINDS = HEAP.KINDS;
     let VALIDATORS = HEAP.VALIDATORS;
     /** @type {!Array<RegExp>} First slot reserved; index 0 is the no-match sentinel. */
@@ -102,14 +97,17 @@ function catalog(cfg) {
     /** @const @type {!Array<string>} */
     const KEY_INDEX = [""];
 
-    // --- PRE-ALLOCATED COMPLEX TYPE CONSTANTS ---
-    // Bare array: K_ARRAY | K_ANY_INNER (1-slot entry)
+    // --- PRE-ALLOCATED COMPLEX TYPE CONSTANTS (stride-2) ---
+    // Bare array: logical ptr 0, kindsIdx 0
     KINDS[0] = K_ARRAY | K_ANY_INNER;
-    // Bare object: K_OBJECT | K_ANY_INNER (1-slot entry)
-    KINDS[1] = K_OBJECT | K_ANY_INNER;
-    // Bare record: K_RECORD | K_ANY_INNER (1-slot entry)
-    KINDS[2] = K_RECORD | K_ANY_INNER;
-    HEAP.KIND_PTR = 3;
+    // KINDS[1] = 0; (slab_offset unused, implicit zero in typed array)
+    // Bare object: logical ptr 1, kindsIdx 2
+    KINDS[2] = K_OBJECT | K_ANY_INNER;
+    // KINDS[3] = 0;
+    // Bare record: logical ptr 2, kindsIdx 4
+    KINDS[4] = K_RECORD | K_ANY_INNER;
+    // KINDS[5] = 0;
+    HEAP.KIND_PTR = 6;
 
 
     /** Global stack tracking active dynamic scope boundaries during validation. */
@@ -220,13 +218,13 @@ function catalog(cfg) {
     /**
      * @param {*} value
      * @param {number} primBits
-     * @param {number} valIdx
+     * @param {number} vHeader - validator bitmask from KINDS
+     * @param {number} valPtr - offset into VALIDATORS (first payload)
      * @returns {boolean}
      */
-    function runPrimValidator(value, primBits, valIdx) {
+    function runPrimValidator(value, primBits, vHeader, valPtr) {
         let vals = VALIDATORS;
-        let vHeader = vals[valIdx] | 0;
-        let base = valIdx + 1;
+        let base = valPtr;
         if (typeof value === 'string') {
             if (vHeader & V_MIN_LENGTH) {
                 let p = base + popcnt16(vHeader & (V_MIN_LENGTH - 1));
@@ -316,15 +314,15 @@ function catalog(cfg) {
 
     /**
      * @param {!Array<*>} data
-     * @param {number} valIdx
+     * @param {number} vHeader - validator bitmask from KINDS
+     * @param {number} valPtr - offset into VALIDATORS (first payload)
      * @param {number} trackPtr
      * @param {number} snapPtr
      * @returns {boolean}
      */
-    function runArrayValidator(data, valIdx, trackPtr, snapPtr) {
+    function runArrayValidator(data, vHeader, valPtr, trackPtr, snapPtr) {
         let vals = VALIDATORS;
-        let vHeader = vals[valIdx] | 0;
-        let base = valIdx + 1;
+        let base = valPtr;
         if (vHeader & V_MIN_ITEMS) {
             let p = base + popcnt16(vHeader & (V_MIN_ITEMS - 1));
             if (data.length < vals[p]) {
@@ -383,22 +381,22 @@ function catalog(cfg) {
      * for..in loop over the object's own keys.
      *
      * @param {!Record<string,any>} data
-     * @param {number} valIdx
-     * @param {number} ri - SHAPES registry index for this object
+     * @param {number} vHeader - validator bitmask from KINDS
+     * @param {number} valPtr - offset into VALIDATORS (first payload)
+     * @param {number} slabOffset - SLAB offset for this object's properties
      * @param {number} trackPtr - tracking frame pointer (0 = no tracking)
      * @param {number} snapPtr
      * @returns {boolean}
      */
-    function runObjectValidator(data, valIdx, ri, trackPtr, snapPtr) {
+    function runObjectValidator(data, vHeader, valPtr, slabOffset, trackPtr, snapPtr) {
         let vals = VALIDATORS;
-        let vHeader = vals[valIdx] | 0;
 
         /**
          * Payload is stored in bit order (low bits first). We advance a cursor
          * through the payload sequentially, recording offsets for sections we
          * need to revisit in the iteration loop.
          */
-        let p = valIdx + 1;
+        let p = valPtr;
 
         // ── 1. SKIP PAST ITERATION-BASED PAYLOADS to reach direct-lookup validators ──
         let pMinProps = p;
@@ -465,16 +463,11 @@ function catalog(cfg) {
         let maxProps = hasMaxProps ? vals[pMinProps + ((vHeader & V_MIN_PROPERTIES) ? 1 : 0)] : 0;
 
         let addType = 0;
-        let slabOffset = 0;
         let slabLength = 0;
         if (vHeader & V_ADDITIONAL_PROPERTIES) {
             addType = vals[p];
-            /**
-             * Object properties are stored in SLAB via SHAPES registry.
-             * SHAPES[ri*2] = slab offset, SHAPES[ri*2+1] = property count.
-             */
-            slabOffset = SHAPES[ri * 2];
-            slabLength = SHAPES[ri * 2 + 1];
+            /** Property count is the SLAB length prefix at slabOffset */
+            slabLength = SLAB[slabOffset];
         }
 
         let nameSchema = (vHeader & V_PROPERTY_NAMES) ? vals[pPropertyNames] : 0;
@@ -517,7 +510,7 @@ function catalog(cfg) {
             if (hasAdditional) {
                 let keyId = KEY_DICT.get(key);
                 if (keyId !== void 0) {
-                    isDeclared = binarySearchPair(slab, slabOffset, slabLength, keyId) >= 0;
+                    isDeclared = binarySearchPair(slab, slabOffset + 1, slabLength, keyId) >= 0;
                 }
             }
 
@@ -797,21 +790,20 @@ function catalog(cfg) {
      *
      * @param {*} data
      * @param {number} ct - kind enum (KIND_ENUM_MASK bits)
-     * @param {number} ri - KINDS[ptr+1] value (registry index or inline)
      * @param {!Uint32Array} kinds - KINDS vtable
-     * @param {number} ptr - raw KINDS index
-     * @param {number} header - KINDS[ptr] header word
+     * @param {number} kindsIdx - raw KINDS array index (ptr << 1)
+     * @param {number} header - KINDS[kindsIdx] header word
      * @param {number} trackPtr
      * @param {number} snapPtr
      * @returns {boolean}
      */
-    function _validateRareKind(data, ct, ri, kinds, ptr, header, trackPtr, snapPtr) {
+    function _validateRareKind(data, ct, kinds, kindsIdx, header, trackPtr, snapPtr) {
         switch (ct) {
             case K_RECORD: {
                 if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                     return false;
                 }
-                let valueType = ri;
+                let valueType = kinds[kindsIdx + 1];
                 for (let key in data) {
                     if (hasOwnProperty.call(data, key)) {
                         if (!_validateSlot(data[key], valueType)) {
@@ -822,22 +814,20 @@ function catalog(cfg) {
                 return true;
             }
             case K_INTERSECT: {
-                let shapes = SHAPES;
                 let slab = SLAB;
-                let offset = shapes[ri * 2];
-                let count = shapes[ri * 2 + 1];
+                let slabOffset = kinds[kindsIdx + 1];
+                let count = slab[slabOffset];
                 for (let i = 0; i < count; i++) {
-                    if (!_validate(data, slab[offset + i], trackPtr, snapPtr)) {
+                    if (!_validate(data, slab[slabOffset + 1 + i], trackPtr, snapPtr)) {
                         return false;
                     }
                 }
                 return true;
             }
             case K_OR: {
-                let shapes = SHAPES;
                 let slab = SLAB;
-                let offset = shapes[ri * 2];
-                let count = shapes[ri * 2 + 1];
+                let slabOffset = kinds[kindsIdx + 1];
+                let count = slab[slabOffset];
                 if (trackPtr) {
                     /**
                      * Reserve-Run-Commit for anyOf:
@@ -856,7 +846,7 @@ function catalog(cfg) {
                         let currentSnap = SNAP_TAIL;
                         SNAP_TAIL += words;
                         TRACK_SNAP.fill(0, currentSnap, currentSnap + words);
-                        if (_validate(data, slab[offset + i], trackPtr, currentSnap)) {
+                        if (_validate(data, slab[slabOffset + 1 + i], trackPtr, currentSnap)) {
                             anyMatch = true;
                             for (let w = 0; w < words; w++) {
                                 TRACK_SNAP[mergedSnap + w] |= TRACK_SNAP[currentSnap + w];
@@ -877,17 +867,16 @@ function catalog(cfg) {
                     return anyMatch;
                 }
                 for (let i = 0; i < count; i++) {
-                    if (_validate(data, slab[offset + i], 0, 0)) {
+                    if (_validate(data, slab[slabOffset + 1 + i], 0, 0)) {
                         return true;
                     }
                 }
                 return false;
             }
             case K_EXCLUSIVE: {
-                let shapes = SHAPES;
                 let slab = SLAB;
-                let offset = shapes[ri * 2];
-                let count = shapes[ri * 2 + 1];
+                let slabOffset = kinds[kindsIdx + 1];
+                let count = slab[slabOffset];
                 if (trackPtr) {
                     /**
                      * Reserve-Run-Commit for oneOf:
@@ -904,7 +893,7 @@ function catalog(cfg) {
                         let currentSnap = SNAP_TAIL;
                         SNAP_TAIL += words;
                         TRACK_SNAP.fill(0, currentSnap, currentSnap + words);
-                        if (_validate(data, slab[offset + i], trackPtr, currentSnap)) {
+                        if (_validate(data, slab[slabOffset + 1 + i], trackPtr, currentSnap)) {
                             matchCount++;
                             if (matchCount === 1) {
                                 winnerSnap = currentSnap;
@@ -933,7 +922,7 @@ function catalog(cfg) {
                 }
                 let matchCount = 0;
                 for (let i = 0; i < count; i++) {
-                    if (_validate(data, slab[offset + i], 0, 0)) {
+                    if (_validate(data, slab[slabOffset + 1 + i], 0, 0)) {
                         matchCount++;
                         if (matchCount > 1) {
                             return false;
@@ -946,19 +935,18 @@ function catalog(cfg) {
                 if (typeof data !== 'object' || data === null || Array.isArray(data)) {
                     return false;
                 }
-                let shapes = SHAPES;
                 let slab = SLAB;
-                let offset = shapes[ri * 2];
-                let length = shapes[ri * 2 + 1];
-                // slab[offset] is the discriminator key id; variants follow at offset+1
-                let discKey = KEY_INDEX[slab[offset]];
+                let slabOffset = kinds[kindsIdx + 1];
+                let length = slab[slabOffset];
+                /** slab[slabOffset+1] is the discriminator keyId; variants follow at slabOffset+2 */
+                let discKey = KEY_INDEX[slab[slabOffset + 1]];
                 let valueId = KEY_DICT.get(data[discKey]);
                 if (valueId === void 0) {
                     return false;
                 }
                 for (let i = 0; i < length; i++) {
-                    if (slab[offset + 1 + i * 2] === valueId) {
-                        return _validate(data, slab[offset + 2 + i * 2], 0, 0);
+                    if (slab[slabOffset + 2 + i * 2] === valueId) {
+                        return _validate(data, slab[slabOffset + 3 + i * 2], 0, 0);
                     }
                 }
                 return false;
@@ -967,10 +955,9 @@ function catalog(cfg) {
                 if (!Array.isArray(data)) {
                     return false;
                 }
-                let shapes = SHAPES;
                 let slab = SLAB;
-                let offset = shapes[ri * 2];
-                let count = shapes[ri * 2 + 1];
+                let slabOffset = kinds[kindsIdx + 1];
+                let count = slab[slabOffset];
                 let hasRest = (header & K_HAS_REST) !== 0;
                 let fixedCount = hasRest ? count - 1 : count;
 
@@ -984,9 +971,10 @@ function catalog(cfg) {
                         return false;
                     }
                 }
+                let base = slabOffset + 1;
                 let checkCount = length < fixedCount ? length : fixedCount;
                 for (let i = 0; i < checkCount; i++) {
-                    if (!_validateSlot(data[i], slab[offset + i])) {
+                    if (!_validateSlot(data[i], slab[base + i])) {
                         return false;
                     }
                 }
@@ -995,7 +983,7 @@ function catalog(cfg) {
                     markItemsEvaluated(trackPtr, snapPtr, 0, checkCount);
                 }
                 if (hasRest) {
-                    let restType = slab[offset + count - 1];
+                    let restType = slab[base + count - 1];
                     for (let i = checkCount; i < length; i++) {
                         if (!_validateSlot(data[i], restType)) {
                             return false;
@@ -1007,16 +995,15 @@ function catalog(cfg) {
                     }
                 }
                 if (header & K_VALIDATOR) {
-                    return runArrayValidator(data, kinds[ptr + 2], trackPtr, snapPtr);
+                    return runArrayValidator(data, kinds[kindsIdx + 2], kinds[kindsIdx + 3], trackPtr, snapPtr);
                 }
                 return true;
             }
             case K_REFINE: {
-                let shapes = SHAPES;
                 let slab = SLAB;
-                let offset = shapes[ri * 2];
-                let innerType = slab[offset];
-                let callbackIdx = slab[offset + 1];
+                let slabOffset = kinds[kindsIdx + 1];
+                let innerType = slab[slabOffset + 1];
+                let callbackIdx = slab[slabOffset + 2];
                 if (!_validate(data, innerType, trackPtr, snapPtr)) {
                     return false;
                 }
@@ -1025,15 +1012,14 @@ function catalog(cfg) {
             }
             case K_NOT: {
                 /** not never produces annotations per JSON Schema spec */
-                return !_validate(data, ri, 0, 0);
+                return !_validate(data, kinds[kindsIdx + 1], 0, 0);
             }
             case K_CONDITIONAL: {
-                let shapes = SHAPES;
                 let slab = SLAB;
-                let offset = shapes[ri * 2];
-                let ifType = slab[offset];
-                let thenType = slab[offset + 1];
-                let elseType = slab[offset + 2];
+                let slabOffset = kinds[kindsIdx + 1];
+                let ifType = slab[slabOffset + 1];
+                let thenType = slab[slabOffset + 2];
+                let elseType = slab[slabOffset + 3];
                 /**
                  * The `if` branch runs in isolation: a failed `if` must not leave
                  * partial markings. Reserve a fresh snapPtr for it; commit only if it passes.
@@ -1065,34 +1051,30 @@ function catalog(cfg) {
                 }
             }
             case K_DYN_ANCHOR: {
-                let shapes = SHAPES;
                 let slab = SLAB;
-                let offset = shapes[ri * 2];
-                DYN_ANCHORS[DYN_PTR++] = ri;
-                let valid = _validate(data, slab[offset], trackPtr, snapPtr);
+                let slabOffset = kinds[kindsIdx + 1];
+                /** Store slabOffset in DYN_ANCHORS for DYN_REF scope scan */
+                DYN_ANCHORS[DYN_PTR++] = slabOffset;
+                let valid = _validate(data, slab[slabOffset + 1], trackPtr, snapPtr);
                 DYN_PTR--;
                 return valid;
             }
             case K_DYN_REF: {
-                let shapes = SHAPES;
                 let slab = SLAB;
-                let offset = shapes[ri * 2];
-                let anchorKeyId = slab[offset];
-                let targetType = slab[offset + 1];
+                let slabOffset = kinds[kindsIdx + 1];
+                let anchorKeyId = slab[slabOffset + 1];
+                let targetType = slab[slabOffset + 2];
                 // Search the scope stack outermost (0) to innermost (DYN_PTR - 1).
                 // The first match wins per Draft 2020-12 spec.
                 scan: for (let i = 0; i < DYN_PTR; i++) {
-                    let scopeRi = DYN_ANCHORS[i];
-                    let scopeShapes = SHAPES;
-                    let scopeSlab = SLAB;
-                    let scopeOffset = scopeShapes[scopeRi * 2];
-                    let count = scopeShapes[scopeRi * 2 + 1];
+                    let scopeSlabOffset = DYN_ANCHORS[i];
+                    let count = slab[scopeSlabOffset];
                     // Binary search the sorted [anchorKeyId, targetType] pairs.
-                    // Skip SLAB[scopeOffset] which is the innerType.
-                    let pairBase = scopeOffset + 1;
-                    let mid = binarySearchPair(scopeSlab, pairBase, count, anchorKeyId);
+                    // Skip SLAB[scopeSlabOffset+1] which is the innerType.
+                    let pairBase = scopeSlabOffset + 2;
+                    let mid = binarySearchPair(slab, pairBase, count, anchorKeyId);
                     if (mid >= 0) {
-                        targetType = scopeSlab[pairBase + mid * 2 + 1];
+                        targetType = slab[pairBase + mid * 2 + 1];
                         break scan;
                     }
                 }
@@ -1101,7 +1083,7 @@ function catalog(cfg) {
             case K_UNEVALUATED: {
                 /**
                  * K_UNEVALUATED wraps an inner type with evaluation tracking.
-                 * SLAB layout: [innerType, unevalSchemaType, mode]
+                 * SLAB layout: [length, innerType, unevalSchemaType, mode]
                  * mode=0: property tracking (objects)
                  * mode=1: item tracking (arrays)
                  *
@@ -1112,12 +1094,11 @@ function catalog(cfg) {
                  * TRACK_TAIL advances by 1 + count; bit words fit inside since
                  * words = (count + 31) >>> 5 <= count for count >= 1.
                  */
-                let shapes = SHAPES;
                 let slab = SLAB;
-                let offset = shapes[ri * 2];
-                let innerType = slab[offset];
-                let unevalType = slab[offset + 1];
-                let unevalMode = slab[offset + 2];
+                let slabOffset = kinds[kindsIdx + 1];
+                let innerType = slab[slabOffset + 1];
+                let unevalType = slab[slabOffset + 2];
+                let unevalMode = slab[slabOffset + 3];
 
                 if (unevalMode === 1) {
                     // ── Items tracking (arrays) ──
@@ -1303,9 +1284,9 @@ function catalog(cfg) {
 
             let ptr = typedef >>> 3;
             let kinds = KINDS;
-            let header = kinds[ptr];
+            let kindsIdx = ptr << 1;
+            let header = kinds[kindsIdx];
             let ct = header & KIND_ENUM_MASK;
-            let ri = kinds[ptr + 1];
 
             /** K_ANY_INNER: bare container types with no registry entry */
             if (header & K_ANY_INNER) {
@@ -1321,7 +1302,7 @@ function catalog(cfg) {
                  */
                 if (ct === K_PRIMITIVE) {
                     if (header & K_VALIDATOR) {
-                        return runPrimValidator(data, header & SIMPLE, ri);
+                        return runPrimValidator(data, header & SIMPLE, kinds[kindsIdx + 2], kinds[kindsIdx + 3]);
                     }
                     return true;
                 }
@@ -1337,10 +1318,9 @@ function catalog(cfg) {
                 if (data === null || typeof data !== 'object' || Array.isArray(data)) {
                     return false;
                 }
-                let shapes = SHAPES;
                 let slab = SLAB;
-                let offset = shapes[ri * 2];
-                let length = shapes[ri * 2 + 1];
+                let slabOffset = kinds[kindsIdx + 1];
+                let length = slab[slabOffset];
 
                 /**
                  * Unified object property loop. Handles both all-required and
@@ -1351,10 +1331,11 @@ function catalog(cfg) {
                  * trackPtr guards are removed from this loop. When K_UNEVALUATED
                  * is active, _validateRareKind handles tracking separately.
                  */
+                let base = slabOffset + 1;
                 for (let i = 0; i < length; i++) {
-                    let keyId = slab[offset + (i << 1)];
+                    let keyId = slab[base + (i << 1)];
                     let key = KEY_INDEX[keyId];
-                    let type = slab[offset + (i << 1) + 1];
+                    let type = slab[base + (i << 1) + 1];
                     let hasProp = hasOwnProperty.call(data, key);
                     let val = hasProp ? data[key] : void 0;
 
@@ -1417,7 +1398,7 @@ function catalog(cfg) {
                     }
                 }
                 if (header & K_VALIDATOR) {
-                    return runObjectValidator(data, kinds[ptr + 2], ri, trackPtr, snapPtr);
+                    return runObjectValidator(data, kinds[kindsIdx + 2], kinds[kindsIdx + 3], slabOffset, trackPtr, snapPtr);
                 }
                 return true;
             } else if (ct === K_ARRAY) {
@@ -1425,7 +1406,7 @@ function catalog(cfg) {
                     return false;
                 }
                 if ((header & K_HAS_ITEMS) !== 0) {
-                    let innerType = ri;
+                    let innerType = kinds[kindsIdx + 1];
                     let length = data.length;
                     /**
                      * Inlined _validateSlot for array items: avoids function
@@ -1509,7 +1490,7 @@ function catalog(cfg) {
                     }
                 }
                 if (header & K_VALIDATOR) {
-                    return runArrayValidator(data, kinds[ptr + 2], trackPtr, snapPtr);
+                    return runArrayValidator(data, kinds[kindsIdx + 2], kinds[kindsIdx + 3], trackPtr, snapPtr);
                 }
                 return true;
             } else if (ct === K_PRIMITIVE) {
@@ -1535,11 +1516,11 @@ function catalog(cfg) {
                     }
                 }
                 if (header & K_VALIDATOR) {
-                    return runPrimValidator(data, primBits, ri);
+                    return runPrimValidator(data, primBits, kinds[kindsIdx + 2], kinds[kindsIdx + 3]);
                 }
                 return true;
             }
-            return _validateRareKind(data, ct, ri, kinds, ptr, header, trackPtr, snapPtr);
+            return _validateRareKind(data, ct, kinds, kindsIdx, header, trackPtr, snapPtr);
         }
 
         /**
@@ -1560,11 +1541,6 @@ function catalog(cfg) {
      * @param {Uint32Array<ArrayBuffer>} buf
      */
     function resizeSlab(buf) { SLAB = buf; }
-
-    /**
-     * @param {Uint32Array<ArrayBuffer>} buf
-     */
-    function resizeShapes(buf) { SHAPES = buf; }
 
     /**
      * @param {Uint32Array<ArrayBuffer>} buf
@@ -1605,7 +1581,7 @@ function catalog(cfg) {
         KEY_DICT, KEY_INDEX,
         lookup,
         _validate,
-        resizeSlab, resizeShapes,
+        resizeSlab,
         resizeKinds, resizeValidators,
     };
 
