@@ -63,6 +63,79 @@ const MOD_ENUM = 2 << 9;
 const MOD_MASK = 3 << 9;
 
 /**
+ * Shift to encode/decode the KINDS array index in a complex typedef pointer.
+ * Store: (COMPLEX | (ptr << KINDS_SHIFT)) >>> 0. Extract: typedef >>> KINDS_SHIFT.
+ */
+const KINDS_SHIFT = 3;
+
+/**
+ * Lower 16 bits of a validator header contain the payload-bearing flags.
+ * Used with popcnt16 to compute payload slot offsets.
+ */
+const V_PAYLOAD_MASK = 0xFFFF;
+
+// ── MOD_ENUM inline payload bits ──
+/** Bit 11: 0 = CONSTANTS arena (const match), 1 = ENUMS arena (Set.has). */
+const MOD_ENUM_IS_SET    = 1 << 11;
+/** Bits 12-29: 18-bit index into CONSTANTS or ENUMS arena. */
+const MOD_ENUM_IDX_SHIFT = 12;
+/** Maximum value that fits in the 18-bit arena index field. */
+const MOD_ENUM_IDX_MASK  = 0x3FFFF;
+
+// ── MOD_ARRAY inline payload bits (bits 11-29) ──
+/** Bit 11: uniqueItems flag. */
+const MOD_ARRAY_UNIQUE_BIT      = 1 << 11;
+/** Bits 12-21 (10 bits): maxItems (0 = no max). */
+const MOD_ARRAY_MAX_ITEMS_SHIFT = 12;
+const MOD_ARRAY_MAX_ITEMS_MASK  = 0x3FF;
+/** Bits 22-29 (8 bits): minItems (0 = no min). */
+const MOD_ARRAY_MIN_ITEMS_SHIFT = 22;
+const MOD_ARRAY_MIN_ITEMS_MASK  = 0xFF;
+
+// ── MOD_RECORD inline payload bits (bits 11-29) ──
+/** Bits 11-21 (11 bits): maxProperties (0 = no max). */
+const MOD_RECORD_MAX_PROPS_SHIFT = 11;
+const MOD_RECORD_MAX_PROPS_MASK  = 0x7FF;
+/** Bits 22-29 (8 bits): minProperties (0 = no min). */
+const MOD_RECORD_MIN_PROPS_SHIFT = 22;
+const MOD_RECORD_MIN_PROPS_MASK  = 0xFF;
+
+// ── Inline STRING validator payload bits ──
+/** Bits 9-16 (8 bits): regex cache index (0 = no pattern). */
+const STR_REGEX_IDX_SHIFT = 9;
+const STR_REGEX_IDX_MASK  = 0xFF;
+/** Bits 17-24 (8 bits): maxLength (0 = no max). */
+const STR_MAX_LEN_SHIFT   = 17;
+const STR_MAX_LEN_MASK    = 0xFF;
+/** Bits 25-29 (5 bits): minLength (0 = no min). */
+const STR_MIN_LEN_SHIFT   = 25;
+const STR_MIN_LEN_MASK    = 0x1F;
+
+// ── Inline NUMBER/INTEGER validator payload bits ──
+/** Bit 9: exclusive minimum flag (1 = >, 0 = >=). */
+const NUM_EXCL_MIN_BIT  = 1 << 9;
+/** Bit 10: exclusive maximum flag (1 = <, 0 = <=). */
+const NUM_EXCL_MAX_BIT  = 1 << 10;
+/** Bit 11: sign of minimum bound (1 = negative). */
+const NUM_MIN_NEG_BIT   = 1 << 11;
+/** Bit 12: sign of maximum bound (1 = negative). */
+const NUM_MAX_NEG_BIT   = 1 << 12;
+/** Bits 13-21 (9 bits): minimum magnitude (0 = no min, 1-511). */
+const NUM_MIN_MAG_SHIFT = 13;
+const NUM_MIN_MAG_MASK  = 0x1FF;
+/** Bits 22-29 (8 bits): maximum magnitude (0 = no max, 1-255). */
+const NUM_MAX_MAG_SHIFT = 22;
+const NUM_MAX_MAG_MASK  = 0xFF;
+
+// ── Evaluation tracking bit-packing ──
+/** Shift to compute the 32-bit word index from a bit index: i >>> WORD_IDX_SHIFT. */
+const WORD_IDX_SHIFT = 5;
+/** Mask to extract the bit position within a 32-bit word: i & WORD_BIT_MASK. */
+const WORD_BIT_MASK  = 31;
+/** MSB sentinel that marks unknown keys in the evaluation tracking arena. */
+const UNKNOWN_KEY_FLAG = 0x80000000;
+
+/**
  * K_VALIDATOR: set on the KINDS header when a VALIDATORS entry is attached.
  * K_ANY_INNER: set on a KINDS header when the inner type is ANY (no registry entry).
  * Used for bare `type: "array"`, `type: "object"`, `record(ANY)`, etc.
@@ -187,7 +260,8 @@ const FAIL = Symbol('FAIL');
  */
 function codepointLen(str) {
     let len = 0;
-    for (let i = 0; i < str.length; i++) {
+    let strlen = str.length;
+    for (let i = 0; i < strlen; i++) {
         let code = str.charCodeAt(i);
         if (code >= 0xD800 && code <= 0xDBFF) {
             i++;
@@ -206,6 +280,20 @@ export {
     NUMBER, STRING, INTEGER,
     SIMPLE, VALUE, PRIM_MASK,
     MODIFIER, MOD_ARRAY, MOD_RECORD, MOD_ENUM, MOD_MASK,
+    KINDS_SHIFT, V_PAYLOAD_MASK,
+    MOD_ENUM_IS_SET, MOD_ENUM_IDX_SHIFT, MOD_ENUM_IDX_MASK,
+    MOD_ARRAY_UNIQUE_BIT, MOD_ARRAY_MAX_ITEMS_SHIFT, MOD_ARRAY_MAX_ITEMS_MASK,
+    MOD_ARRAY_MIN_ITEMS_SHIFT, MOD_ARRAY_MIN_ITEMS_MASK,
+    MOD_RECORD_MAX_PROPS_SHIFT, MOD_RECORD_MAX_PROPS_MASK,
+    MOD_RECORD_MIN_PROPS_SHIFT, MOD_RECORD_MIN_PROPS_MASK,
+    STR_REGEX_IDX_SHIFT, STR_REGEX_IDX_MASK,
+    STR_MAX_LEN_SHIFT, STR_MAX_LEN_MASK,
+    STR_MIN_LEN_SHIFT, STR_MIN_LEN_MASK,
+    NUM_EXCL_MIN_BIT, NUM_EXCL_MAX_BIT,
+    NUM_MIN_NEG_BIT, NUM_MAX_NEG_BIT,
+    NUM_MIN_MAG_SHIFT, NUM_MIN_MAG_MASK,
+    NUM_MAX_MAG_SHIFT, NUM_MAX_MAG_MASK,
+    WORD_IDX_SHIFT, WORD_BIT_MASK, UNKNOWN_KEY_FLAG,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,

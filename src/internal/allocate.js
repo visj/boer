@@ -18,6 +18,12 @@ import {
     K_HAS_ITEMS, K_ALL_REQUIRED,
     KIND_ENUM_MASK,
     MODIFIER, MOD_ARRAY, MOD_RECORD, MOD_ENUM,
+    KINDS_SHIFT,
+    MOD_ENUM_IS_SET, MOD_ENUM_IDX_SHIFT, MOD_ENUM_IDX_MASK,
+    STR_REGEX_IDX_SHIFT, STR_MAX_LEN_SHIFT, STR_MIN_LEN_SHIFT,
+    NUM_EXCL_MIN_BIT, NUM_EXCL_MAX_BIT,
+    NUM_MIN_NEG_BIT, NUM_MAX_NEG_BIT,
+    NUM_MIN_MAG_SHIFT, NUM_MAX_MAG_SHIFT,
 } from './const.js';
 import {
     assertIsNumber, assertIsObject,
@@ -130,8 +136,8 @@ function malloc(ctx, header, inline, slabData, shapeLen, vHeader, vPayloads) {
         HEAP.KINDS[ptr + 2] = valIdx;
     }
     HEAP.KIND_PTR += slots;
-    /** COMPLEX = bit 0, KINDS index encoded in bits 3+: (1 | (ptr << 3)) */
-    return (1 | (ptr << 3)) >>> 0;
+    /** COMPLEX = bit 0, KINDS index encoded in bits 3+: (COMPLEX | (ptr << KINDS_SHIFT)) */
+    return (COMPLEX | (ptr << KINDS_SHIFT)) >>> 0;
 }
 
 /**
@@ -232,7 +238,7 @@ function tryInlineString(ctx, opts) {
         return 0;
     }
 
-    return STRING | (regexIdx << 9) | (maxVal << 17) | (minVal << 25);
+    return STRING | (regexIdx << STR_REGEX_IDX_SHIFT) | (maxVal << STR_MAX_LEN_SHIFT) | (minVal << STR_MIN_LEN_SHIFT);
 }
 
 /**
@@ -335,9 +341,9 @@ function tryInlineNumber(ctx, primConst, opts) {
     }
 
     return primConst
-        | (exclMin << 9) | (exclMax << 10)
-        | (minNeg << 11) | (maxNeg << 12)
-        | (minMag << 13) | (maxMag << 22);
+        | (exclMin ? NUM_EXCL_MIN_BIT : 0) | (exclMax ? NUM_EXCL_MAX_BIT : 0)
+        | (minNeg ? NUM_MIN_NEG_BIT : 0) | (maxNeg ? NUM_MAX_NEG_BIT : 0)
+        | (minMag << NUM_MIN_MAG_SHIFT) | (maxMag << NUM_MAX_MAG_SHIFT);
 }
 
 /**
@@ -419,15 +425,15 @@ function literalImpl(ctx, value) {
     if (value === null) { return NULLABLE; }
     if (value === true || value === false) {
         let idx = allocConstant(ctx, value);
-        if (idx <= 0x3FFFF) {
-            return BOOLEAN | MODIFIER | MOD_ENUM | (idx << 12);
+        if (idx <= MOD_ENUM_IDX_MASK) {
+            return BOOLEAN | MODIFIER | MOD_ENUM | (idx << MOD_ENUM_IDX_SHIFT);
         }
         return refineImpl(ctx, BOOLEAN, value === true ? v => v === true : v => v === false);
     }
     if (typeof value === 'string') {
         let idx = allocConstant(ctx, value);
-        if (idx <= 0x3FFFF) {
-            return STRING | MODIFIER | MOD_ENUM | (idx << 12);
+        if (idx <= MOD_ENUM_IDX_MASK) {
+            return STRING | MODIFIER | MOD_ENUM | (idx << MOD_ENUM_IDX_SHIFT);
         }
         /** Fallback: V_ENUM on SLAB */
         let keyId = ctx.lookup(value);
@@ -436,8 +442,8 @@ function literalImpl(ctx, value) {
     if (typeof value === 'number') {
         let primBits = Number.isInteger(value) ? INTEGER : NUMBER;
         let idx = allocConstant(ctx, value);
-        if (idx <= 0x3FFFF) {
-            return primBits | MODIFIER | MOD_ENUM | (idx << 12);
+        if (idx <= MOD_ENUM_IDX_MASK) {
+            return primBits | MODIFIER | MOD_ENUM | (idx << MOD_ENUM_IDX_SHIFT);
         }
         /** Fallback: V_ENUM on SLAB */
         return malloc(ctx, K_PRIMITIVE | K_VALIDATOR | NUMBER, 0, null, 0, V_ENUM, [1, value]);
@@ -532,9 +538,9 @@ function enumImpl(ctx, values) {
                 ? new Set(strings)
                 : new Set(numbers);
             let idx = allocEnumSet(ctx, set);
-            if (idx <= 0x3FFFF) {
+            if (idx <= MOD_ENUM_IDX_MASK) {
                 let innerBits = strings.length > 0 ? STRING : NUMBER;
-                primType = innerBits | MODIFIER | MOD_ENUM | (1 << 11) | (idx << 12);
+                primType = innerBits | MODIFIER | MOD_ENUM | MOD_ENUM_IS_SET | (idx << MOD_ENUM_IDX_SHIFT);
                 if (payloadBits & NULLABLE) { primType = primType | NULLABLE; }
                 if (payloadBits & OPTIONAL) { primType = primType | OPTIONAL; }
                 if (complexTypes.length === 0) { return primType; }

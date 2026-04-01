@@ -18,8 +18,22 @@ import {
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
     codepointLen, hasOwnProperty,
-    K_HAS_ITEMS, K_HAS_REST, MODIFIER,
-    NUMBER, INTEGER, BOOLEAN
+    K_HAS_ITEMS, K_HAS_REST, MODIFIER, MOD_MASK, MOD_ARRAY, MOD_RECORD, MOD_ENUM,
+    NUMBER, INTEGER, BOOLEAN,
+    KINDS_SHIFT, V_PAYLOAD_MASK,
+    MOD_ENUM_IS_SET, MOD_ENUM_IDX_SHIFT, MOD_ENUM_IDX_MASK,
+    MOD_ARRAY_UNIQUE_BIT, MOD_ARRAY_MAX_ITEMS_SHIFT, MOD_ARRAY_MAX_ITEMS_MASK,
+    MOD_ARRAY_MIN_ITEMS_SHIFT, MOD_ARRAY_MIN_ITEMS_MASK,
+    MOD_RECORD_MAX_PROPS_SHIFT, MOD_RECORD_MAX_PROPS_MASK,
+    MOD_RECORD_MIN_PROPS_SHIFT, MOD_RECORD_MIN_PROPS_MASK,
+    STR_REGEX_IDX_SHIFT, STR_REGEX_IDX_MASK,
+    STR_MAX_LEN_SHIFT, STR_MAX_LEN_MASK,
+    STR_MIN_LEN_SHIFT, STR_MIN_LEN_MASK,
+    NUM_EXCL_MIN_BIT, NUM_EXCL_MAX_BIT,
+    NUM_MIN_NEG_BIT, NUM_MAX_NEG_BIT,
+    NUM_MIN_MAG_SHIFT, NUM_MIN_MAG_MASK,
+    NUM_MAX_MAG_SHIFT, NUM_MAX_MAG_MASK,
+    WORD_IDX_SHIFT, WORD_BIT_MASK, UNKNOWN_KEY_FLAG,
 } from './const.js';
 import {
     sortByKeyId, _isValue, deepEqual,
@@ -31,9 +45,9 @@ import {
  * KINDS[0] = K_ARRAY|K_ANY_INNER, KINDS[1] = K_OBJECT|K_ANY_INNER, KINDS[2] = K_RECORD|K_ANY_INNER.
  * Encoding: (1 | (ptr << 3)) where ptr is the raw KINDS array index.
  */
-export const BARE_ARRAY = (1 | (0 << 3)) >>> 0;   // KINDS[0]
-export const BARE_OBJECT = (1 | (1 << 3)) >>> 0;  // KINDS[1]
-export const BARE_RECORD = (1 | (2 << 3)) >>> 0;  // KINDS[2]
+export const BARE_ARRAY = (COMPLEX | (0 << KINDS_SHIFT)) >>> 0;   // KINDS[0]
+export const BARE_OBJECT = (COMPLEX | (1 << KINDS_SHIFT)) >>> 0;  // KINDS[1]
+export const BARE_RECORD = (COMPLEX | (2 << KINDS_SHIFT)) >>> 0;  // KINDS[2]
 
 /**
  * @param {uvd.Config=} cfg
@@ -134,7 +148,7 @@ function catalog(cfg) {
         }
         for (let i = 0; i < UNKNOWN_TAIL; i++) {
             if (UNKNOWN_KEYS[i] === key) {
-                return (i | 0x80000000) >>> 0;
+                return (i | UNKNOWN_KEY_FLAG) >>> 0;
             }
         }
         return void 0;
@@ -152,8 +166,8 @@ function catalog(cfg) {
         let len = TRACK_KEYS[trackPtr];
         for (let i = 0; i < len; i++) {
             if (TRACK_KEYS[trackPtr + 1 + i] === keyId) {
-                let wordOffset = i >>> 5;
-                let bitMask = 1 << (i & 31);
+                let wordOffset = i >>> WORD_IDX_SHIFT;
+                let bitMask = 1 << (i & WORD_BIT_MASK);
                 if (snapPtr === 0) {
                     TRACK_BITS[trackPtr + 1 + wordOffset] |= bitMask;
                 } else {
@@ -177,8 +191,8 @@ function catalog(cfg) {
         let len = TRACK_KEYS[trackPtr];
         let end = endIdx < len ? endIdx : len;
         for (let i = startIdx; i < end; i++) {
-            let wordOffset = i >>> 5;
-            let bitMask = 1 << (i & 31);
+            let wordOffset = i >>> WORD_IDX_SHIFT;
+            let bitMask = 1 << (i & WORD_BIT_MASK);
             if (snapPtr === 0) {
                 TRACK_BITS[trackPtr + 1 + wordOffset] |= bitMask;
             } else {
@@ -281,7 +295,7 @@ function catalog(cfg) {
         // The sequential section starts right after the fixed-slot payloads (bits 0-15),
         // since bits 16-19 are K_OBJECT only and are never set on K_PRIMITIVE validators.
         if (vHeader & V_ENUM) {
-            let p = base + popcnt16(vHeader & 0xFFFF);
+            let p = base + popcnt16(vHeader & V_PAYLOAD_MASK);
             if (typeof value === 'string') {
                 let strCount = vals[p] | 0;
                 let keyId = KEY_DICT.get(value);
@@ -574,24 +588,22 @@ function catalog(cfg) {
         let primBits = typedef & PRIM_MASK;
 
         if (typedef & MODIFIER) {
-            let modType = (typedef >>> 9) & 3;
-
-            if (modType === 2) {
+            if ((typedef & MOD_MASK) === MOD_ENUM) {
                 /** MOD_ENUM: exact-match against CONSTANTS or ENUMS arena */
                 let primBits = typedef & PRIM_MASK;
                 // Check base type matches (skip for ANY)
                 if (primBits & VALUE) {
                     if (!_isValue(data, primBits)) return false;
                 }
-                let isSet = (typedef >>> 11) & 1;
-                let idx = (typedef >>> 12) & 0x3FFFF; // 18 bits
+                let isSet = (typedef & MOD_ENUM_IS_SET) !== 0;
+                let idx = (typedef >>> MOD_ENUM_IDX_SHIFT) & MOD_ENUM_IDX_MASK;
                 if (isSet) {
                     return ENUMS[idx].has(data);
                 }
                 return CONSTANTS[idx] === data;
             }
 
-            if (modType === 0) {
+            if ((typedef & MOD_MASK) === MOD_ARRAY) {
                 /**
                  * MOD_ARRAY: homogeneous array (e.g. string[])
                  * Bit 11: UNIQUE flag
@@ -602,8 +614,8 @@ function catalog(cfg) {
                     return false;
                 }
                 let len = data.length;
-                let maxItems = (typedef >>> 12) & 0x3FF;
-                let minItems = (typedef >>> 22) & 0xFF;
+                let maxItems = (typedef >>> MOD_ARRAY_MAX_ITEMS_SHIFT) & MOD_ARRAY_MAX_ITEMS_MASK;
+                let minItems = (typedef >>> MOD_ARRAY_MIN_ITEMS_SHIFT) & MOD_ARRAY_MIN_ITEMS_MASK;
                 if (minItems > 0 && len < minItems) {
                     return false;
                 }
@@ -616,7 +628,7 @@ function catalog(cfg) {
                         return false;
                     }
                 }
-                let unique = (typedef >>> 11) & 1;
+                let unique = (typedef & MOD_ARRAY_UNIQUE_BIT) !== 0;
                 if (unique) {
                     for (let i = 0; i < len; i++) {
                         for (let j = i + 1; j < len; j++) {
@@ -629,7 +641,7 @@ function catalog(cfg) {
                 return true;
             }
 
-            if (modType === 1) {
+            if ((typedef & MOD_MASK) === MOD_RECORD) {
                 /**
                  * MOD_RECORD: dynamic dictionary (e.g. Record<string, number>)
                  * Bits 11-21 (11 bits): maxProperties (0 = no max)
@@ -639,8 +651,8 @@ function catalog(cfg) {
                     return false;
                 }
                 let mask = primBits;
-                let maxProps = (typedef >>> 11) & 0x7FF;
-                let minProps = (typedef >>> 22) & 0xFF;
+                let maxProps = (typedef >>> MOD_RECORD_MAX_PROPS_SHIFT) & MOD_RECORD_MAX_PROPS_MASK;
+                let minProps = (typedef >>> MOD_RECORD_MIN_PROPS_SHIFT) & MOD_RECORD_MIN_PROPS_MASK;
                 let count = 0;
                 for (let key in data) {
                     if (!hasOwnProperty.call(data, key)) {
@@ -677,9 +689,9 @@ function catalog(cfg) {
             if (typeof data !== 'string') {
                 return false;
             }
-            let regexIdx = (typedef >>> 9) & 0xFF;
-            let maxLen = (typedef >>> 17) & 0xFF;
-            let minLen = (typedef >>> 25) & 0x1F;
+            let regexIdx = (typedef >>> STR_REGEX_IDX_SHIFT) & STR_REGEX_IDX_MASK;
+            let maxLen = (typedef >>> STR_MAX_LEN_SHIFT) & STR_MAX_LEN_MASK;
+            let minLen = (typedef >>> STR_MIN_LEN_SHIFT) & STR_MIN_LEN_MASK;
             if (minLen > 0 || maxLen > 0) {
                 let rawLen = data.length;
                 /** Fast reject: UTF-16 len < minLen → codepoint len even smaller */
@@ -719,19 +731,19 @@ function catalog(cfg) {
             if ((primBits & INTEGER) && !Number.isInteger(data)) {
                 return false;
             }
-            let minMag = (typedef >>> 13) & 0x1FF;
+            let minMag = (typedef >>> NUM_MIN_MAG_SHIFT) & NUM_MIN_MAG_MASK;
             if (minMag > 0) {
-                let minNeg = (typedef >>> 11) & 1;
-                let exclMin = (typedef >>> 9) & 1;
+                let minNeg = (typedef & NUM_MIN_NEG_BIT) !== 0;
+                let exclMin = (typedef & NUM_EXCL_MIN_BIT) !== 0;
                 let minVal = minNeg ? -minMag : minMag;
                 if (exclMin ? data <= minVal : data < minVal) {
                     return false;
                 }
             }
-            let maxMag = (typedef >>> 22) & 0xFF;
+            let maxMag = (typedef >>> NUM_MAX_MAG_SHIFT) & NUM_MAX_MAG_MASK;
             if (maxMag > 0) {
-                let maxNeg = (typedef >>> 12) & 1;
-                let exclMax = (typedef >>> 10) & 1;
+                let maxNeg = (typedef & NUM_MAX_NEG_BIT) !== 0;
+                let exclMax = (typedef & NUM_EXCL_MAX_BIT) !== 0;
                 let maxVal = maxNeg ? -maxMag : maxMag;
                 if (exclMax ? data >= maxVal : data > maxVal) {
                     return false;

@@ -10,7 +10,7 @@ import {
 } from "./catalog.js";
 
 import {
-    popcnt16, ANY, STRING, NUMBER, INTEGER, BOOLEAN, VALUE, PRIM_MASK,
+    popcnt16, ANY, STRING, NUMBER, INTEGER, BOOLEAN, VALUE, PRIM_MASK, SIMPLE,
     K_ANY_INNER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES,
     V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS, V_ENUM, V_CONTAINS,
     V_PROPERTY_NAMES, K_HAS_ITEMS, K_HAS_REST,
@@ -18,13 +18,21 @@ import {
     V_MIN_LENGTH, V_MAX_LENGTH, V_FORMAT, K_ALL_REQUIRED,
     V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
     V_MIN_ITEMS, V_MAX_ITEMS, V_MIN_CONTAINS, V_MAX_CONTAINS, V_UNIQUE_ITEMS,
+    KINDS_SHIFT, V_PAYLOAD_MASK,
+    MOD_ENUM_IS_SET, MOD_ENUM_IDX_SHIFT, MOD_ENUM_IDX_MASK,
+    STR_REGEX_IDX_SHIFT, STR_MAX_LEN_SHIFT, STR_MIN_LEN_SHIFT,
+    NUM_EXCL_MIN_BIT, NUM_EXCL_MAX_BIT,
+    NUM_MIN_NEG_BIT, NUM_MAX_NEG_BIT,
+    NUM_MIN_MAG_SHIFT, NUM_MAX_MAG_SHIFT,
 } from "./const.js";
 
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
     N_EXCLUSIVE, N_INTERSECT, N_NOT, N_CONDITIONAL, N_TUPLE, N_REF,
     N_BARE_ARRAY, N_BARE_OBJECT, N_DYN_ANCHOR, N_DYN_REF, N_UNEVALUATED,
-    AST_FLAG_HAS_REST, AST_FLAG_HAS_CONTAINS
+    AST_FLAG_HAS_REST, AST_FLAG_HAS_CONTAINS, AST_FLAG_HAS_ITEMS,
+    AST_FLAG_HAS_ADDITIONAL_PROPS, AST_FLAG_HAS_PATTERN_PROPS,
+    AST_FLAG_HAS_PROPERTY_NAMES, AST_FLAG_HAS_DEPENDENT_SCHEMAS,
 } from "./schema.js";
 
 import { malloc, allocEnumSet } from "./allocate.js";
@@ -179,14 +187,14 @@ export function compile(cat, ast) {
             if (vHeader !== 0) {
                 let primBits = astFlags[nodeId];
                 let off = astVOffset[nodeId];
-                let fixedCount = popcnt16(vHeader & 0xFFFF);
+                let fixedCount = popcnt16(vHeader & V_PAYLOAD_MASK);
 
                 /**
                  * Try inline encoding for simple primitive validators.
                  * Must be a single type (not multi-type union), no V_ENUM,
                  * no V_FORMAT, and values must fit in the bit ranges.
                  */
-                let typeBits = primBits & 0xF8;
+                let typeBits = primBits & SIMPLE;
                 let isSingleType = typeBits !== 0 && (typeBits & (typeBits - 1)) === 0;
                 let canTryInline = isSingleType && !(vHeader & V_ENUM) && !(primBits & ANY);
 
@@ -219,7 +227,7 @@ export function compile(cat, ast) {
                         }
                     }
                     if (canInline && (regexIdx > 0 || minLen > 0 || maxLen > 0)) {
-                        let result = STRING | (regexIdx << 9) | (maxLen << 17) | (minLen << 25);
+                        let result = STRING | (regexIdx << STR_REGEX_IDX_SHIFT) | (maxLen << STR_MAX_LEN_SHIFT) | (minLen << STR_MIN_LEN_SHIFT);
                         if (primBits & NULLABLE) { result |= NULLABLE; }
                         if (primBits & OPTIONAL) { result |= OPTIONAL; }
                         astCompiled[nodeId] = result;
@@ -280,9 +288,9 @@ export function compile(cat, ast) {
                     }
                     if (canInline && (minMag > 0 || maxMag > 0)) {
                         let result = typeBits
-                            | (exclMin << 9) | (exclMax << 10)
-                            | (minNeg << 11) | (maxNeg << 12)
-                            | (minMag << 13) | (maxMag << 22);
+                            | (exclMin ? NUM_EXCL_MIN_BIT : 0) | (exclMax ? NUM_EXCL_MAX_BIT : 0)
+                            | (minNeg ? NUM_MIN_NEG_BIT : 0) | (maxNeg ? NUM_MAX_NEG_BIT : 0)
+                            | (minMag << NUM_MIN_MAG_SHIFT) | (maxMag << NUM_MAX_MAG_SHIFT);
                         if (primBits & NULLABLE) { result |= NULLABLE; }
                         if (primBits & OPTIONAL) { result |= OPTIONAL; }
                         astCompiled[nodeId] = result;
@@ -312,8 +320,8 @@ export function compile(cat, ast) {
                             set.add(propNames[vPayloads[p++] | 0]);
                         }
                         let idx = allocEnumSet(heap, set);
-                        if (idx <= 0xFFFFF) {
-                            let result = STRING | MODIFIER | MOD_ENUM | (1 << 11) | (idx << 12);
+                        if (idx <= MOD_ENUM_IDX_MASK) {
+                            let result = STRING | MODIFIER | MOD_ENUM | MOD_ENUM_IS_SET | (idx << MOD_ENUM_IDX_SHIFT);
                             if (hasNull) {
                                 result = result | NULLABLE;
                             }
@@ -339,9 +347,9 @@ export function compile(cat, ast) {
                             set.add(vPayloads[p++]);
                         }
                         let idx = allocEnumSet(heap, set);
-                        if (idx <= 0xFFFFF) {
+                        if (idx <= MOD_ENUM_IDX_MASK) {
                             let innerBits = (valueBits & INTEGER) ? INTEGER : NUMBER;
-                            let result = innerBits | MODIFIER | MOD_ENUM | (1 << 11) | (idx << 12);
+                            let result = innerBits | MODIFIER | MOD_ENUM | MOD_ENUM_IS_SET | (idx << MOD_ENUM_IDX_SHIFT);
                             if (hasNull) {
                                 result = result | NULLABLE;
                             }
@@ -475,7 +483,7 @@ export function compile(cat, ast) {
                  * New encoding: COMPLEX bit at 0, KINDS index in bits 3+.
                  * Must use (1 | (kindPtr << 3)) not (COMPLEX | kindPtr).
                  */
-                astCompiled[nodeId] = (1 | (kindPtr << 3)) >>> 0;
+                astCompiled[nodeId] = (COMPLEX | (kindPtr << KINDS_SHIFT)) >>> 0;
                 astState[nodeId] = COMPILED;
                 circularPatches.push([nodeId, targetId, kindPtr]);
                 continue;
@@ -564,12 +572,12 @@ export function compile(cat, ast) {
                     let flags = astFlags[nodeId];
                     let extraOff = offset + count * 3;
                     // additionalProperties child (bit 0)
-                    if (flags & 1) {
+                    if (flags & AST_FLAG_HAS_ADDITIONAL_PROPS) {
                         stack[sp++] = astEdges[extraOff];
                         extraOff++;
                     }
                     // patternProperties children (bit 1)
-                    if (flags & 2) {
+                    if (flags & AST_FLAG_HAS_PATTERN_PROPS) {
                         let patCount = astEdges[extraOff++];
                         for (let i = 0; i < patCount; i++) {
                             extraOff++; // skip pattern name index
@@ -577,12 +585,12 @@ export function compile(cat, ast) {
                         }
                     }
                     // propertyNames child (bit 3)
-                    if (flags & 8) {
+                    if (flags & AST_FLAG_HAS_PROPERTY_NAMES) {
                         stack[sp++] = astEdges[extraOff];
                         extraOff++;
                     }
                     // dependentSchemas children (bit 4)
-                    if (flags & 16) {
+                    if (flags & AST_FLAG_HAS_DEPENDENT_SCHEMAS) {
                         let depCount = astEdges[extraOff++];
                         for (let i = 0; i < depCount; i++) {
                             extraOff++; // skip trigger key name index
@@ -595,7 +603,7 @@ export function compile(cat, ast) {
                     stack[sp++] = astChild0[nodeId]; // element type
                     // contains child (bit 1) — compiled to a typedef, then injected
                     // as a V_CONTAINS payload in Visit 2.
-                    if (astFlags[nodeId] & 2) {
+                    if (astFlags[nodeId] & AST_FLAG_HAS_CONTAINS) {
                         stack[sp++] = astChild1[nodeId];
                     }
                     break;
@@ -684,7 +692,7 @@ export function compile(cat, ast) {
                 let extraOff = offset + count * 3;
                 let additionalType = 0;
 
-                if (objFlags & 1) {
+                if (objFlags & AST_FLAG_HAS_ADDITIONAL_PROPS) {
                     // additionalProperties child
                     additionalType = astCompiled[astEdges[extraOff]] >>> 0;
                     extraOff++;
@@ -692,7 +700,7 @@ export function compile(cat, ast) {
 
                 // patternProperties: build validator payloads
                 let patPayloads = null;
-                if (objFlags & 2) {
+                if (objFlags & AST_FLAG_HAS_PATTERN_PROPS) {
                     let patCount = astEdges[extraOff++];
                     patPayloads = [];
                     for (let i = 0; i < patCount; i++) {
@@ -712,7 +720,7 @@ export function compile(cat, ast) {
                  * NEVER = 0, which would be indistinguishable from "not provided".
                  */
                 let hasPropertyNames = false;
-                if (objFlags & 8) {
+                if (objFlags & AST_FLAG_HAS_PROPERTY_NAMES) {
                     propertyNamesType = astCompiled[astEdges[extraOff]] >>> 0;
                     hasPropertyNames = true;
                     extraOff++;
@@ -721,7 +729,7 @@ export function compile(cat, ast) {
                 // dependentSchemas children (bit 4)
                 /** @type {Array<number>|null} */
                 let depSchemaPayloads = null;
-                if (objFlags & 16) {
+                if (objFlags & AST_FLAG_HAS_DEPENDENT_SCHEMAS) {
                     let depCount = astEdges[extraOff++];
                     depSchemaPayloads = [depCount];
                     for (let i = 0; i < depCount; i++) {
@@ -746,7 +754,7 @@ export function compile(cat, ast) {
                     || depSchemaPayloads !== null) {
                     let vHeader = astVHeaders[nodeId];
                     let off = astVOffset[nodeId];
-                    let pcount = popcnt16(vHeader & 0xFFFF);
+                    let pcount = popcnt16(vHeader & V_PAYLOAD_MASK);
                     let nodePayloads = [];
 
                     // 1. Fixed-slot payloads (V_MIN_PROPERTIES, V_MAX_PROPERTIES via popcnt16)
@@ -836,7 +844,7 @@ export function compile(cat, ast) {
                 // Inject V_CONTAINS payload when a contains child is present (astFlags bit 1).
                 // runArrayValidator uses popcnt16(vHeader & (V_CONTAINS - 1)) to locate the
                 // contains slot, so we insert the compiled typedef at that same offset.
-                let hasContains = (astFlags[nodeId] & 2) !== 0;
+                let hasContains = (astFlags[nodeId] & AST_FLAG_HAS_CONTAINS) !== 0;
                 if (hasContains) {
                     let containsType = astCompiled[astChild1[nodeId]] >>> 0;
                     if (vp === null) {
@@ -863,7 +871,7 @@ export function compile(cat, ast) {
                  * Inline MOD_ARRAY bypasses this tracking. The DSL path in allocate.js
                  * can inline safely since the DSL doesn't expose unevaluated tracking.
                  */
-                let hasItems = (astFlags[nodeId] & 4) !== 0;
+                let hasItems = (astFlags[nodeId] & AST_FLAG_HAS_ITEMS) !== 0;
 
                 let kindHeader = (vp !== null) ? (K_ARRAY | K_VALIDATOR) : K_ARRAY;
                 if (hasItems) {
