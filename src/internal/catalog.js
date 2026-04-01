@@ -177,128 +177,6 @@ function catalog(cfg) {
         return id;
     }
 
-    /**
-     * Internal allocator for the Permanent Heap. Writes slabData to SLAB,
-     * registers a SHAPES entry, optionally writes a validator, then writes
-     * a KINDS entry. Returns a permanent COMPLEX typedef pointer.
-     *
-     * @param {number} header
-     * @param {number} inline - stored as KINDS[ptr+1] when slabData is null
-     * @param {Array<number>|Uint32Array|null} slabData
-     * @param {number} shapeLen - semantic length stored in SHAPES slot 1
-     * @param {number} vHeader
-     * @param {Array<number>|null} vPayloads
-     * @returns {number}
-     */
-    function _malloc(header, inline, slabData, shapeLen, vHeader, vPayloads) {
-        let ri = inline;
-        if (slabData !== null) {
-            let count = slabData.length;
-            if (HEAP.PTR + count > HEAP.SLAB_LEN) {
-                let buffer = new Uint32Array(HEAP.SLAB_LEN *= 2);
-                buffer.set(SLAB);
-                HEAP.SLAB = SLAB = buffer;
-            }
-            let offset = HEAP.PTR;
-            HEAP.SLAB.set(slabData, offset);
-            HEAP.PTR += count;
-            ri = HEAP.SHAPE_COUNT++;
-            if ((ri + 1) * 2 > HEAP.SHAPE_LEN) {
-                let buffer = new Uint32Array(HEAP.SHAPE_LEN *= 2);
-                buffer.set(SHAPES);
-                HEAP.SHAPES = SHAPES = buffer;
-            }
-            HEAP.SHAPES[ri * 2] = offset;
-            HEAP.SHAPES[ri * 2 + 1] = shapeLen;
-        }
-        let valIdx = 0, slots = 2;
-        if (vHeader !== 0 && vPayloads !== null) {
-            slots = 3;
-            let vCount = vPayloads.length;
-            if (HEAP.VAL_PTR + vCount + 1 > HEAP.VAL_LEN) {
-                let buffer = new Float64Array(HEAP.VAL_LEN *= 2);
-                buffer.set(VALIDATORS);
-                HEAP.VALIDATORS = VALIDATORS = buffer;
-            }
-            valIdx = HEAP.VAL_PTR;
-            HEAP.VALIDATORS[valIdx] = vHeader;
-            HEAP.VALIDATORS.set(vPayloads, valIdx + 1);
-            HEAP.VAL_PTR += vCount + 1;
-        }
-        let ptr = HEAP.KIND_PTR;
-        if (ptr + slots > HEAP.KIND_LEN) {
-            let buffer = new Uint32Array(HEAP.KIND_LEN *= 2);
-            buffer.set(KINDS);
-            HEAP.KINDS = KINDS = buffer;
-        }
-        HEAP.KINDS[ptr] = header;
-        HEAP.KINDS[ptr + 1] = ri;
-        if (slots === 3) { HEAP.KINDS[ptr + 2] = valIdx; }
-        HEAP.KIND_PTR += slots;
-        /** COMPLEX = bit 0, KINDS index encoded in bits 3+: (1 | (ptr << 3)) */
-        return (1 | (ptr << 3)) >>> 0;
-    }
-
-    /**
-     * Public allocation interface. Allocates on the permanent heap.
-     *
-     * @param {number} header
-     * @param {number} inline
-     * @param {Array<number>|Uint32Array|null} slabData
-     * @param {number} shapeLen
-     * @param {number} vHeader
-     * @param {Array<number>|null} vPayloads
-     * @returns {number}
-     */
-    function malloc(header, inline, slabData, shapeLen, vHeader, vPayloads) {
-        return _malloc(header, inline, slabData, shapeLen, vHeader, vPayloads);
-    }
-
-    /**
-     * @param {number} vHeader
-     * @param {!Array<number>} payloads
-     * @returns {number}
-     */
-    function allocValidator(vHeader, payloads) {
-        let needed = 1 + payloads.length;
-        if (HEAP.VAL_PTR + needed > HEAP.VAL_LEN) {
-            let buffer = new Float64Array(HEAP.VAL_LEN *= 2);
-            buffer.set(VALIDATORS);
-            HEAP.VALIDATORS = VALIDATORS = buffer;
-        }
-        let ptr = HEAP.VAL_PTR;
-        VALIDATORS[ptr] = vHeader;
-        for (let i = 0; i < payloads.length; i++) {
-            VALIDATORS[ptr + 1 + i] = payloads[i];
-        }
-        HEAP.VAL_PTR += needed;
-        return ptr;
-    }
-
-    /**
-     * Stores a constant value in the CONSTANTS arena. Returns its index.
-     * Used for MOD_ENUM with isSet=0 (single-value const match).
-     * @param {*} value
-     * @returns {number}
-     */
-    function allocConstant(value) {
-        let idx = CONSTANTS.length;
-        CONSTANTS.push(value);
-        return idx;
-    }
-
-    /**
-     * Stores a Set in the ENUMS arena. Returns its index.
-     * Used for MOD_ENUM with isSet=1 (multi-value enum Set.has() match).
-     * @param {!Set<*>} set
-     * @returns {number}
-     */
-    function allocEnumSet(set) {
-        let idx = ENUMS.length;
-        ENUMS.push(set);
-        return idx;
-    }
-
     // --- VALIDATOR RUNNERS ---
 
     /**
@@ -937,27 +815,6 @@ function catalog(cfg) {
      * @returns {boolean}
      */
     function _validateRareKind(data, ct, ri, kinds, ptr, header, trackPtr, snapPtr) {
-        /** K_ANY_INNER: bare container types with no registry entry */
-        if (header & K_ANY_INNER) {
-            if (ct === K_ARRAY) {
-                return Array.isArray(data);
-            }
-            if (ct === K_RECORD || ct === K_OBJECT) {
-                return typeof data === 'object' && data !== null && !Array.isArray(data);
-            }
-            /**
-             * K_PRIMITIVE + K_ANY_INNER: the original type included ANY.
-             * Skip the _isValue check, but still run the validator if present.
-             */
-            if (ct === K_PRIMITIVE) {
-                if (header & K_VALIDATOR) {
-                    return runPrimValidator(data, header & SIMPLE, ri);
-                }
-                return true;
-            }
-            return false;
-        }
-
         switch (ct) {
             case K_RECORD: {
                 if (typeof data !== 'object' || data === null || Array.isArray(data)) {
@@ -1467,6 +1324,27 @@ function catalog(cfg) {
             let ct = header & KIND_ENUM_MASK;
             let ri = kinds[ptr + 1];
 
+            /** K_ANY_INNER: bare container types with no registry entry */
+            if (header & K_ANY_INNER) {
+                if (ct === K_ARRAY) {
+                    return Array.isArray(data);
+                }
+                if (ct === K_RECORD || ct === K_OBJECT) {
+                    return typeof data === 'object' && data !== null && !Array.isArray(data);
+                }
+                /**
+                 * K_PRIMITIVE + K_ANY_INNER: the original type included ANY.
+                 * Skip the _isValue check, but still run the validator if present.
+                 */
+                if (ct === K_PRIMITIVE) {
+                    if (header & K_VALIDATOR) {
+                        return runPrimValidator(data, header & SIMPLE, ri);
+                    }
+                    return true;
+                }
+                return false;
+            }
+
             /**
              * Hot-path if-else chain ordered by frequency:
              * K_OBJECT (70%), K_ARRAY (10%), K_PRIMITIVE (20%).
@@ -1737,6 +1615,14 @@ function catalog(cfg) {
             UNKNOWN_KEYS.fill(null, 0, UNKNOWN_TAIL);
             UNKNOWN_TAIL = 0;
         }
+        /**
+         * Refresh local aliases from HEAP in case malloc (now in allocate.js) resized
+         * any of the typed arrays since the last validate call.
+         */
+        SLAB = HEAP.SLAB;
+        SHAPES = HEAP.SHAPES;
+        KINDS = HEAP.KINDS;
+        VALIDATORS = HEAP.VALIDATORS;
         /** GC: null out unknown key strings BEFORE resetting the counter */
         // TODO I might refactor this later and send -1 so we can actually use index 0, it just makes more sense...
         DYN_PTR = 0;
@@ -1748,8 +1634,7 @@ function catalog(cfg) {
     const __heap = {
         HEAP, DICT: { KEY_DICT, KEY_INDEX },
         REGEX_CACHE, CALLBACKS,
-        malloc, allocValidator, lookup,
-        allocConstant, allocEnumSet,
+        lookup,
         CONSTANTS, ENUMS,
         _validate,
         BARE_ARRAY, BARE_OBJECT, BARE_RECORD,

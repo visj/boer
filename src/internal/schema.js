@@ -630,7 +630,7 @@ function walkSchema(compound, obj, baseUri, dialect, resourceUri, stripKeys) {
     if (stripKeys !== void 0 && stripKeys !== null) {
         for (let k of stripKeys) {
             if (hasOwnProperty.call(obj, k)) {
-                delete obj[k];
+                obj[k] = void 0;
             }
         }
     }

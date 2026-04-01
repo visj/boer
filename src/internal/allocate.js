@@ -16,6 +16,7 @@ import {
     V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED,
     V_ENUM,
     K_HAS_ITEMS, K_ALL_REQUIRED,
+    KIND_ENUM_MASK,
     MODIFIER, MOD_ARRAY, MOD_RECORD, MOD_ENUM,
 } from './const.js';
 import {
@@ -49,6 +50,106 @@ function normalizeTypeArgs(first, second, third) {
         return [first, second];
     }
     return [first];
+}
+
+// --- Heap allocation functions ---
+
+/**
+ * Allocates a KINDS entry on the permanent heap. Writes slabData to SLAB,
+ * registers a SHAPES entry, optionally writes a validator, then writes a KINDS
+ * entry. Returns a permanent COMPLEX typedef pointer.
+ *
+ * For K_PRIMITIVE (kind === 0), when vHeader/vPayloads are provided the
+ * validator index is stored in KINDS slot 1 (inline) with a 2-slot entry.
+ * For all other kinds the validator index lands in KINDS slot 2 (3-slot entry).
+ *
+ * @param {*} ctx - the __heap object from catalog
+ * @param {number} header
+ * @param {number} inline - stored as KINDS[ptr+1] when slabData is null and no validator
+ * @param {Array<number>|Uint32Array|null} slabData
+ * @param {number} shapeLen - semantic length stored in SHAPES slot 1
+ * @param {number} vHeader
+ * @param {Array<number>|null} vPayloads
+ * @returns {number}
+ */
+function malloc(ctx, header, inline, slabData, shapeLen, vHeader, vPayloads) {
+    let HEAP = ctx.HEAP;
+    let ri = inline;
+    if (slabData !== null) {
+        let count = slabData.length;
+        if (HEAP.PTR + count > HEAP.SLAB_LEN) {
+            let buffer = new Uint32Array(HEAP.SLAB_LEN *= 2);
+            buffer.set(HEAP.SLAB);
+            HEAP.SLAB = buffer;
+        }
+        let offset = HEAP.PTR;
+        HEAP.SLAB.set(slabData, offset);
+        HEAP.PTR += count;
+        ri = HEAP.SHAPE_COUNT++;
+        if ((ri + 1) * 2 > HEAP.SHAPE_LEN) {
+            let buffer = new Uint32Array(HEAP.SHAPE_LEN *= 2);
+            buffer.set(HEAP.SHAPES);
+            HEAP.SHAPES = buffer;
+        }
+        HEAP.SHAPES[ri * 2] = offset;
+        HEAP.SHAPES[ri * 2 + 1] = shapeLen;
+    }
+    let valIdx = 0;
+    let slots = 2;
+    if (vHeader !== 0 && vPayloads !== null) {
+        let vCount = vPayloads.length;
+        if (HEAP.VAL_PTR + vCount + 1 > HEAP.VAL_LEN) {
+            let buffer = new Float64Array(HEAP.VAL_LEN *= 2);
+            buffer.set(HEAP.VALIDATORS);
+            HEAP.VALIDATORS = buffer;
+        }
+        valIdx = HEAP.VAL_PTR;
+        HEAP.VALIDATORS[valIdx] = vHeader;
+        HEAP.VALIDATORS.set(vPayloads, valIdx + 1);
+        HEAP.VAL_PTR += vCount + 1;
+        /** K_PRIMITIVE (kind=0) stores the validator index in slot 1 (inline); all other kinds use slot 2. */
+        if ((header & KIND_ENUM_MASK) === K_PRIMITIVE) {
+            ri = valIdx;
+        } else {
+            slots = 3;
+        }
+    }
+    let ptr = HEAP.KIND_PTR;
+    if (ptr + slots > HEAP.KIND_LEN) {
+        let buffer = new Uint32Array(HEAP.KIND_LEN *= 2);
+        buffer.set(HEAP.KINDS);
+        HEAP.KINDS = buffer;
+    }
+    HEAP.KINDS[ptr] = header;
+    HEAP.KINDS[ptr + 1] = ri;
+    if (slots === 3) {
+        HEAP.KINDS[ptr + 2] = valIdx;
+    }
+    HEAP.KIND_PTR += slots;
+    /** COMPLEX = bit 0, KINDS index encoded in bits 3+: (1 | (ptr << 3)) */
+    return (1 | (ptr << 3)) >>> 0;
+}
+
+/**
+ * Stores a constant value in the CONSTANTS arena. Returns its index.
+ * Used for MOD_ENUM with isSet=0 (single-value const match).
+ * @param {*} ctx
+ * @param {*} value
+ * @returns {number}
+ */
+function allocConstant(ctx, value) {
+    return ctx.CONSTANTS.push(value) - 1;
+}
+
+/**
+ * Stores a Set in the ENUMS arena. Returns its index.
+ * Used for MOD_ENUM with isSet=1 (multi-value enum Set.has() match).
+ * @param {*} ctx
+ * @param {!Set<*>} set
+ * @returns {number}
+ */
+function allocEnumSet(ctx, set) {
+    return ctx.ENUMS.push(set) - 1;
 }
 
 const STR_MASK = V_MIN_LENGTH | V_MAX_LENGTH | V_PATTERN | V_FORMAT;
@@ -262,9 +363,7 @@ function valueImpl(ctx, primConst, opts) {
     migrateRegex(result, ctx.REGEX_CACHE);
     let vHeader = result[0];
     let payloads = result.slice(1);
-    /** K_PRIMITIVE stores the validator index as inline (KINDS slot 1), no SLAB entry. */
-    let valIdx = ctx.allocValidator(vHeader, payloads);
-    return ctx.malloc(K_PRIMITIVE | K_VALIDATOR | primConst, valIdx, null, 0, 0, null);
+    return malloc(ctx, K_PRIMITIVE | K_VALIDATOR | primConst, 0, null, 0, vHeader, payloads);
 }
 
 /**
@@ -280,7 +379,7 @@ function refineImpl(ctx, typedef, fn) {
     let slabData = new Uint32Array(2);
     slabData[0] = typedef >>> 0;
     slabData[1] = callbackIdx;
-    let result = ctx.malloc(K_REFINE, 0, slabData, 2, 0, null);
+    let result = malloc(ctx, K_REFINE, 0, slabData, 2, 0, null);
     if (typedef & NULLABLE) {
         result |= NULLABLE;
     }
@@ -296,7 +395,7 @@ function refineImpl(ctx, typedef, fn) {
  * @returns {number}
  */
 function tupleArrayImpl(ctx, types) {
-    return ctx.malloc(K_TUPLE | K_STRICT, 0, types, types.length, 0, null);
+    return malloc(ctx, K_TUPLE | K_STRICT, 0, types, types.length, 0, null);
 }
 
 /**
@@ -315,31 +414,29 @@ function tupleArrayImpl(ctx, types) {
 function literalImpl(ctx, value) {
     if (value === null) { return NULLABLE; }
     if (value === true || value === false) {
-        let idx = ctx.allocConstant(value);
+        let idx = allocConstant(ctx, value);
         if (idx <= 0x3FFFF) {
             return BOOLEAN | MODIFIER | MOD_ENUM | (idx << 12);
         }
         return refineImpl(ctx, BOOLEAN, value === true ? v => v === true : v => v === false);
     }
     if (typeof value === 'string') {
-        let idx = ctx.allocConstant(value);
+        let idx = allocConstant(ctx, value);
         if (idx <= 0x3FFFF) {
             return STRING | MODIFIER | MOD_ENUM | (idx << 12);
         }
         /** Fallback: V_ENUM on SLAB */
         let keyId = ctx.lookup(value);
-        let valIdx = ctx.allocValidator(V_ENUM, [1, keyId]);
-        return ctx.malloc(K_PRIMITIVE | K_VALIDATOR | STRING, valIdx, null, 0, 0, null);
+        return malloc(ctx, K_PRIMITIVE | K_VALIDATOR | STRING, 0, null, 0, V_ENUM, [1, keyId]);
     }
     if (typeof value === 'number') {
         let primBits = Number.isInteger(value) ? INTEGER : NUMBER;
-        let idx = ctx.allocConstant(value);
+        let idx = allocConstant(ctx, value);
         if (idx <= 0x3FFFF) {
             return primBits | MODIFIER | MOD_ENUM | (idx << 12);
         }
         /** Fallback: V_ENUM on SLAB */
-        let valIdx = ctx.allocValidator(V_ENUM, [1, value]);
-        return ctx.malloc(K_PRIMITIVE | K_VALIDATOR | NUMBER, valIdx, null, 0, 0, null);
+        return malloc(ctx, K_PRIMITIVE | K_VALIDATOR | NUMBER, 0, null, 0, V_ENUM, [1, value]);
     }
     if (Array.isArray(value)) {
         /** Desugar to exact-length K_TUPLE: each element becomes its own literal type. */
@@ -430,7 +527,7 @@ function enumImpl(ctx, values) {
             let set = strings.length > 0
                 ? new Set(strings)
                 : new Set(numbers);
-            let idx = ctx.allocEnumSet(set);
+            let idx = allocEnumSet(ctx, set);
             if (idx <= 0x3FFFF) {
                 let innerBits = strings.length > 0 ? STRING : NUMBER;
                 primType = innerBits | MODIFIER | MOD_ENUM | (1 << 11) | (idx << 12);
@@ -442,8 +539,7 @@ function enumImpl(ctx, values) {
         if (primType === 0) {
             // Fallback: Build K_PRIMITIVE with V_ENUM validator; re-attach NULLABLE / OPTIONAL.
             let primBits = payloadBits & ~(NULLABLE | OPTIONAL);
-            let valIdx = ctx.allocValidator(V_ENUM, payload);
-            primType = ctx.malloc(K_PRIMITIVE | K_VALIDATOR | primBits, valIdx, null, 0, 0, null);
+            primType = malloc(ctx, K_PRIMITIVE | K_VALIDATOR | primBits, 0, null, 0, V_ENUM, payload);
             if (payloadBits & NULLABLE) { primType = (primType | NULLABLE) >>> 0; }
             if (payloadBits & OPTIONAL) { primType = (primType | OPTIONAL) >>> 0; }
         }
@@ -476,7 +572,7 @@ function recordImpl(ctx, valueType) {
             return typeBits | MODIFIER | MOD_RECORD;
         }
     }
-    return ctx.malloc(K_RECORD, valueType >>> 0, null, 0, 0, null);
+    return malloc(ctx, K_RECORD, valueType >>> 0, null, 0, 0, null);
 }
 
 /**
@@ -510,7 +606,7 @@ function orImpl(ctx, types) {
     if (allBarePrimitive) {
         return merged >>> 0;
     }
-    let result = ctx.malloc(K_OR, 0, types, types.length, 0, null);
+    let result = malloc(ctx, K_OR, 0, types, types.length, 0, null);
     for (; j < length; j++) {
         const type = /** @type {number} */(types[j]);
         if (type & NULLABLE) {
@@ -529,7 +625,7 @@ function orImpl(ctx, types) {
  * @returns {number}
  */
 function exclusiveImpl(ctx, types) {
-    return ctx.malloc(K_EXCLUSIVE, 0, types, types.length, 0, null);
+    return malloc(ctx, K_EXCLUSIVE, 0, types, types.length, 0, null);
 }
 
 /**
@@ -538,7 +634,7 @@ function exclusiveImpl(ctx, types) {
  * @returns {number}
  */
 function intersectImpl(ctx, types) {
-    return ctx.malloc(K_INTERSECT, 0, types, types.length, 0, null);
+    return malloc(ctx, K_INTERSECT, 0, types, types.length, 0, null);
 }
 
 /**
@@ -548,7 +644,7 @@ function intersectImpl(ctx, types) {
  */
 function notImpl(ctx, typedef) {
     assertIsNumber(typedef, 0);
-    return ctx.malloc(K_NOT, typedef >>> 0, null, 0, 0, null);
+    return malloc(ctx, K_NOT, typedef >>> 0, null, 0, 0, null);
 }
 
 /**
@@ -566,7 +662,7 @@ function whenImpl(ctx, config) {
         config.then !== void 0 ? config.then >>> 0 : absentBranch,
         config.else !== void 0 ? config.else >>> 0 : absentBranch
     ];
-    return ctx.malloc(K_CONDITIONAL, 0, types, types.length, 0, null);
+    return malloc(ctx, K_CONDITIONAL, 0, types, types.length, 0, null);
 }
 
 /**
@@ -624,7 +720,7 @@ function objectImpl(ctx, definition, opts) {
     if (allRequired) {
         kindHeader = kindHeader | K_ALL_REQUIRED;
     }
-    return ctx.malloc(kindHeader, 0, resolved, count, vHeader, payloads);
+    return malloc(ctx, kindHeader, 0, resolved, count, vHeader, payloads);
 }
 
 /**
@@ -716,7 +812,7 @@ function arrayImpl(ctx, elemType, opts) {
     }
     /** K_ARRAY stores elemType as inline (KINDS slot 1); no SLAB or SHAPES entry. */
     let kindHeader = (hasVal ? (K_ARRAY | K_VALIDATOR) : K_ARRAY) | K_HAS_ITEMS;
-    return ctx.malloc(kindHeader, elemType >>> 0, null, 0, vHeader, payloads);
+    return malloc(ctx, kindHeader, elemType >>> 0, null, 0, vHeader, payloads);
 }
 
 /**
@@ -754,7 +850,7 @@ function unionImpl(ctx, discriminator, variants) {
     for (let i = 0; i < count * 2; i++) {
         slabData[1 + i] = resolved[i];
     }
-    return ctx.malloc(K_UNION, 0, slabData, count, 0, null);
+    return malloc(ctx, K_UNION, 0, slabData, count, 0, null);
 }
 
 // --- Allocator factories ---
@@ -846,6 +942,9 @@ function allocators(cat) {
 }
 
 export {
+    malloc,
+    allocConstant,
+    allocEnumSet,
     allocators,
     objectAllocator,
     arrayAllocator,
