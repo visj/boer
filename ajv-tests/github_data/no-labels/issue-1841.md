@@ -1,0 +1,5 @@
+# [1841] Clarification - Purpose of "mergeEvaluated" in CodeGen?
+
+Hello! In implementing some custom keywords, I'm not sure of when/why to use the [mergeEvaluated](https://github.com/ajv-validator/ajv/blob/8d20f6b33c93e326279ab8ac98609d52eb40be91/lib/compile/validate/index.ts#L495) method of `KeywordCxt` class, and was wondering if I could get some clarification? So far, I haven't been able to find anything on it within the docs or the src.
+
+Presumably it merges a subschema's `SchemaCxt` into the current keyword's `KeywordCxt`, and I see it's employed by many existing keywords already, but I'm not sure what effect that actually has. When I've overwritten standard keywords to omit their calls to `mergeEvaluated` or `mergeValidEvaluated`, it never seems to change the behavior of my validation or its output. Any explanation would be appreciated. Thanks!

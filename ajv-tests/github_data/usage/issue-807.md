@@ -1,0 +1,3 @@
+# [807] Proper way of using refs for an internal schema
+
+I am trying to use JSON schema and ajv to validate data against a very large and complex schema. This means that there are many many separate json schemas being referenced using `$ref` to allow me to be DRY. I am running into an issue with best practices for using `$ref`. Since all of my JSON files reside on the same server, it seems silly to have my `$ref` use URI's that refer back to the same server. Doing this also makes testing difficult because I need to mock external requests to my own server to test my schema. Are URI's with `$ref` the best way of modulating a JSON schema, or is there a way to do it with internal file server references.

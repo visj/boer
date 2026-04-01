@@ -1,0 +1,125 @@
+# [1045] Can't validate json if it has "constructor" property
+
+<!--
+Frequently Asked Questions: https://github.com/epoberezkin/ajv/blob/master/FAQ.md
+Please provide all info and reduce your schema and data to the smallest possible size.
+
+This template is for bug or error reports.
+For other issues please see https://github.com/epoberezkin/ajv/blob/master/CONTRIBUTING.md
+-->
+
+**What version of Ajv are you using? Does the issue happen if you use the latest version?**
+
+I'm using v6.10.2 version.
+
+**Ajv options object**
+
+<!-- See https://github.com/epoberezkin/ajv#options -->
+
+I'm creating instance without providing options. All options are default for this version.
+
+**JSON Schema**
+
+<!-- Please make it as small as possible to reproduce the issue -->
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "constructor": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "enum": ["v1", "v2"]
+        },
+        "height": {
+          "type": "string"
+        }
+      },
+      "required": ["version"],
+      "additionalProperties": false
+    }
+  }
+}
+```
+
+**Sample data**
+
+<!-- Please make it as small as posssible to reproduce the issue -->
+
+```json
+{}
+```
+
+
+**Your code**
+
+<!--
+Please:
+- make it as small as posssible to reproduce the issue
+- use one of the usage patterns from https://github.com/epoberezkin/ajv#getting-started
+- use `options`, `schema` and `data` as variables, do not repeat their values here
+- post a working code sample in RunKit notebook cloned from https://runkit.com/esp/ajv-issue and include the link here.
+
+It would make understanding your problem easier and the issue more useful to others.
+Thank you!
+-->
+
+```javascript
+const ajv = new Ajv();
+const validate = ajv.compile({
+  "type": "object",
+  "properties": {
+    "constructor": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string",
+          "enum": ["v1", "v2"]
+        },
+        "height": {
+          "type": "string"
+        }
+      },
+      "required": ["version"],
+      "additionalProperties": false
+    }
+  }
+});
+validate({});
+```
+
+
+**Validation result, data AFTER validation, error messages**
+
+```
+{ [Function: validate]
+  schema:
+   { type: 'object',
+     properties:
+      { constructor:
+         { type: 'object',
+           properties:
+            { version: { type: 'string', enum: [ 'v1', 'v2' ] },
+              height: { type: 'string' } },
+           required: [ 'version' ],
+           additionalProperties: false } } },
+  errors:
+   [ { keyword: 'type',
+       dataPath: '.constructor',
+       schemaPath: '#/properties/constructor/type',
+       params: { type: 'object' },
+       message: 'should be object' } ],
+  refs: {},
+  refVal: [ [Circular] ],
+  root: [Circular] }
+```
+
+**What results did you expect?**
+
+As constructor property is not a required property any JSON without this property should pass validation.
+
+**Are you going to resolve the issue?**
+
+Yes, if bug will confirmed.

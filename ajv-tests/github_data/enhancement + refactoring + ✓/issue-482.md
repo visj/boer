@@ -1,0 +1,3 @@
+# [482] Move regenerator and nodent to ajv-async
+
+The regenerator runtime by itself makes up just under half of ajv's npm package installation footprint. Considering that the async features were split out into a separate package anyway and the regenerator runtime is relatively easy for frontend people to add to their projects separately, would it be possible to not include the regenerator runtime in the npm package? Or maybe have a separate package for the frontend dist stuff?
