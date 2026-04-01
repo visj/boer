@@ -68,7 +68,10 @@ function normalizeTypeArgs(first, second, third) {
  * KINDS layout (stride-2, logical ptr = kindsIdx / 2):
  *   [kindsIdx]   = header (kind enum | meta bits | K_VALIDATOR)
  *   [kindsIdx+1] = slab_offset (or inline value for K_ARRAY/K_NOT/K_RECORD)
- * With K_VALIDATOR set (4 slots):
+ * K_PRIMITIVE with K_VALIDATOR (compact, 2 slots):
+ *   [kindsIdx]   = header | (vHeader << 8)  — vHeader packed in bits 8-24
+ *   [kindsIdx+1] = val_ptr (offset into VALIDATORS, first payload)
+ * Other kinds with K_VALIDATOR (4 slots):
  *   [kindsIdx+2] = vHeader (Uint32 bitmask)
  *   [kindsIdx+3] = val_ptr (offset into VALIDATORS, first payload)
  *
@@ -115,6 +118,25 @@ function malloc(ctx, header, inline, slabData, shapeLen, vHeader, vPayloads) {
         /** Payloads only — vHeader is stored in KINDS, not VALIDATORS */
         HEAP.VALIDATORS.set(vPayloads, valPtr);
         HEAP.VAL_PTR += vCount;
+        /**
+         * K_PRIMITIVE compact path: pack vHeader into bits 8-24 of the header
+         * word and store val_ptr in slot 1. K_PRIMITIVE never has SLAB data,
+         * so slot 1 is otherwise wasted. This saves 2 KINDS slots per entry.
+         */
+        if ((header & KIND_ENUM_MASK) === K_PRIMITIVE) {
+            let kindsIdx = HEAP.KIND_PTR;
+            if (kindsIdx + 2 > HEAP.KIND_LEN) {
+                let buffer = new Uint32Array(HEAP.KIND_LEN *= 2);
+                buffer.set(HEAP.KINDS);
+                HEAP.KINDS = buffer;
+                ctx.resizeKinds(buffer);
+            }
+            HEAP.KINDS[kindsIdx] = (header | ((vHeader & 0x1FFFF) << 8)) >>> 0;
+            HEAP.KINDS[kindsIdx + 1] = valPtr;
+            HEAP.KIND_PTR += 2;
+            let ptr = kindsIdx >>> 1;
+            return (COMPLEX | (ptr << KINDS_SHIFT)) >>> 0;
+        }
         slots = 4;
     }
     let kindsIdx = HEAP.KIND_PTR;

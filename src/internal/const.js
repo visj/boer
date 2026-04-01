@@ -69,10 +69,12 @@ const MOD_MASK = 3 << 9;
 const KINDS_SHIFT = 3;
 
 /**
- * Lower 16 bits of a validator header contain the payload-bearing flags.
+ * Bits 0-13 of a validator header contain the payload-bearing flags.
+ * Each set bit pushes exactly 1 Float64 to the payload slab.
+ * Bits 14-15 are zero-payload modifier flags (V_EXCLUSIVE_MINIMUM/MAXIMUM).
  * Used with popcnt16 to compute payload slot offsets.
  */
-const V_PAYLOAD_MASK = 0xFFFF;
+const V_PAYLOAD_MASK = 0x3FFF;
 
 // ── MOD_ENUM inline payload bits ──
 /** Bit 11: 0 = CONSTANTS arena (const match), 1 = ENUMS arena (Set.has). */
@@ -174,9 +176,14 @@ const KIND_ENUM_MASK = 0xF;
 // --- Validator bit flags (globally unique, unified layout) ---
 //
 // Payload flags (bits 0–13): each set bit pushes exactly 1 Float64 to the payload slab.
-// Boolean flags (bits 16–31): no payload, just toggle behavior.
-//
 // Offset of any payload flag's value = popcnt16(vHeader & (FLAG - 1))
+//
+// Zero-payload modifier flags (bits 14-15): toggle behavior on V_MINIMUM/V_MAXIMUM.
+//
+// Sequential payload flags (bits 16+): variable-length, use p++ to advance.
+//
+// K_PRIMITIVE vHeader is packed into bits 8-24 of the KINDS header word.
+// All K_PRIMITIVE validator flags must fit within 17 bits (bits 0-16).
 //
 
 // String payload flags
@@ -197,27 +204,27 @@ const V_MAX_CONTAINS = 1 << 11;
 // Object payload flags
 const V_MIN_PROPERTIES = 1 << 12;
 const V_MAX_PROPERTIES = 1 << 13;
-// Object variable-length payload flags (sequential p++ only, NOT popcount-compatible).
-// These are only used by K_OBJECT (catalog API), never by K_PRIMITIVE (JSON Schema).
-const V_DEPENDENT_REQUIRED = 1 << 16;
-const V_PATTERN_PROPERTIES = 1 << 17;
-const V_PROPERTY_NAMES = 1 << 18;
-const V_DEPENDENT_SCHEMAS = 1 << 19;
-const V_UNEVALUATED_ITEMS = 1 << 20;
-const V_UNEVALUATED_PROPERTIES = 1 << 21;
+// Zero-payload modifier flags (outside V_PAYLOAD_MASK, no Float64 slot)
+const V_EXCLUSIVE_MINIMUM = 1 << 14;
+const V_EXCLUSIVE_MAXIMUM = 1 << 15;
 /**
  * V_ENUM: variable-length enum membership payload for K_PRIMITIVE validators.
- * Bit 22 — sequential, never co-occurs with bits 16–21 (those are K_OBJECT only).
- * Payload layout (after fixed-slot payloads at base + popcnt16(vHeader & 0xFFFF)):
+ * Payload layout (after fixed-slot payloads at base + popcnt16(vHeader & V_PAYLOAD_MASK)):
  *   If primBits & STRING: [ strCount, sortedKeyId0, ..., sortedKeyIdN ]
  *   If primBits & (NUMBER|INTEGER): [ numCount, sortedNum0, ..., sortedNumM ]
- *   If both: string segment first, then number segment.
+ *   If primBits & BOOLEAN: [ boolMask ] (bit 0 = true allowed, bit 1 = false allowed)
+ *   Segments appear in order: string, number, boolean.
  */
-const V_ENUM = 1 << 22;
-
-// Boolean modifier flags (no payload)
-const V_EXCLUSIVE_MINIMUM = 1 << 27;
-const V_EXCLUSIVE_MAXIMUM = 1 << 28;
+const V_ENUM = 1 << 16;
+// K_OBJECT variable-length payload flags (sequential p++ only, NOT popcount-compatible).
+// These are only used by K_OBJECT (catalog API), never by K_PRIMITIVE (JSON Schema).
+const V_DEPENDENT_REQUIRED = 1 << 17;
+const V_PATTERN_PROPERTIES = 1 << 18;
+const V_PROPERTY_NAMES = 1 << 19;
+const V_DEPENDENT_SCHEMAS = 1 << 20;
+const V_UNEVALUATED_ITEMS = 1 << 21;
+const V_UNEVALUATED_PROPERTIES = 1 << 22;
+// K_ARRAY zero-payload modifier flag
 const V_UNIQUE_ITEMS = 1 << 29;
 const V_ADDITIONAL_PROPERTIES = 1 << 30;
 

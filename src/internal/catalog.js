@@ -1331,7 +1331,7 @@ function catalog(cfg) {
                  */
                 if (ct === K_PRIMITIVE) {
                     if (header & K_VALIDATOR) {
-                        return runPrimValidator(data, header & SIMPLE, kinds[kindsIdx + 2], kinds[kindsIdx + 3]);
+                        return runPrimValidator(data, header & SIMPLE, (header >>> 8) & 0x1FFFF, kinds[kindsIdx + 1]);
                     }
                     return true;
                 }
@@ -1555,7 +1555,7 @@ function catalog(cfg) {
                     }
                 }
                 if (header & K_VALIDATOR) {
-                    return runPrimValidator(data, primBits, kinds[kindsIdx + 2], kinds[kindsIdx + 3]);
+                    return runPrimValidator(data, primBits, (header >>> 8) & 0x1FFFF, kinds[kindsIdx + 1]);
                 }
                 return true;
             }

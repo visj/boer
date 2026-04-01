@@ -154,7 +154,7 @@ export function compile(cat, ast) {
             return null;
         }
         let off = astVOffset[nodeId];
-        let count = popcnt16(vHeader & 0xFFFF);
+        let count = popcnt16(vHeader & V_PAYLOAD_MASK);
         let regexCache = heap.REGEX_CACHE;
         let patternSlot = (vHeader & V_PATTERN) ? popcnt16(vHeader & (V_PATTERN - 1)) : -1;
         let nodePayloads = new Array(count);
@@ -374,8 +374,8 @@ export function compile(cat, ast) {
                         nodePayloads.push(raw);
                     }
                 }
-                // V_ENUM sequential section (bit 20): remap virtual string indices to real
-                // catalog keyIds, sort independently, then append number segment.
+                // V_ENUM sequential section (bit 16): remap virtual string indices to real
+                // catalog keyIds, sort independently, then append number/boolean segments.
                 if (vHeader & V_ENUM) {
                     let p = off + fixedCount;
                     if (primBits & STRING) {
