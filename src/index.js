@@ -15,7 +15,6 @@ import { createDiagnose } from './internal/error.js';
 /** @type {uvd.Catalog<uvd.UVD>} */
 const uvd = catalog();
 
-
 const {
     object, array, union,
     string, number, boolean,

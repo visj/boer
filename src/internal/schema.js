@@ -386,7 +386,7 @@ export function transpile(schema, dialect) {
         }
     }
 
-    // 4. Draft 4 only (DRAFT_4)
+    // 5. Draft 4 only (DRAFT_4)
     if (dialect === DRAFT_4) {
         // Rename id -> $id
         // @ts-ignore
