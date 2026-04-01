@@ -238,7 +238,9 @@ function popcnt16(x) {
 const FMT_EMAIL = 1;
 const FMT_IPV4 = 2;
 const FMT_UUID = 3;
-const FMT_DATETIME = 4;
+const FMT_DATE = 4;
+const FMT_TIME = 5;
+const FMT_DATETIME = 6;
 
 // Format validation regexes
 const FMT_RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -307,7 +309,7 @@ export {
     V_UNEVALUATED_ITEMS, V_UNEVALUATED_PROPERTIES, V_DEPENDENT_SCHEMAS,
     V_ENUM,
     popcnt16,
-    FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME, FMT_MAP,
+    FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATE, FMT_TIME, FMT_DATETIME, FMT_MAP,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
     FAIL, codepointLen, toString, hasOwnProperty
 }

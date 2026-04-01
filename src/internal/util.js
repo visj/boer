@@ -70,6 +70,96 @@ function isObject(value) {
 }
 
 /**
+ * Fast RFC 3339 Date Validator (YYYY-MM-DD)
+ */
+function isValidDate(str, offset = 0) {
+    // Length must be at least 10 for the date part
+    if (str.length < offset + 10) return false;
+    if (str.charCodeAt(offset + 4) !== 45 || str.charCodeAt(offset + 7) !== 45) return false; // '-'
+
+    let y = (str.charCodeAt(offset) - 48) * 1000 + (str.charCodeAt(offset + 1) - 48) * 100 +
+    (str.charCodeAt(offset + 2) - 48) * 10 + (str.charCodeAt(offset + 3) - 48);
+    let m = (str.charCodeAt(offset + 5) - 48) * 10 + (str.charCodeAt(offset + 6) - 48);
+    let d = (str.charCodeAt(offset + 8) - 48) * 10 + (str.charCodeAt(offset + 9) - 48);
+
+    // Basic bounds
+    if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+
+    // Calendar math (Leap years and month lengths)
+    if (m === 2) {
+        let isLeap = (y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0));
+        if (d > (isLeap ? 29 : 28)) return false;
+    } else if (m === 4 || m === 6 || m === 9 || m === 11) {
+        if (d > 30) return false;
+    }
+    return true;
+}
+
+/**
+ * Fast RFC 3339 Time Validator (HH:MM:SS[.frac][Z|+HH:MM|-HH:MM])
+ * Supports leap seconds (23:59:60).
+ */
+function isValidTime(str, offset = 0) {
+    if (str.length < offset + 8) return false;
+    if (str.charCodeAt(offset + 2) !== 58 || str.charCodeAt(offset + 5) !== 58) return false; // ':'
+
+    let h = (str.charCodeAt(offset) - 48) * 10 + (str.charCodeAt(offset + 1) - 48);
+    let m = (str.charCodeAt(offset + 3) - 48) * 10 + (str.charCodeAt(offset + 4) - 48);
+    let s = (str.charCodeAt(offset + 6) - 48) * 10 + (str.charCodeAt(offset + 7) - 48);
+
+    if (h > 23 || m > 59 || s > 60) return false; // s=60 allows for leap seconds
+
+    let i = offset + 8;
+
+    // Optional fractional seconds: .12345
+    if (i < str.length && str.charCodeAt(i) === 46) { // '.'
+        i++;
+        let fracStart = i;
+        while (i < str.length) {
+            let c = str.charCodeAt(i);
+            if (c >= 48 && c <= 57) i++; // 0-9
+            else break;
+        }
+        if (i === fracStart) return false; // Must have at least one digit after dot
+    }
+
+    // Timezone Offset is mandatory in RFC 3339 for time/date-time
+    if (i >= str.length) return false;
+    let tz = str.charCodeAt(i);
+
+    if (tz === 90 || tz === 122) { // 'Z' or 'z'
+        return i === str.length - 1;
+    }
+
+    if (tz === 43 || tz === 45) { // '+' or '-'
+        if (str.length - i !== 6) return false; // Must be exactly HH:MM
+        if (str.charCodeAt(i + 3) !== 58) return false; // ':'
+
+        let tzH = (str.charCodeAt(i + 1) - 48) * 10 + (str.charCodeAt(i + 2) - 48);
+        let tzM = (str.charCodeAt(i + 4) - 48) * 10 + (str.charCodeAt(i + 5) - 48);
+
+        if (tzH > 23 || tzM > 59) return false;
+        return true;
+    }
+
+    return false;
+}
+
+function isValidDateTime(str) {
+    if (str.length < 19) return false;
+
+    // Must be a valid date
+    if (!isValidDate(str, 0)) return false;
+
+    // 10th character must be 'T' or 't'
+    let t = str.charCodeAt(10);
+    if (t !== 84 && t !== 116) return false;
+
+    // Remaining string must be a valid time
+    return isValidTime(str, 11);
+}
+
+/**
  *
  * @param {!Array<number>} buffer
  * @returns {void}
@@ -343,7 +433,8 @@ function binarySearchPair(arr, offset, count, target) {
 export {
     nullable, optional,
     isNumber, isString, isObject, isBoolean,
+    isValidDate, isValidTime, isValidDateTime,
     deepEqual, sortByKeyId, parseValue,
     _isValue, describeType,
-    binarySearch, binarySearchPair,
+    binarySearch, binarySearchPair
 }

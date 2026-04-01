@@ -1252,9 +1252,10 @@ CompoundSchema.prototype.bundle = function (schemas) {
              * them to real keyIds via lookup(propNames[idx]) and sorts them.
              * Numbers are sorted here immediately.
              */
-            if (enumStrings.length > 0 || enumNumbers.length > 0) {
+            if (enumStrings.length > 0 || enumNumbers.length > 0 || hasTrueEnum || hasFalseEnum) {
                 if (enumStrings.length > 0) { enumPrimBits |= STRING; }
                 if (enumNumbers.length > 0) { enumPrimBits |= NUMBER; }
+                if (hasTrueEnum || hasFalseEnum) { enumPrimBits |= BOOLEAN; }
                 vHeader |= V_ENUM;
                 if (enumStrings.length > 0) {
                     // Write string segment: [strCount, vIdx0, vIdx1, ...]
@@ -1271,6 +1272,16 @@ CompoundSchema.prototype.bundle = function (schemas) {
                     for (let i = 0; i < sortedNums.length; i++) {
                         vPayloadArr.push(sortedNums[i]);
                     }
+                }
+                if (hasTrueEnum || hasFalseEnum) {
+                    /**
+                     * Boolean segment: single bitmask value.
+                     * Bit 0 = true is in enum, bit 1 = false is in enum.
+                     */
+                    let boolMask = 0;
+                    if (hasTrueEnum) { boolMask |= 1; }
+                    if (hasFalseEnum) { boolMask |= 2; }
+                    vPayloadArr.push(boolMask);
                 }
             }
             // enumPrimBits now holds NULLABLE/STRING/NUMBER bits from enum values.

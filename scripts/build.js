@@ -6,9 +6,8 @@ import { minify } from 'terser';
 const cwd = process.cwd();
 const outputDir = path.resolve(cwd, 'dist');
 const buildDir = path.resolve(cwd, 'build');
-const mangleFile = path.resolve(buildDir, 'mangle.json');
 
-async function buildFormat(format, ext, isModule) {
+async function buildFormat(format, ext) {
     console.log(`2. Generating ${format.toUpperCase()} build...`);
 
     fs.rmSync(outputDir, { recursive: true, force: true });

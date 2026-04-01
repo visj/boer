@@ -396,6 +396,10 @@ export function compile(cat, ast) {
                         nodePayloads.push(numCount);
                         for (let i = 0; i < numCount; i++) { nodePayloads.push(nums[i]); }
                     }
+                    if (primBits & BOOLEAN) {
+                        /** Boolean segment: pass through the bitmask (bit 0=true, bit 1=false) */
+                        nodePayloads.push(vPayloads[p++]);
+                    }
                 }
                 /**
                  * Strip ANY (bit 3) from the KINDS header bits to avoid K_TUPLE (=8)

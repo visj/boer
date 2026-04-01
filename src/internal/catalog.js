@@ -15,7 +15,7 @@ import {
     V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS,
     V_ENUM, K_STRICT,
     popcnt16,
-    FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATETIME,
+    FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATE, FMT_TIME, FMT_DATETIME,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
     codepointLen, hasOwnProperty,
     K_HAS_ITEMS, K_HAS_REST, MODIFIER, MOD_MASK, MOD_ARRAY, MOD_RECORD, MOD_ENUM,
@@ -38,6 +38,7 @@ import {
 import {
     sortByKeyId, _isValue, deepEqual,
     binarySearch, binarySearchPair,
+    isValidTime, isValidDate, isValidDateTime
 } from './util.js';
 
 /**
@@ -259,12 +260,22 @@ function catalog(cfg) {
             if (vHeader & V_FORMAT) {
                 let p = base + popcnt16(vHeader & (V_FORMAT - 1));
                 let fmt = vals[p] | 0;
-                let re = fmt === FMT_EMAIL ? FMT_RE_EMAIL :
+
+                if (fmt === FMT_DATE) {
+                    if (value.length !== 10 || !isValidDate(value)) return false;
+                } else if (fmt === FMT_TIME) {
+                    if (!isValidTime(value)) return false;
+                } else if (fmt === FMT_DATETIME) {
+                    if (!isValidDateTime(value)) return false;
+                } else {
+                    // Keep your regexes for email, uuid, ipv4, etc.
+                    let re = fmt === FMT_EMAIL ? FMT_RE_EMAIL :
                     fmt === FMT_IPV4 ? FMT_RE_IPV4 :
-                        fmt === FMT_UUID ? FMT_RE_UUID :
-                            fmt === FMT_DATETIME ? FMT_RE_DATETIME : null;
-                if (re && !re.test(value)) {
-                    return false;
+                    fmt === FMT_UUID ? FMT_RE_UUID : null;
+
+                    if (re && !re.test(value)) {
+                        return false;
+                    }
                 }
             }
         } else if (typeof value === 'number') {
@@ -307,6 +318,24 @@ function catalog(cfg) {
                 }
                 let numCount = vals[p] | 0;
                 if (!binarySearch(vals, p + 1, numCount, value)) { return false; }
+            } else if (typeof value === 'boolean') {
+                /** Skip string and number segments to reach boolean bitmask */
+                if (primBits & STRING) {
+                    let strCount = vals[p] | 0;
+                    p += 1 + strCount;
+                }
+                if (primBits & (NUMBER | INTEGER)) {
+                    let numCount = vals[p] | 0;
+                    p += 1 + numCount;
+                }
+                /**
+                 * Boolean bitmask: bit 0 = true is in enum, bit 1 = false is in enum.
+                 * Reject if the corresponding bit is not set.
+                 */
+                let boolMask = vals[p] | 0;
+                if (!(boolMask & (value ? 1 : 2))) {
+                    return false;
+                }
             }
         }
         return true;
@@ -1359,7 +1388,17 @@ function catalog(cfg) {
                      * the typeof chain for null values entirely.
                      */
                     if (val === null) {
-                        if (!(type & (NULLABLE | ANY)) || (type & (NULLABLE | COMPLEX)) == COMPLEX) {
+                        if (type & COMPLEX) {
+                            /**
+                             * COMPLEX types may accept null through composition
+                             * operators (oneOf/anyOf with a null branch). Delegate
+                             * to _validate which falls through to the kind handler.
+                             * NULLABLE short-circuit: if already set, accept immediately.
+                             */
+                            if (!(type & NULLABLE) && !_validate(val, type, 0, 0)) {
+                                return false;
+                            }
+                        } else if (!(type & (NULLABLE | ANY))) {
                             return false;
                         }
                     } else if (type & COMPLEX) {
