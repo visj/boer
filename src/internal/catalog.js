@@ -592,16 +592,6 @@ function catalog(cfg) {
     }
 
     /**
-     * Whether a primitive (non-complex) typedef accepts null or undefined via ANY.
-     * ANY = bit 3; COMPLEX = bit 0. Safe to check after confirming !(type & COMPLEX).
-     * @param {number} type
-     * @returns {boolean}
-     */
-    function _primitiveAcceptsNull(type) {
-        return (type & COMPLEX) === 0 && (type & ANY) !== 0;
-    }
-
-    /**
      * Validates data against an inline typedef (COMPLEX=0, typedef > 0xFF).
      * Handles MOD_ARRAY, MOD_RECORD, MOD_ENUM modifiers, and inline
      * primitive validators (STRING with minLength/maxLength/pattern,
@@ -805,9 +795,15 @@ function catalog(cfg) {
      * @returns {boolean}
      */
     function _validateSlot(raw, type) {
-        if (raw === void 0) return (type & OPTIONAL) !== 0;
-        if (raw === null) return (type & NULLABLE) !== 0 || _primitiveAcceptsNull(type);
-        if (type & COMPLEX) return _validate(raw, type, 0, 0);
+        if (raw === void 0) {
+            return (type & OPTIONAL) !== 0;
+        }
+        if (raw === null) {
+            return (type & NULLABLE) !== 0 || (type & (COMPLEX | ANY)) === ANY;
+        }
+        if (type & COMPLEX) {
+            return _validate(raw, type, 0, 0);
+        }
         if (type < 256) {
             return (type & SIMPLE) ? _isValue(raw, type & PRIM_MASK) : false;
         }
@@ -1329,9 +1325,10 @@ function catalog(cfg) {
              * kind handler. This must come before the kind dispatch.
              */
             if (data == null) {
-                if ((typedef & (data === null ? NULLABLE : OPTIONAL)) !== 0) {
+                if (data === null ? (typedef & NULLABLE) !== 0 : (typedef & OPTIONAL) !== 0) {
                     return true;
                 }
+
                 /**
                  * Fall through to kind handler for K_CONDITIONAL, K_OR, K_NOT, etc.
                  * K_OBJECT/K_ARRAY/K_PRIMITIVE reject null in their own type checks.
@@ -1350,7 +1347,7 @@ function catalog(cfg) {
                     return Array.isArray(data);
                 }
                 if (ct === K_RECORD || ct === K_OBJECT) {
-                    return typeof data === 'object' && data !== null && !Array.isArray(data);
+                    return data !== null && typeof data === 'object' && !Array.isArray(data);
                 }
                 /**
                  * K_PRIMITIVE + K_ANY_INNER: the original type included ANY.
@@ -1371,7 +1368,7 @@ function catalog(cfg) {
              * K_ANY_INNER and rare kinds routed to _validateRareKind.
              */
             if (ct === K_OBJECT) {
-                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                if (data === null || typeof data !== 'object' || Array.isArray(data)) {
                     return false;
                 }
                 let shapes = SHAPES;
@@ -1411,16 +1408,12 @@ function catalog(cfg) {
                     /**
                      * Null check: placed before type dispatch to handle COMPLEX
                      * and inline (>255) types correctly. NULLABLE/ANY acceptance
-                     * for bare primitives (<256) is handled here too, avoiding
+                     * for bare primitives (less than 256) is handled here too, avoiding
                      * the typeof chain for null values entirely.
                      */
                     if (val === null) {
-                        if (!(type & NULLABLE)) {
-                            if (!(type & COMPLEX) && (type & ANY)) {
-                                /** ANY accepts null even without NULLABLE */
-                            } else {
-                                return false;
-                            }
+                        if (!(type & (NULLABLE | ANY)) || (type & (NULLABLE | COMPLEX)) == COMPLEX) {
+                            return false;
                         }
                     } else if (type & COMPLEX) {
                         if (!_validate(val, type, 0, 0)) {
@@ -1555,41 +1548,32 @@ function catalog(cfg) {
                 return true;
             } else if (ct === K_PRIMITIVE) {
                 let primBits = header & SIMPLE;
-                /**
-                 * Inlined _isValue: direct typeof dispatch.
-                 * K_ANY_INNER means the type included ANY — skip the type check.
-                 * We still run the validator (minimum, pattern etc.) if K_VALIDATOR is set.
-                 */
-                if (!(header & K_ANY_INNER)) {
-                    if (!(primBits & ANY)) {
-                        let jt = typeof data;
-                        if (jt === 'string') {
-                            if (!(primBits & STRING)) {
-                                return false;
-                            }
-                        } else if (jt === 'number') {
-                            if (!(primBits & NUMBER)) {
-                                if (!(primBits & INTEGER) || !Number.isInteger(data)) {
-                                    return false;
-                                }
-                            }
-                        } else if (jt === 'boolean') {
-                            if (!(primBits & BOOLEAN)) {
-                                return false;
-                            }
-                        } else {
+                if (!(primBits & ANY)) {
+                    let jt = typeof data;
+                    if (jt === 'string') {
+                        if (!(primBits & STRING)) {
                             return false;
                         }
+                    } else if (jt === 'number') {
+                        if (!(primBits & NUMBER)) {
+                            if (!(primBits & INTEGER) || !Number.isInteger(data)) {
+                                return false;
+                            }
+                        }
+                    } else if (jt === 'boolean') {
+                        if (!(primBits & BOOLEAN)) {
+                            return false;
+                        }
+                    } else {
+                        return false;
                     }
                 }
                 if (header & K_VALIDATOR) {
                     return runPrimValidator(data, primBits, ri);
                 }
                 return true;
-            } else {
-                /** Rare kinds: K_RECORD, K_INTERSECT, K_OR, K_EXCLUSIVE, etc. */
-                return _validateRareKind(data, ct, ri, kinds, ptr, header, trackPtr, snapPtr);
             }
+            return _validateRareKind(data, ct, ri, kinds, ptr, header, trackPtr, snapPtr);
         }
 
         /**
@@ -1597,15 +1581,7 @@ function catalog(cfg) {
          * null/undefined check for non-COMPLEX types including ANY acceptance.
          */
         if (data == null) {
-            let nullBit = data === null ? NULLABLE : OPTIONAL;
-            if (typedef & nullBit) {
-                return true;
-            }
-            /**
-             * Primitive typedef: ANY accepts everything (including null/undefined).
-             * ANY = bit 3 is safe to check here since COMPLEX = bit 0 is 0.
-             */
-            return (typedef & ANY) !== 0;
+            return (typedef & (ANY | (data === null ? NULLABLE : OPTIONAL))) !== 0;
         }
         /** Inline path: typedef > 0xFF with COMPLEX=0 (MOD_*, inline validators) */
         if (typedef > 0xFF) {

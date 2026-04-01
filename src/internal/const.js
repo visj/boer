@@ -29,11 +29,11 @@ const OPTIONAL = 4;
  *
  * Bits 8+: inline modifier encoding (MOD_ENUM for const/enum fast-path).
  */
-const ANY = 1 << 3;
-const STRING = 1 << 4;
-const NUMBER = 1 << 5;
-const INTEGER = 1 << 6;
-const BOOLEAN = 1 << 7;
+const ANY = 8;
+const STRING = 16;
+const NUMBER = 32;
+const INTEGER = 64;
+const BOOLEAN = 128;
 
 /**
  * SIMPLE: all primitive type bits (used for K_PRIMITIVE headers to mask type info)
