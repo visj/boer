@@ -29,7 +29,7 @@ import {
     STR_REGEX_IDX_SHIFT, STR_REGEX_IDX_MASK,
     STR_MAX_LEN_SHIFT, STR_MAX_LEN_MASK,
     STR_MIN_LEN_SHIFT, STR_MIN_LEN_MASK,
-    NUM_EXCL_MIN_BIT, NUM_EXCL_MAX_BIT,
+    NUM_HAS_MIN_BIT, NUM_EXCL_MIN_BIT, NUM_EXCL_MAX_BIT,
     NUM_MIN_NEG_BIT, NUM_MAX_NEG_BIT,
     NUM_MIN_MAG_SHIFT, NUM_MIN_MAG_MASK,
     NUM_MAX_MAG_SHIFT, NUM_MAX_MAG_MASK,
@@ -772,12 +772,13 @@ function catalog(cfg) {
         if (primBits & (NUMBER | INTEGER)) {
             /**
              * NUMBER/INTEGER payload:
-             *   Bit 9:           EXCLUSIVE_MIN (0 = >=, 1 = >)
-             *   Bit 10:          EXCLUSIVE_MAX (0 = <=, 1 = <)
-             *   Bit 11:          MIN_NEGATIVE (0 = positive, 1 = negative)
-             *   Bit 12:          MAX_NEGATIVE (0 = positive, 1 = negative)
-             *   Bits 13-21 (9b): minMagnitude (0 = no min, 1-511)
-             *   Bits 22-29 (8b): maxMagnitude (0 = no max, 1-255)
+             *   Bit 9:            HAS_MIN (1 = min bound present, allows min:0)
+             *   Bit 10:           EXCLUSIVE_MIN (0 = >=, 1 = >)
+             *   Bit 11:           EXCLUSIVE_MAX (0 = <=, 1 = <)
+             *   Bit 12:           MIN_NEGATIVE (0 = positive, 1 = negative)
+             *   Bit 13:           MAX_NEGATIVE (0 = positive, 1 = negative)
+             *   Bits 14-22 (9b):  minMagnitude (0-511, valid when HAS_MIN set)
+             *   Bits 23-30 (8b):  maxMagnitude (0 = no max, 1-255)
              */
             if (typeof data !== 'number') {
                 return false;
@@ -785,8 +786,8 @@ function catalog(cfg) {
             if ((primBits & INTEGER) && !Number.isInteger(data)) {
                 return false;
             }
-            let minMag = (typedef >>> NUM_MIN_MAG_SHIFT) & NUM_MIN_MAG_MASK;
-            if (minMag > 0) {
+            if (typedef & NUM_HAS_MIN_BIT) {
+                let minMag = (typedef >>> NUM_MIN_MAG_SHIFT) & NUM_MIN_MAG_MASK;
                 let minNeg = (typedef & NUM_MIN_NEG_BIT) !== 0;
                 let exclMin = (typedef & NUM_EXCL_MIN_BIT) !== 0;
                 let minVal = minNeg ? -minMag : minMag;

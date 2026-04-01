@@ -27,9 +27,9 @@ describe('validate: primitive builders — with validators', () => {
         expect(td & 1).toBe(0);
         expect(td > 0xFF).toBe(true);
     });
-    test('number({minimum}) returns a COMPLEX typedef', () => {
+    test('number({minimum}) returns an inlined typedef', () => {
         let td = number({ minimum: 0 });
-        expect(td & 1).toBe(1);
+        expect(td & 1).toBe(0);
     });
 });
 

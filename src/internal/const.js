@@ -114,19 +114,21 @@ const STR_MIN_LEN_SHIFT   = 25;
 const STR_MIN_LEN_MASK    = 0x1F;
 
 // ── Inline NUMBER/INTEGER validator payload bits ──
-/** Bit 9: exclusive minimum flag (1 = >, 0 = >=). */
-const NUM_EXCL_MIN_BIT  = 1 << 9;
-/** Bit 10: exclusive maximum flag (1 = <, 0 = <=). */
-const NUM_EXCL_MAX_BIT  = 1 << 10;
-/** Bit 11: sign of minimum bound (1 = negative). */
-const NUM_MIN_NEG_BIT   = 1 << 11;
-/** Bit 12: sign of maximum bound (1 = negative). */
-const NUM_MAX_NEG_BIT   = 1 << 12;
-/** Bits 13-21 (9 bits): minimum magnitude (0 = no min, 1-511). */
-const NUM_MIN_MAG_SHIFT = 13;
+/** Bit 9: minimum bound present (allows min: 0 to be distinguished from "no min"). */
+const NUM_HAS_MIN_BIT   = 1 << 9;
+/** Bit 10: exclusive minimum flag (1 = >, 0 = >=). */
+const NUM_EXCL_MIN_BIT  = 1 << 10;
+/** Bit 11: exclusive maximum flag (1 = <, 0 = <=). */
+const NUM_EXCL_MAX_BIT  = 1 << 11;
+/** Bit 12: sign of minimum bound (1 = negative). */
+const NUM_MIN_NEG_BIT   = 1 << 12;
+/** Bit 13: sign of maximum bound (1 = negative). */
+const NUM_MAX_NEG_BIT   = 1 << 13;
+/** Bits 14-22 (9 bits): minimum magnitude (0-511). Only valid when NUM_HAS_MIN_BIT is set. */
+const NUM_MIN_MAG_SHIFT = 14;
 const NUM_MIN_MAG_MASK  = 0x1FF;
-/** Bits 22-29 (8 bits): maximum magnitude (0 = no max, 1-255). */
-const NUM_MAX_MAG_SHIFT = 22;
+/** Bits 23-30 (8 bits): maximum magnitude (0 = no max, 1-255). */
+const NUM_MAX_MAG_SHIFT = 23;
 const NUM_MAX_MAG_MASK  = 0xFF;
 
 // ── Evaluation tracking bit-packing ──
@@ -298,7 +300,7 @@ export {
     STR_REGEX_IDX_SHIFT, STR_REGEX_IDX_MASK,
     STR_MAX_LEN_SHIFT, STR_MAX_LEN_MASK,
     STR_MIN_LEN_SHIFT, STR_MIN_LEN_MASK,
-    NUM_EXCL_MIN_BIT, NUM_EXCL_MAX_BIT,
+    NUM_HAS_MIN_BIT, NUM_EXCL_MIN_BIT, NUM_EXCL_MAX_BIT,
     NUM_MIN_NEG_BIT, NUM_MAX_NEG_BIT,
     NUM_MIN_MAG_SHIFT, NUM_MIN_MAG_MASK,
     NUM_MAX_MAG_SHIFT, NUM_MAX_MAG_MASK,

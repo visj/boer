@@ -22,8 +22,11 @@ import {
     MOD_ENUM_IS_SET, MOD_ENUM_IDX_SHIFT, MOD_ENUM_IDX_MASK,
     MOD_ARRAY_UNIQUE_BIT, MOD_ARRAY_MAX_ITEMS_SHIFT, MOD_ARRAY_MAX_ITEMS_MASK,
     MOD_ARRAY_MIN_ITEMS_SHIFT, MOD_ARRAY_MIN_ITEMS_MASK,
+    MOD_RECORD_MAX_PROPS_SHIFT, MOD_RECORD_MAX_PROPS_MASK,
+    MOD_RECORD_MIN_PROPS_SHIFT, MOD_RECORD_MIN_PROPS_MASK,
+    V_MIN_PROPERTIES, V_MAX_PROPERTIES,
     STR_REGEX_IDX_SHIFT, STR_MAX_LEN_SHIFT, STR_MIN_LEN_SHIFT,
-    NUM_EXCL_MIN_BIT, NUM_EXCL_MAX_BIT,
+    NUM_HAS_MIN_BIT, NUM_EXCL_MIN_BIT, NUM_EXCL_MAX_BIT,
     NUM_MIN_NEG_BIT, NUM_MAX_NEG_BIT,
     NUM_MIN_MAG_SHIFT, NUM_MAX_MAG_SHIFT,
 } from "./const.js";
@@ -240,11 +243,12 @@ export function compile(cat, ast) {
 
                 if (canTryInline && (typeBits === NUMBER || typeBits === INTEGER)) {
                     /**
-                     * Try inline NUMBER/INTEGER: exclMin(1b), exclMax(1b),
-                     * minNeg(1b), maxNeg(1b), minMag(9b), maxMag(8b).
+                     * Try inline NUMBER/INTEGER: hasMin(1b), exclMin(1b),
+                     * exclMax(1b), minNeg(1b), maxNeg(1b), minMag(9b), maxMag(8b).
                      * Only integer bounds can be inlined. Float or multipleOf → fallback.
                      */
                     let canInline = !(vHeader & V_MULTIPLE_OF);
+                    let hasMin = 0;
                     let exclMin = 0;
                     let exclMax = 0;
                     let minNeg = 0;
@@ -255,13 +259,14 @@ export function compile(cat, ast) {
                     if (canInline && (vHeader & V_MINIMUM)) {
                         let slot = popcnt16(vHeader & (V_MINIMUM - 1));
                         let val = vPayloads[off + slot];
-                        if (!Number.isInteger(val) || val === 0) {
+                        if (!Number.isInteger(val)) {
                             canInline = false;
                         } else {
                             let abs = Math.abs(val);
                             if (abs > 511) {
                                 canInline = false;
                             } else {
+                                hasMin = 1;
                                 minNeg = val < 0 ? 1 : 0;
                                 minMag = abs;
                                 if (vHeader & V_EXCLUSIVE_MINIMUM) {
@@ -288,8 +293,9 @@ export function compile(cat, ast) {
                             }
                         }
                     }
-                    if (canInline && (minMag > 0 || maxMag > 0)) {
+                    if (canInline && (hasMin > 0 || maxMag > 0)) {
                         let result = typeBits
+                            | (hasMin ? NUM_HAS_MIN_BIT : 0)
                             | (exclMin ? NUM_EXCL_MIN_BIT : 0) | (exclMax ? NUM_EXCL_MAX_BIT : 0)
                             | (minNeg ? NUM_MIN_NEG_BIT : 0) | (maxNeg ? NUM_MAX_NEG_BIT : 0)
                             | (minMag << NUM_MIN_MAG_SHIFT) | (maxMag << NUM_MAX_MAG_SHIFT);
@@ -823,6 +829,66 @@ export function compile(cat, ast) {
                 } else if (vp !== null) {
                     finalVHeader = vp.vHeader;
                     finalPayloads = vp.nodePayloads;
+                }
+
+                /**
+                 * MOD_RECORD inlining: pure dictionary schemas with no static
+                 * properties can be encoded as a single 30-bit inline typedef.
+                 * Pattern: {type:"object", additionalProperties:{type:X}, minProperties?, maxProperties?}
+                 *
+                 * Requirements:
+                 *  - 0 static properties (count === 0)
+                 *  - No patternProperties, propertyNames, dependentSchemas
+                 *  - additionalProperties is a bare primitive (single type bit, no COMPLEX/NULLABLE/OPTIONAL)
+                 *  - Only V_MIN_PROPERTIES/V_MAX_PROPERTIES validators, values fit in bit fields
+                 *
+                 * _validateInlineMod supports trackPtr/snapPtr so MOD_RECORD
+                 * correctly marks properties as evaluated for unevaluatedProperties.
+                 */
+                if (count === 0 && additionalType !== 0
+                    && patPayloads === null && !hasPropertyNames && depSchemaPayloads === null
+                    && !(additionalType & (COMPLEX | NULLABLE | OPTIONAL))
+                    && additionalType < 256) {
+                    let typeBits = additionalType & 0xF8;
+                    if (typeBits !== 0 && (typeBits & (typeBits - 1)) === 0) {
+                        let canInline = true;
+                        let minProps = 0;
+                        let maxProps = 0;
+
+                        let vh = finalVHeader;
+                        /**
+                         * Only V_MIN_PROPERTIES, V_MAX_PROPERTIES, and V_ADDITIONAL_PROPERTIES
+                         * can be present. V_ADDITIONAL_PROPERTIES is always set when
+                         * additionalProperties is present but carries no separate constraint
+                         * for the MOD_RECORD path (the value type IS the additionalProperties).
+                         * V_DEPENDENT_REQUIRED is a validator flag but was handled above.
+                         */
+                        let otherFlags = vh & ~(V_MIN_PROPERTIES | V_MAX_PROPERTIES | V_ADDITIONAL_PROPERTIES);
+                        if (otherFlags !== 0) {
+                            canInline = false;
+                        }
+                        if (canInline && (vh & V_MIN_PROPERTIES) && finalPayloads !== null) {
+                            let slot = popcnt16(vh & (V_MIN_PROPERTIES - 1));
+                            minProps = finalPayloads[slot] | 0;
+                            if (minProps === 0 || minProps > MOD_RECORD_MIN_PROPS_MASK) {
+                                canInline = false;
+                            }
+                        }
+                        if (canInline && (vh & V_MAX_PROPERTIES) && finalPayloads !== null) {
+                            let slot = popcnt16(vh & (V_MAX_PROPERTIES - 1));
+                            maxProps = finalPayloads[slot] | 0;
+                            if (maxProps === 0 || maxProps > MOD_RECORD_MAX_PROPS_MASK) {
+                                canInline = false;
+                            }
+                        }
+
+                        if (canInline) {
+                            astCompiled[nodeId] = (typeBits | MODIFIER | MOD_RECORD
+                                | (maxProps << MOD_RECORD_MAX_PROPS_SHIFT)
+                                | (minProps << MOD_RECORD_MIN_PROPS_SHIFT)) >>> 0;
+                            break;
+                        }
+                    }
                 }
 
                 let hasVal = finalPayloads !== null;

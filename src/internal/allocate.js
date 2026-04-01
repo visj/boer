@@ -21,7 +21,7 @@ import {
     KINDS_SHIFT,
     MOD_ENUM_IS_SET, MOD_ENUM_IDX_SHIFT, MOD_ENUM_IDX_MASK,
     STR_REGEX_IDX_SHIFT, STR_MAX_LEN_SHIFT, STR_MIN_LEN_SHIFT,
-    NUM_EXCL_MIN_BIT, NUM_EXCL_MAX_BIT,
+    NUM_HAS_MIN_BIT, NUM_EXCL_MIN_BIT, NUM_EXCL_MAX_BIT,
     NUM_MIN_NEG_BIT, NUM_MAX_NEG_BIT,
     NUM_MIN_MAG_SHIFT, NUM_MAX_MAG_SHIFT,
 } from './const.js';
@@ -329,17 +329,19 @@ function tryInlineNumber(ctx, primConst, opts) {
         return 0;
     }
 
+    let hasMin = 0;
     let minNeg = 0;
     let minMag = 0;
     if (effMin !== void 0) {
-        /** Must be integer with magnitude 1-511 (0 magnitude = "no bound" sentinel) */
+        /** Must be integer with magnitude 0-511 */
         if (!Number.isInteger(effMin)) {
             return 0;
         }
         let absMin = Math.abs(effMin);
-        if (absMin === 0 || absMin > 511) {
+        if (absMin > 511) {
             return 0;
         }
+        hasMin = 1;
         minNeg = effMin < 0 ? 1 : 0;
         minMag = absMin;
     }
@@ -359,6 +361,7 @@ function tryInlineNumber(ctx, primConst, opts) {
     }
 
     return primConst
+        | (hasMin ? NUM_HAS_MIN_BIT : 0)
         | (exclMin ? NUM_EXCL_MIN_BIT : 0) | (exclMax ? NUM_EXCL_MAX_BIT : 0)
         | (minNeg ? NUM_MIN_NEG_BIT : 0) | (maxNeg ? NUM_MAX_NEG_BIT : 0)
         | (minMag << NUM_MIN_MAG_SHIFT) | (maxMag << NUM_MAX_MAG_SHIFT);
