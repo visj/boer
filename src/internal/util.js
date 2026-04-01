@@ -295,9 +295,55 @@ function deepEqual(a, b) {
     return true;
 }
 
+/**
+ * Non-recursive binary search over a slice of any numeric array.
+ * Returns true if `target` is found in arr[offset .. offset+length-1].
+ * @param {Float64Array|Uint32Array} arr
+ * @param {number} offset - first index of the search range
+ * @param {number} length - number of elements to search
+ * @param {number} target
+ * @returns {boolean}
+ */
+function binarySearch(arr, offset, length, target) {
+    let lo = 0;
+    let hi = length - 1;
+    while (lo <= hi) {
+        let mid = (lo + hi) >>> 1;
+        let val = arr[offset + mid];
+        if (val === target) { return true; }
+        if (val < target) { lo = mid + 1; }
+        else { hi = mid - 1; }
+    }
+    return false;
+}
+
+/**
+ * Non-recursive binary search over stride-2 pair entries [key, value, key, value, ...].
+ * Searches arr[offset + mid*2] for target. Returns the matched index mid on success,
+ * or -1 if not found. The caller retrieves the associated value via arr[offset + mid*2 + 1].
+ * @param {Uint32Array} arr
+ * @param {number} offset - first index of the key/value pairs
+ * @param {number} count - number of pairs to search
+ * @param {number} target
+ * @returns {number} mid index, or -1
+ */
+function binarySearchPair(arr, offset, count, target) {
+    let lo = 0;
+    let hi = count - 1;
+    while (lo <= hi) {
+        let mid = (lo + hi) >>> 1;
+        let key = arr[offset + mid * 2];
+        if (key === target) { return mid; }
+        if (key < target) { lo = mid + 1; }
+        else { hi = mid - 1; }
+    }
+    return -1;
+}
+
 export {
     nullable, optional,
     isNumber, isString, isObject, isBoolean,
     deepEqual, sortByKeyId, parseValue,
     _isValue, describeType,
+    binarySearch, binarySearchPair,
 }

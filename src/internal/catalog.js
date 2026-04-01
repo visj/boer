@@ -23,6 +23,7 @@ import {
 } from './const.js';
 import {
     sortByKeyId, _isValue, deepEqual,
+    binarySearch, binarySearchPair,
 } from './util.js';
 
 /**
@@ -75,13 +76,11 @@ function catalog(cfg) {
     const REGEX_CACHE = [/(?:)/];
     /** @type {!Array<function>} */
     const CALLBACKS = [];
-
-    /** @type {!Array<*>} Inline constant arena for const values (MOD_ENUM, isSet=0) */
-    const CONSTANTS = [];
     /** @type {!Array<!Set<*>>} Inline enum arena for enum Sets (MOD_ENUM, isSet=1) */
     const ENUMS = [];
+    /** @type {!Array<*>} Inline constant arena for const values (MOD_ENUM, isSet=0) */
+    const CONSTANTS = [];
 
-    // --- KEY DICTIONARY ---
     /** @type {number} */
     let keyseq = 1;
     /** @const @type {!Map<string,number>} */
@@ -203,28 +202,6 @@ function catalog(cfg) {
     }
 
     // --- VALIDATOR RUNNERS ---
-
-    /**
-     * Non-recursive binary search over a Float64Array slice.
-     * Returns true if `target` is found in arr[offset .. offset+length-1].
-     * @param {Float64Array} arr
-     * @param {number} offset — first index of the search range
-     * @param {number} length — number of elements to search
-     * @param {number} target
-     * @returns {boolean}
-     */
-    function binarySearch(arr, offset, length, target) {
-        let lo = 0;
-        let hi = length - 1;
-        while (lo <= hi) {
-            let mid = (lo + hi) >>> 1;
-            let val = arr[offset + mid];
-            if (val === target) { return true; }
-            if (val < target) { lo = mid + 1; }
-            else { hi = mid - 1; }
-        }
-        return false;
-    }
 
     /**
      * @param {*} value
@@ -526,21 +503,7 @@ function catalog(cfg) {
             if (hasAdditional) {
                 let keyId = KEY_DICT.get(key);
                 if (keyId !== void 0) {
-                    let lo = 0;
-                    let hi = slabLength - 1;
-                    while (lo <= hi) {
-                        let mid = (lo + hi) >>> 1;
-                        let sk = slab[slabOffset + (mid << 1)];
-                        if (sk === keyId) {
-                            isDeclared = true;
-                            break;
-                        }
-                        if (sk < keyId) {
-                            lo = mid + 1;
-                        } else {
-                            hi = mid - 1;
-                        }
-                    }
+                    isDeclared = binarySearchPair(slab, slabOffset, slabLength, keyId) >= 0;
                 }
             }
 
@@ -1114,20 +1077,11 @@ function catalog(cfg) {
                     let count = scopeShapes[scopeRi * 2 + 1];
                     // Binary search the sorted [anchorKeyId, targetType] pairs.
                     // Skip SLAB[scopeOffset] which is the innerType.
-                    let lo = 0;
-                    let hi = count - 1;
-                    while (lo <= hi) {
-                        let mid = (lo + hi) >>> 1;
-                        let currentKey = scopeSlab[scopeOffset + 1 + mid * 2];
-                        if (currentKey === anchorKeyId) {
-                            targetType = scopeSlab[scopeOffset + 1 + mid * 2 + 1];
-                            break scan;
-                        }
-                        if (currentKey < anchorKeyId) {
-                            lo = mid + 1;
-                        } else {
-                            hi = mid - 1;
-                        }
+                    let pairBase = scopeOffset + 1;
+                    let mid = binarySearchPair(scopeSlab, pairBase, count, anchorKeyId);
+                    if (mid >= 0) {
+                        targetType = scopeSlab[pairBase + mid * 2 + 1];
+                        break scan;
                     }
                 }
                 return _validate(data, targetType, trackPtr, snapPtr);
