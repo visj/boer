@@ -277,16 +277,11 @@ export interface Heap {
     CALLBACKS: Array<(...args: any[]) => any>;
 }
 
-export interface HeapConfig {
+export interface Config {
     slab: number;
     shapes: number;
     kinds: number;
     validators: number;
-}
-
-export interface Config {
-    heap: HeapConfig;
-    scratch: HeapConfig;
 }
 
 // ────────────────────────────────────────────────────────────────────────────

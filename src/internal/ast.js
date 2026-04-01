@@ -994,7 +994,7 @@ export function compile(cat, ast) {
             case N_REFINE: {
                 let innerType = astCompiled[astChild0[nodeId]];
                 let cbIdx = astChild1[nodeId];
-                let callbackIdx = HEAP.CALLBACKS.push(callbacks[cbIdx]) - 1;
+                let callbackIdx = heap.CALLBACKS.push(callbacks[cbIdx]) - 1;
                 /** Store [innerType, callbackIdx] on SLAB; KINDS slot 1 = SHAPES index. */
                 let slabData = new Uint32Array(2);
                 slabData[0] = innerType >>> 0;

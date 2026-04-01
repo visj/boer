@@ -21,7 +21,8 @@ import { parseValue } from './util.js';
 function createConform(cat) {
     let h = cat.__heap;
     let HEAP = h.HEAP;
-    let DICT = h.DICT;
+    let KEY_DICT = h.KEY_DICT;
+    let KEY_INDEX = h.KEY_INDEX;
 
     /**
      * @param {*} holder
@@ -126,7 +127,7 @@ function createConform(cat) {
                     let offset = shapes[ri * 2];
                     let length = shapes[ri * 2 + 1];
                     for (let i = 0; i < length; i++) {
-                        let key = DICT.KEY_INDEX.get(slab[offset + (i * 2)]);
+                        let key = KEY_INDEX.get(slab[offset + (i * 2)]);
                         if (key === void 0) {
                             return false;
                         }
@@ -211,11 +212,11 @@ function createConform(cat) {
                     let offset = shapes[ri * 2];
                     let length = shapes[ri * 2 + 1];
                     // slab[offset] is the discriminator key id; variants follow at offset+1
-                    let discKey = DICT.KEY_INDEX.get(slab[offset]);
+                    let discKey = KEY_INDEX.get(slab[offset]);
                     if (discKey === void 0) {
                         return false;
                     }
-                    let valueId = DICT.KEY_DICT.get(data[discKey]);
+                    let valueId = KEY_DICT.get(data[discKey]);
                     if (valueId === void 0) {
                         return false;
                     }

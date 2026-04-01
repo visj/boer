@@ -373,31 +373,6 @@ if (!ZodOrder.safeParse(rawData).success) {
     process.exit(1); 
 }
 
-function theoreticalBaseline(data) {
-    if (typeof data === 'string') return true;
-    if (typeof data === 'number') return true;
-    if (typeof data === 'boolean') return true;
-    if (data === null || data === undefined) return true;
-
-    if (Array.isArray(data)) {
-        for (let i = 0; i < data.length; i++) {
-            if (!theoreticalBaseline(data[i])) return false;
-        }
-        return true;
-    }
-
-    if (typeof data === 'object') {
-        for (let key in data) {
-            if (Object.prototype.hasOwnProperty.call(data, key)) {
-                if (!theoreticalBaseline(data[key])) return false;
-            }
-        }
-        return true;
-    }
-
-    return true;
-}
-
 group('Massive B2B Logistics Payload (~15KB)', () => {
 
     bench('uvd (In-Place Bitwise VM)', function* () {
@@ -416,13 +391,6 @@ group('Massive B2B Logistics Payload (~15KB)', () => {
         };
     });
 
-    bench('Recursive Baseline (Theoretical Floor)', function* () {
-        yield {
-            [0]() { return JSON.parse(jsonStr); },
-            bench(data) { theoreticalBaseline(data); }
-        };
-    });
-
     bench('Zod (AST Interpreter)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
@@ -433,13 +401,6 @@ group('Massive B2B Logistics Payload (~15KB)', () => {
 });
 
 group('Massive B2B Logistics Payload (~15KB) - Reversed', () => {
-
-    bench('Recursive Baseline (Theoretical Floor)', function* () {
-        yield {
-            [0]() { return JSON.parse(jsonStr); },
-            bench(data) { theoreticalBaseline(data); }
-        };
-    });
 
     bench('Zod (AST Interpreter)', function* () {
         yield {
@@ -468,12 +429,6 @@ group('Massive B2B Logistics Payload (~15KB) - Reversed', () => {
 
 group('Massive B2B Logistics Payload (~15KB) - Reversed', () => {
 
-    bench('Recursive Baseline (Theoretical Floor)', function* () {
-        yield {
-            [0]() { return JSON.parse(jsonStr); },
-            bench(data) { theoreticalBaseline(data); }
-        };
-    });
     bench('uvd (In-Place Bitwise VM)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },

@@ -20,7 +20,8 @@ import { _isValue, describeType } from './util.js';
 function createDiagnose(cat) {
     let h = cat.__heap;
     let HEAP = h.HEAP;
-    let DICT = h.DICT;
+    let KEY_DICT = h.KEY_DICT;
+    let KEY_INDEX = h.KEY_INDEX;
     let _validate = h._validate;
 
     /**
@@ -111,7 +112,7 @@ function createDiagnose(cat) {
                     let offset = shapes[ri * 2];
                     let length = shapes[ri * 2 + 1];
                     for (let i = 0; i < length; i++) {
-                        let key = DICT.KEY_INDEX.get(slab[offset + (i * 2)]);
+                        let key = KEY_INDEX.get(slab[offset + (i * 2)]);
                         if (key === void 0) {
                             errors.push({ path, message: '!! CRITICAL ERROR !! Please file an issue at Github !!' });
                             return;
@@ -194,7 +195,7 @@ function createDiagnose(cat) {
                     let offset = shapes[ri * 2];
                     let length = shapes[ri * 2 + 1];
                     // slab[offset] is the discriminator key id; variants follow at offset+1
-                    let discKey = DICT.KEY_INDEX.get(slab[offset]);
+                    let discKey = KEY_INDEX.get(slab[offset]);
                     if (discKey === void 0) {
                         errors.push({ path, message: '!! CRITICAL ERROR !! Please file an issue at Github !!' });
                         return;
@@ -207,7 +208,7 @@ function createDiagnose(cat) {
                         errors.push({ path, message: 'missing discriminator key "' + discKey + '"' });
                         return;
                     }
-                    let valueId = DICT.KEY_DICT.get(data[discKey]);
+                    let valueId = KEY_DICT.get(data[discKey]);
                     for (let i = 0; i < length; i++) {
                         if (slab[offset + 1 + i * 2] === valueId) {
                             _diagnose(data, slab[offset + 2 + i * 2], path, errors);

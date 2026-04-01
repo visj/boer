@@ -81,6 +81,7 @@ function malloc(ctx, header, inline, slabData, shapeLen, vHeader, vPayloads) {
             let buffer = new Uint32Array(HEAP.SLAB_LEN *= 2);
             buffer.set(HEAP.SLAB);
             HEAP.SLAB = buffer;
+            ctx.resizeSlab(buffer);
         }
         let offset = HEAP.PTR;
         HEAP.SLAB.set(slabData, offset);
@@ -90,6 +91,7 @@ function malloc(ctx, header, inline, slabData, shapeLen, vHeader, vPayloads) {
             let buffer = new Uint32Array(HEAP.SHAPE_LEN *= 2);
             buffer.set(HEAP.SHAPES);
             HEAP.SHAPES = buffer;
+            ctx.resizeShapes(buffer);
         }
         HEAP.SHAPES[ri * 2] = offset;
         HEAP.SHAPES[ri * 2 + 1] = shapeLen;
@@ -102,6 +104,7 @@ function malloc(ctx, header, inline, slabData, shapeLen, vHeader, vPayloads) {
             let buffer = new Float64Array(HEAP.VAL_LEN *= 2);
             buffer.set(HEAP.VALIDATORS);
             HEAP.VALIDATORS = buffer;
+            ctx.resizeValidators(buffer);
         }
         valIdx = HEAP.VAL_PTR;
         HEAP.VALIDATORS[valIdx] = vHeader;
@@ -119,6 +122,7 @@ function malloc(ctx, header, inline, slabData, shapeLen, vHeader, vPayloads) {
         let buffer = new Uint32Array(HEAP.KIND_LEN *= 2);
         buffer.set(HEAP.KINDS);
         HEAP.KINDS = buffer;
+        ctx.resizeKinds(buffer);
     }
     HEAP.KINDS[ptr] = header;
     HEAP.KINDS[ptr + 1] = ri;

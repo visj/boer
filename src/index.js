@@ -4,7 +4,9 @@ import {
     ANY, NEVER
 } from './internal/const.js';
 import {
-    catalog
+    catalog,
+    BARE_ARRAY as ARRAY,
+    BARE_OBJECT as OBJECT,
 } from "./internal/catalog.js";
 import { allocators } from './internal/allocate.js';
 import { createConform } from './internal/transform.js';
@@ -13,9 +15,6 @@ import { createDiagnose } from './internal/error.js';
 /** @type {uvd.Catalog<uvd.UVD>} */
 const uvd = catalog();
 
-/** Pre-allocated bare complex types from the default catalog */
-const ARRAY = uvd.__heap.BARE_ARRAY;
-const OBJECT = uvd.__heap.BARE_OBJECT;
 
 const {
     object, array, union,

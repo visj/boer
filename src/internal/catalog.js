@@ -1,5 +1,4 @@
 /// <reference path="../../global.d.ts" />
-import { config, heap } from './config.js';
 import {
     COMPLEX, NULLABLE, OPTIONAL,
     ANY, SIMPLE, VALUE, PRIM_MASK,
@@ -36,33 +35,59 @@ export const BARE_OBJECT = (1 | (1 << 3)) >>> 0;  // KINDS[1]
 export const BARE_RECORD = (1 | (2 << 3)) >>> 0;  // KINDS[2]
 
 /**
+ * @param {uvd.Config=} cfg
+ */
+function createHeap(cfg) {
+    const useConfig = cfg !== void 0;
+    let slabLen = (useConfig && cfg.slab !== void 0) ? cfg.slab : 16384;
+    let shapesLen = (useConfig && cfg.shapes !== void 0) ? cfg.shapes : 4096;
+    let kindsLen = (useConfig && cfg.kinds !== void 0) ? cfg.kinds : 2048;
+    let valsLen = (useConfig && cfg.validators !== void 0) ? cfg.validators : 512;
+    return {
+        PTR: 0,
+        SLAB_LEN: slabLen,
+        SHAPE_LEN: shapesLen,
+        SHAPE_COUNT: 0,
+        KIND_LEN: kindsLen,
+        KIND_PTR: 0,
+        VAL_LEN: valsLen,
+        VAL_PTR: 0,
+        SLAB: new Uint32Array(slabLen),
+        SHAPES: new Uint32Array(shapesLen),
+        KINDS: new Uint32Array(kindsLen),
+        VALIDATORS: new Float64Array(valsLen),
+    };
+}
+
+/**
  * @template {symbol} R
- * @param {uvd.Config=} cfg 
+ * @param {uvd.Config=} cfg
  * @returns {uvd.Catalog<R>}
  */
 function catalog(cfg) {
-    cfg = config(cfg);
-    let HEAP = heap(cfg.heap);
+    const HEAP = createHeap(cfg);
 
     let SLAB = HEAP.SLAB;
     let SHAPES = HEAP.SHAPES;
     let KINDS = HEAP.KINDS;
     let VALIDATORS = HEAP.VALIDATORS;
-    let REGEX_CACHE = HEAP.REGEX_CACHE;
-    let CALLBACKS = HEAP.CALLBACKS;
+    /** @type {!Array<RegExp>} First slot reserved; index 0 is the no-match sentinel. */
+    const REGEX_CACHE = [/(?:)/];
+    /** @type {!Array<function>} */
+    const CALLBACKS = [];
 
     /** @type {!Array<*>} Inline constant arena for const values (MOD_ENUM, isSet=0) */
-    let CONSTANTS = [];
+    const CONSTANTS = [];
     /** @type {!Array<!Set<*>>} Inline enum arena for enum Sets (MOD_ENUM, isSet=1) */
-    let ENUMS = [];
+    const ENUMS = [];
 
     // --- KEY DICTIONARY ---
     /** @type {number} */
     let keyseq = 1;
     /** @const @type {!Map<string,number>} */
-    let KEY_DICT = new Map();
+    const KEY_DICT = new Map();
     /** @const @type {!Array<string>} */
-    let KEY_INDEX = [""];
+    const KEY_INDEX = [""];
 
     // --- PRE-ALLOCATED COMPLEX TYPE CONSTANTS ---
     // Bare array: K_ARRAY | K_ANY_INNER (1-slot entry)
@@ -567,11 +592,6 @@ function catalog(cfg) {
     }
 
     /**
-     * @param {*} raw
-     * @param {number} type
-     * @returns {boolean}
-     */
-    /**
      * Whether a primitive (non-complex) typedef accepts null or undefined via ANY.
      * ANY = bit 3; COMPLEX = bit 0. Safe to check after confirming !(type & COMPLEX).
      * @param {number} type
@@ -779,9 +799,9 @@ function catalog(cfg) {
     }
 
     /**
-     * 
-     * @param {*} raw 
-     * @param {number} type 
+     *
+     * @param {*} raw
+     * @param {number} type
      * @returns {boolean}
      */
     function _validateSlot(raw, type) {
@@ -1602,6 +1622,26 @@ function catalog(cfg) {
     }
 
     /**
+     * @param {Uint32Array<ArrayBuffer>} buf
+     */
+    function resizeSlab(buf) { SLAB = buf; }
+
+    /**
+     * @param {Uint32Array<ArrayBuffer>} buf
+     */
+    function resizeShapes(buf) { SHAPES = buf; }
+
+    /**
+     * @param {Uint32Array<ArrayBuffer>} buf
+     */
+    function resizeKinds(buf) { KINDS = buf; }
+
+    /**
+     * @param {Float64Array<ArrayBuffer>} buf
+     */
+    function resizeValidators(buf) { VALIDATORS = buf; }
+
+    /**
      * @template T
      * @param {*} data
      * @param {uvd.Type<T,R>} typedef
@@ -1615,14 +1655,6 @@ function catalog(cfg) {
             UNKNOWN_KEYS.fill(null, 0, UNKNOWN_TAIL);
             UNKNOWN_TAIL = 0;
         }
-        /**
-         * Refresh local aliases from HEAP in case malloc (now in allocate.js) resized
-         * any of the typed arrays since the last validate call.
-         */
-        SLAB = HEAP.SLAB;
-        SHAPES = HEAP.SHAPES;
-        KINDS = HEAP.KINDS;
-        VALIDATORS = HEAP.VALIDATORS;
         /** GC: null out unknown key strings BEFORE resetting the counter */
         // TODO I might refactor this later and send -1 so we can actually use index 0, it just makes more sense...
         DYN_PTR = 0;
@@ -1632,12 +1664,14 @@ function catalog(cfg) {
     }
 
     const __heap = {
-        HEAP, DICT: { KEY_DICT, KEY_INDEX },
+        HEAP,
         REGEX_CACHE, CALLBACKS,
-        lookup,
         CONSTANTS, ENUMS,
+        KEY_DICT, KEY_INDEX,
+        lookup,
         _validate,
-        BARE_ARRAY, BARE_OBJECT, BARE_RECORD,
+        resizeSlab, resizeShapes,
+        resizeKinds, resizeValidators,
     };
 
     return { validate, __heap };
