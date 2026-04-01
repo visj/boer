@@ -20,6 +20,8 @@ import {
     V_MIN_ITEMS, V_MAX_ITEMS, V_MIN_CONTAINS, V_MAX_CONTAINS, V_UNIQUE_ITEMS,
     KINDS_SHIFT, V_PAYLOAD_MASK,
     MOD_ENUM_IS_SET, MOD_ENUM_IDX_SHIFT, MOD_ENUM_IDX_MASK,
+    MOD_ARRAY_UNIQUE_BIT, MOD_ARRAY_MAX_ITEMS_SHIFT, MOD_ARRAY_MAX_ITEMS_MASK,
+    MOD_ARRAY_MIN_ITEMS_SHIFT, MOD_ARRAY_MIN_ITEMS_MASK,
     STR_REGEX_IDX_SHIFT, STR_MAX_LEN_SHIFT, STR_MIN_LEN_SHIFT,
     NUM_EXCL_MIN_BIT, NUM_EXCL_MAX_BIT,
     NUM_MIN_NEG_BIT, NUM_MAX_NEG_BIT,
@@ -869,22 +871,83 @@ export function compile(cat, ast) {
                     }
                 }
 
-                /**
-                 * MOD_ARRAY inlining is NOT done in the AST compiler because JSON Schema
-                 * supports unevaluatedItems which requires tracking via trackPtr/snapPtr.
-                 * Inline MOD_ARRAY bypasses this tracking. The DSL path in allocate.js
-                 * can inline safely since the DSL doesn't expose unevaluated tracking.
-                 */
                 let hasItems = (astFlags[nodeId] & AST_FLAG_HAS_ITEMS) !== 0;
 
-                let kindHeader = (vp !== null) ? (K_ARRAY | K_VALIDATOR) : K_ARRAY;
-                if (hasItems) {
-                    kindHeader |= K_HAS_ITEMS;
+                /**
+                 * MOD_ARRAY inlining: if the element type is a bare primitive
+                 * (bits 3-7 only, no COMPLEX/NULLABLE/OPTIONAL/MOD_*), no contains
+                 * keyword, and constraints fit in the bit fields, we can encode
+                 * the entire array schema as a single 30-bit inline typedef.
+                 *
+                 * _validateInlineMod in catalog.js now supports trackPtr/snapPtr,
+                 * so MOD_ARRAY correctly marks items as evaluated even when wrapped
+                 * by K_UNEVALUATED for unevaluatedItems tracking.
+                 */
+                let inlined = 0;
+                if (hasItems && !hasContains) {
+                    let et = elemType >>> 0;
+                    /** Element must be a bare primitive — no COMPLEX, NULLABLE, OPTIONAL, or > 0xFF */
+                    if (!(et & (COMPLEX | NULLABLE | OPTIONAL)) && et < 256) {
+                        let typeBits = et & 0xF8; // bits 3-7
+                        /** Single primitive type bit (no unions like STRING|NUMBER) */
+                        if (typeBits !== 0 && (typeBits & (typeBits - 1)) === 0) {
+                            let canInline = true;
+                            let minItems = 0;
+                            let maxItems = 0;
+                            let unique = 0;
+
+                            if (vp !== null) {
+                                let vh = vp.vHeader;
+                                /**
+                                 * Only minItems, maxItems, uniqueItems can be inlined.
+                                 * Any other validator flags (contains handled above,
+                                 * minContains, maxContains, etc.) prevent inlining.
+                                 */
+                                let otherFlags = vh & ~(V_MIN_ITEMS | V_MAX_ITEMS | V_UNIQUE_ITEMS);
+                                if (otherFlags !== 0) {
+                                    canInline = false;
+                                }
+                                if (canInline && (vh & V_MIN_ITEMS)) {
+                                    let slot = popcnt16(vh & (V_MIN_ITEMS - 1));
+                                    minItems = vp.nodePayloads[slot] | 0;
+                                    if (minItems === 0 || minItems > MOD_ARRAY_MIN_ITEMS_MASK) {
+                                        canInline = false;
+                                    }
+                                }
+                                if (canInline && (vh & V_MAX_ITEMS)) {
+                                    let slot = popcnt16(vh & (V_MAX_ITEMS - 1));
+                                    maxItems = vp.nodePayloads[slot] | 0;
+                                    if (maxItems === 0 || maxItems > MOD_ARRAY_MAX_ITEMS_MASK) {
+                                        canInline = false;
+                                    }
+                                }
+                                if (vh & V_UNIQUE_ITEMS) {
+                                    unique = 1;
+                                }
+                            }
+
+                            if (canInline && (vp === null || minItems > 0 || maxItems > 0 || unique > 0 || vp.vHeader === 0)) {
+                                inlined = typeBits | MODIFIER | MOD_ARRAY
+                                    | (unique << 11)
+                                    | (maxItems << MOD_ARRAY_MAX_ITEMS_SHIFT)
+                                    | (minItems << MOD_ARRAY_MIN_ITEMS_SHIFT);
+                            }
+                        }
+                    }
                 }
 
-                /** K_ARRAY inline = elemType (KINDS slot 1); no SLAB entry. */
-                astCompiled[nodeId] = malloc(heap, kindHeader, elemType >>> 0,
-                    null, 0, vp !== null ? vp.vHeader : 0, vp !== null ? vp.nodePayloads : null);
+                if (inlined !== 0) {
+                    astCompiled[nodeId] = inlined >>> 0;
+                } else {
+                    let kindHeader = (vp !== null) ? (K_ARRAY | K_VALIDATOR) : K_ARRAY;
+                    if (hasItems) {
+                        kindHeader |= K_HAS_ITEMS;
+                    }
+
+                    /** K_ARRAY inline = elemType (KINDS slot 1); no SLAB entry. */
+                    astCompiled[nodeId] = malloc(heap, kindHeader, elemType >>> 0,
+                        null, 0, vp !== null ? vp.vHeader : 0, vp !== null ? vp.nodePayloads : null);
+                }
                 break;
             }
 

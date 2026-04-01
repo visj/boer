@@ -591,116 +591,148 @@ function catalog(cfg) {
     }
 
     /**
-     * Validates data against an inline typedef (COMPLEX=0, typedef > 0xFF).
-     * Handles MOD_ARRAY, MOD_RECORD, MOD_ENUM modifiers, and inline
-     * primitive validators (STRING with minLength/maxLength/pattern,
-     * NUMBER/INTEGER with min/max bounds).
+     * Validates data against an inline MOD_* typedef (MODIFIER bit set).
+     * Handles MOD_ARRAY, MOD_RECORD, and MOD_ENUM modifiers. MOD_ARRAY
+     * and MOD_RECORD support unevaluated tracking via trackPtr/snapPtr,
+     * allowing the AST compiler to inline these types from JSON Schema
+     * while still correctly marking items/properties as evaluated.
      *
      * Bit layout (30-bit, stays within V8 Smi range):
      *   Bits 0-7:   primBits (COMPLEX=0, NULLABLE, OPTIONAL, type flags)
-     *   Bit 8:      MODIFIER toggle
+     *   Bit 8:      MODIFIER toggle (always 1 here)
      *   Bits 9-10:  modifier type (0=ARRAY, 1=RECORD, 2=ENUM)
-     *   Bits 11-29: contextual payload (depends on modifier/type)
+     *   Bits 11-29: contextual payload (depends on modifier type)
+     *
+     * @param {*} data
+     * @param {number} typedef
+     * @param {number} trackPtr - tracking frame pointer (0 = no tracking)
+     * @param {number} snapPtr - 0 = write direct to TRACK_BITS, >0 = write to TRACK_SNAP
+     * @returns {boolean}
+     */
+    function _validateInlineMod(data, typedef, trackPtr, snapPtr) {
+        let primBits = typedef & PRIM_MASK;
+
+        if ((typedef & MOD_MASK) === MOD_ENUM) {
+            /** MOD_ENUM: exact-match against CONSTANTS or ENUMS arena */
+            // Check base type matches (skip for ANY)
+            if (primBits & VALUE) {
+                if (!_isValue(data, primBits)) {
+                    return false;
+                }
+            }
+            let isSet = (typedef & MOD_ENUM_IS_SET) !== 0;
+            let idx = (typedef >>> MOD_ENUM_IDX_SHIFT) & MOD_ENUM_IDX_MASK;
+            if (isSet) {
+                return ENUMS[idx].has(data);
+            }
+            return CONSTANTS[idx] === data;
+        }
+
+        if ((typedef & MOD_MASK) === MOD_ARRAY) {
+            /**
+             * MOD_ARRAY: homogeneous array (e.g. string[])
+             * Bit 11: UNIQUE flag
+             * Bits 12-21 (10 bits): maxItems (0 = no max)
+             * Bits 22-29 (8 bits): minItems (0 = no min)
+             */
+            if (!Array.isArray(data)) {
+                return false;
+            }
+            let len = data.length;
+            let maxItems = (typedef >>> MOD_ARRAY_MAX_ITEMS_SHIFT) & MOD_ARRAY_MAX_ITEMS_MASK;
+            let minItems = (typedef >>> MOD_ARRAY_MIN_ITEMS_SHIFT) & MOD_ARRAY_MIN_ITEMS_MASK;
+            if (minItems > 0 && len < minItems) {
+                return false;
+            }
+            if (maxItems > 0 && len > maxItems) {
+                return false;
+            }
+            let mask = primBits;
+            for (let i = 0; i < len; i++) {
+                if (!_isValue(data[i], mask)) {
+                    return false;
+                }
+            }
+            let unique = (typedef & MOD_ARRAY_UNIQUE_BIT) !== 0;
+            if (unique) {
+                for (let i = 0; i < len; i++) {
+                    for (let j = i + 1; j < len; j++) {
+                        if (deepEqual(data[i], data[j])) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            /** Mark all items as evaluated for unevaluatedItems tracking */
+            if (trackPtr) {
+                markItemsEvaluated(trackPtr, snapPtr, 0, len);
+            }
+            return true;
+        }
+
+        if ((typedef & MOD_MASK) === MOD_RECORD) {
+            /**
+             * MOD_RECORD: dynamic dictionary (e.g. Record<string, number>)
+             * Bits 11-21 (11 bits): maxProperties (0 = no max)
+             * Bits 22-29 (8 bits): minProperties (0 = no min)
+             */
+            if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+                return false;
+            }
+            let mask = primBits;
+            let maxProps = (typedef >>> MOD_RECORD_MAX_PROPS_SHIFT) & MOD_RECORD_MAX_PROPS_MASK;
+            let minProps = (typedef >>> MOD_RECORD_MIN_PROPS_SHIFT) & MOD_RECORD_MIN_PROPS_MASK;
+            let count = 0;
+            for (let key in data) {
+                if (!hasOwnProperty.call(data, key)) {
+                    continue;
+                }
+                if (!_isValue(data[key], mask)) {
+                    return false;
+                }
+                count++;
+                if (maxProps > 0 && count > maxProps) {
+                    return false;
+                }
+            }
+            if (minProps > 0 && count < minProps) {
+                return false;
+            }
+            /** Mark all properties as evaluated for unevaluatedProperties tracking */
+            if (trackPtr) {
+                for (let key in data) {
+                    if (hasOwnProperty.call(data, key)) {
+                        let kid = resolveTrackingKey(key);
+                        if (kid !== void 0) {
+                            markEvaluated(trackPtr, snapPtr, kid);
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Validates data against an inline primitive validator typedef
+     * (MODIFIER=0, typedef > 0xFF). Handles STRING with minLength/
+     * maxLength/pattern, NUMBER/INTEGER with min/max bounds, BOOLEAN,
+     * and ANY. These never need unevaluated tracking since they are
+     * scalar types.
+     *
+     * Bit layout:
+     *   Bits 0-7:   primBits (type flags)
+     *   Bits 8+:    type-specific payload
      *
      * @param {*} data
      * @param {number} typedef
      * @returns {boolean}
      */
-    function _validateInline(data, typedef) {
+    function _validateInlinePrim(data, typedef) {
         let primBits = typedef & PRIM_MASK;
 
-        if (typedef & MODIFIER) {
-            if ((typedef & MOD_MASK) === MOD_ENUM) {
-                /** MOD_ENUM: exact-match against CONSTANTS or ENUMS arena */
-                let primBits = typedef & PRIM_MASK;
-                // Check base type matches (skip for ANY)
-                if (primBits & VALUE) {
-                    if (!_isValue(data, primBits)) return false;
-                }
-                let isSet = (typedef & MOD_ENUM_IS_SET) !== 0;
-                let idx = (typedef >>> MOD_ENUM_IDX_SHIFT) & MOD_ENUM_IDX_MASK;
-                if (isSet) {
-                    return ENUMS[idx].has(data);
-                }
-                return CONSTANTS[idx] === data;
-            }
-
-            if ((typedef & MOD_MASK) === MOD_ARRAY) {
-                /**
-                 * MOD_ARRAY: homogeneous array (e.g. string[])
-                 * Bit 11: UNIQUE flag
-                 * Bits 12-21 (10 bits): maxItems (0 = no max)
-                 * Bits 22-29 (8 bits): minItems (0 = no min)
-                 */
-                if (!Array.isArray(data)) {
-                    return false;
-                }
-                let len = data.length;
-                let maxItems = (typedef >>> MOD_ARRAY_MAX_ITEMS_SHIFT) & MOD_ARRAY_MAX_ITEMS_MASK;
-                let minItems = (typedef >>> MOD_ARRAY_MIN_ITEMS_SHIFT) & MOD_ARRAY_MIN_ITEMS_MASK;
-                if (minItems > 0 && len < minItems) {
-                    return false;
-                }
-                if (maxItems > 0 && len > maxItems) {
-                    return false;
-                }
-                let mask = primBits;
-                for (let i = 0; i < len; i++) {
-                    if (!_isValue(data[i], mask)) {
-                        return false;
-                    }
-                }
-                let unique = (typedef & MOD_ARRAY_UNIQUE_BIT) !== 0;
-                if (unique) {
-                    for (let i = 0; i < len; i++) {
-                        for (let j = i + 1; j < len; j++) {
-                            if (deepEqual(data[i], data[j])) {
-                                return false;
-                            }
-                        }
-                    }
-                }
-                return true;
-            }
-
-            if ((typedef & MOD_MASK) === MOD_RECORD) {
-                /**
-                 * MOD_RECORD: dynamic dictionary (e.g. Record<string, number>)
-                 * Bits 11-21 (11 bits): maxProperties (0 = no max)
-                 * Bits 22-29 (8 bits): minProperties (0 = no min)
-                 */
-                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-                    return false;
-                }
-                let mask = primBits;
-                let maxProps = (typedef >>> MOD_RECORD_MAX_PROPS_SHIFT) & MOD_RECORD_MAX_PROPS_MASK;
-                let minProps = (typedef >>> MOD_RECORD_MIN_PROPS_SHIFT) & MOD_RECORD_MIN_PROPS_MASK;
-                let count = 0;
-                for (let key in data) {
-                    if (!hasOwnProperty.call(data, key)) {
-                        continue;
-                    }
-                    if (!_isValue(data[key], mask)) {
-                        return false;
-                    }
-                    count++;
-                    if (maxProps > 0 && count > maxProps) {
-                        return false;
-                    }
-                }
-                if (minProps > 0 && count < minProps) {
-                    return false;
-                }
-                return true;
-            }
-
-            return false;
-        }
-
-        /**
-         * Inline primitive validator (MODIFIER=0, typedef > 0xFF).
-         * The specific type determines the payload layout.
-         */
         if (primBits & STRING) {
             /**
              * STRING payload:
@@ -786,6 +818,9 @@ function catalog(cfg) {
     }
 
     /**
+     * Validates a single slot value (object property value, array element,
+     * tuple element) against its typedef. Used from contexts without
+     * unevaluated tracking (K_RECORD, K_TUPLE rest elements).
      *
      * @param {*} raw
      * @param {number} type
@@ -804,8 +839,11 @@ function catalog(cfg) {
         if (type < 256) {
             return (type & SIMPLE) ? _isValue(raw, type & PRIM_MASK) : false;
         }
-        /** Inline path: MOD_ENUM, MOD_ARRAY, MOD_RECORD, or inline primitive validator */
-        return _validateInline(raw, type);
+        /** Inline path: MOD_* modifiers or inline primitive validators */
+        if (type & MODIFIER) {
+            return _validateInlineMod(raw, type, 0, 0);
+        }
+        return _validateInlinePrim(raw, type);
     }
 
     /**
@@ -1428,8 +1466,14 @@ function catalog(cfg) {
                             }
                         }
                     } else {
-                        if (!_validateInline(val, type)) {
-                            return false;
+                        if (type & MODIFIER) {
+                            if (!_validateInlineMod(val, type, 0, 0)) {
+                                return false;
+                            }
+                        } else {
+                            if (!_validateInlinePrim(val, type)) {
+                                return false;
+                            }
                         }
                     }
                     if (trackPtr) {
@@ -1507,7 +1551,8 @@ function catalog(cfg) {
                             }
                         }
                     } else {
-                        /** MOD_ENUM inner type */
+                        /** Inline inner type (MOD_ENUM, MOD_ARRAY, etc.) */
+                        let isMod = (innerType & MODIFIER) !== 0;
                         for (let i = 0; i < length; i++) {
                             let el = data[i];
                             if (el === void 0) {
@@ -1518,8 +1563,14 @@ function catalog(cfg) {
                                 if (!(innerType & NULLABLE)) {
                                     return false;
                                 }
-                            } else if (!_validateInline(el, innerType)) {
-                                return false;
+                            } else if (isMod) {
+                                if (!_validateInlineMod(el, innerType, 0, 0)) {
+                                    return false;
+                                }
+                            } else {
+                                if (!_validateInlinePrim(el, innerType)) {
+                                    return false;
+                                }
                             }
                         }
                     }
@@ -1569,9 +1620,16 @@ function catalog(cfg) {
         if (data == null) {
             return (typedef & (ANY | (data === null ? NULLABLE : OPTIONAL))) !== 0;
         }
-        /** Inline path: typedef > 0xFF with COMPLEX=0 (MOD_*, inline validators) */
+        /**
+         * Inline path: typedef > 0xFF with COMPLEX=0 (MOD_*, inline validators).
+         * MOD_ARRAY/MOD_RECORD need trackPtr/snapPtr for unevaluated tracking;
+         * inline primitive validators (string/number) don't need tracking.
+         */
         if (typedef > 0xFF) {
-            return _validateInline(data, typedef);
+            if (typedef & MODIFIER) {
+                return _validateInlineMod(data, typedef, trackPtr, snapPtr);
+            }
+            return _validateInlinePrim(data, typedef);
         }
         return _isValue(data, typedef & PRIM_MASK);
     }
