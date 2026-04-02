@@ -12,7 +12,7 @@ import {
     V_MIN_LENGTH, V_MAX_LENGTH, V_PATTERN, V_FORMAT,
     V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
     V_MIN_ITEMS, V_MAX_ITEMS, V_CONTAINS, V_MIN_CONTAINS, V_MAX_CONTAINS,
-    V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
+    V_PRIMITIVE_ITEMS, V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
     V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED,
     V_ENUM,
     K_HAS_ITEMS, K_ALL_REQUIRED,
@@ -840,6 +840,24 @@ function arrayImpl(ctx, elemType, opts) {
         let result = packValidators(opts, ARR_MASK, null);
         vHeader = result[0];
         payloads = result.slice(1);
+    }
+    /**
+     * V_PRIMITIVE_ITEMS: set when uniqueItems is active and the element type
+     * only produces primitive JS values (string, number, boolean, null).
+     * Lets the validator use a Set-based O(n) path instead of O(n^2) deepEqual.
+     */
+    if (vHeader & V_UNIQUE_ITEMS) {
+        let et = elemType >>> 0;
+        if (!(et & COMPLEX)) {
+            if (!(et & ANY) && (et & (STRING | NUMBER | INTEGER | BOOLEAN)) !== 0) {
+                vHeader |= V_PRIMITIVE_ITEMS;
+            }
+        } else {
+            let kindsIdx = (et >>> 3) << 1;
+            if ((ctx.HEAP.KINDS[kindsIdx] & KIND_ENUM_MASK) === K_PRIMITIVE) {
+                vHeader |= V_PRIMITIVE_ITEMS;
+            }
+        }
     }
     /** K_ARRAY stores elemType as inline (KINDS slot 1); no SLAB entry. */
     let kindHeader = (hasVal ? (K_ARRAY | K_VALIDATOR) : K_ARRAY) | K_HAS_ITEMS;

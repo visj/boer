@@ -11,7 +11,7 @@ import {
     V_MIN_LENGTH, V_MAX_LENGTH, V_PATTERN, V_FORMAT,
     V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
     V_MIN_ITEMS, V_MAX_ITEMS, V_CONTAINS, V_MIN_CONTAINS, V_MAX_CONTAINS,
-    V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
+    V_PRIMITIVE_ITEMS, V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
     V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS,
     V_ENUM, K_STRICT,
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATE, FMT_TIME, FMT_DATETIME,
@@ -372,29 +372,20 @@ function catalog(cfg) {
         }
         if (vHeader & V_UNIQUE_ITEMS) {
             let length = data.length;
-            if (length <= 16) {
-                /** Small array: O(n^2) with deepEqual, avoids Set overhead */
-                for (let i = 0; i < length; i++) {
-                    for (let j = i + 1; j < length; j++) {
-                        if (deepEqual(data[i], data[j])) {
-                            return false;
+            if (vHeader & V_PRIMITIVE_ITEMS) {
+                /**
+                 * Primitive items: the compiler proved all valid items are
+                 * primitive JS values, so === is sufficient for equality.
+                 */
+                if (length <= 16) {
+                    for (let i = 0; i < length; i++) {
+                        for (let j = i + 1; j < length; j++) {
+                            if (data[i] === data[j]) {
+                                return false;
+                            }
                         }
                     }
-                }
-            } else {
-                /**
-                 * Large array: probe whether all items are primitive.
-                 * If so, use O(n) Set path. Otherwise fall back to O(n^2) deepEqual.
-                 */
-                let allPrimitive = true;
-                for (let i = 0; i < length; i++) {
-                    let v = data[i];
-                    if (v !== null && typeof v === 'object') {
-                        allPrimitive = false;
-                        break;
-                    }
-                }
-                if (allPrimitive) {
+                } else {
                     if (UNIQUES === null) {
                         UNIQUES = new Set();
                     } else if (UNIQUES.size > 0) {
@@ -418,12 +409,13 @@ function catalog(cfg) {
                     } else {
                         set.clear();
                     }
-                } else {
-                    for (let i = 0; i < length; i++) {
-                        for (let j = i + 1; j < length; j++) {
-                            if (deepEqual(data[i], data[j])) {
-                                return false;
-                            }
+                }
+            } else {
+                /** Complex or unknown items: must use deepEqual */
+                for (let i = 0; i < length; i++) {
+                    for (let j = i + 1; j < length; j++) {
+                        if (deepEqual(data[i], data[j])) {
+                            return false;
                         }
                     }
                 }

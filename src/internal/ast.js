@@ -17,8 +17,9 @@ import {
     MODIFIER, MOD_ARRAY, MOD_RECORD, MOD_ENUM,
     V_MIN_LENGTH, V_MAX_LENGTH, V_FORMAT, K_ALL_REQUIRED,
     V_MINIMUM, V_MAXIMUM, V_MULTIPLE_OF, V_EXCLUSIVE_MINIMUM, V_EXCLUSIVE_MAXIMUM,
-    V_MIN_ITEMS, V_MAX_ITEMS, V_MIN_CONTAINS, V_MAX_CONTAINS, V_UNIQUE_ITEMS,
-    KINDS_SHIFT, V_PAYLOAD_MASK,
+    V_MIN_ITEMS, V_MAX_ITEMS, V_MIN_CONTAINS, V_MAX_CONTAINS,
+    V_PRIMITIVE_ITEMS, V_UNIQUE_ITEMS,
+    KINDS_SHIFT, V_PAYLOAD_MASK, KIND_ENUM_MASK,
     MOD_ENUM_IS_SET, MOD_ENUM_IDX_SHIFT, MOD_ENUM_IDX_MASK,
     MOD_ARRAY_UNIQUE_BIT, MOD_ARRAY_MAX_ITEMS_SHIFT, MOD_ARRAY_MAX_ITEMS_MASK,
     MOD_ARRAY_MIN_ITEMS_SHIFT, MOD_ARRAY_MIN_ITEMS_MASK,
@@ -1012,9 +1013,31 @@ export function compile(cat, ast) {
                         kindHeader |= K_HAS_ITEMS;
                     }
 
+                    /**
+                     * V_PRIMITIVE_ITEMS: tag the vHeader so the validator can use
+                     * O(n) Set-based uniqueness instead of O(n^2) deepEqual.
+                     */
+                    let vh = vp !== null ? vp.vHeader : 0;
+                    if (vh & V_UNIQUE_ITEMS) {
+                        let et = elemType >>> 0;
+                        if (!(et & COMPLEX)) {
+                            if (!(et & ANY) && (et & (STRING | NUMBER | INTEGER | BOOLEAN)) !== 0) {
+                                vh |= V_PRIMITIVE_ITEMS;
+                            }
+                        } else {
+                            let kindsIdx = (et >>> 3) << 1;
+                            if ((HEAP.KINDS[kindsIdx] & KIND_ENUM_MASK) === K_PRIMITIVE) {
+                                vh |= V_PRIMITIVE_ITEMS;
+                            }
+                        }
+                        if (vp !== null) {
+                            vp.vHeader = vh;
+                        }
+                    }
+
                     /** K_ARRAY inline = elemType (KINDS slot 1); no SLAB entry. */
                     astCompiled[nodeId] = malloc(heap, kindHeader, elemType >>> 0,
-                        null, 0, vp !== null ? vp.vHeader : 0, vp !== null ? vp.nodePayloads : null);
+                        null, 0, vh, vp !== null ? vp.nodePayloads : null);
                 }
                 break;
             }
