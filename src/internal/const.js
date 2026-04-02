@@ -52,7 +52,7 @@ const PRIM_MASK = 0xFF;
  *   MOD_ENUM (2): exact-match against CONSTANTS or ENUMS arena
  *
  * Bit 11: isSet flag (0 = CONSTANTS index, 1 = ENUMS index)
- * Bits 12-29: arena index (18 bits, max 262143 — stays within V8 Smi range)
+ * Bits 12-29: arena index (18 bits, max 262143 — stays within V8 Smi range) [MOD_ENUM only]
  *
  * MOD_MASK extracts the 2-bit modifier type from bits 9-10.
  */
@@ -84,34 +84,41 @@ const MOD_ENUM_IDX_SHIFT = 12;
 /** Maximum value that fits in the 18-bit arena index field. */
 const MOD_ENUM_IDX_MASK  = 0x3FFFF;
 
-// ── MOD_ARRAY inline payload bits (bits 11-29) ──
+// ── MOD_ARRAY inline payload bits (bits 11-31) ──
 /** Bit 11: uniqueItems flag. */
 const MOD_ARRAY_UNIQUE_BIT      = 1 << 11;
-/** Bits 12-21 (10 bits): maxItems (0 = no max). */
+/** Bits 12-23 (12 bits): maxItems (0 = no max, 1-4095). */
 const MOD_ARRAY_MAX_ITEMS_SHIFT = 12;
-const MOD_ARRAY_MAX_ITEMS_MASK  = 0x3FF;
-/** Bits 22-29 (8 bits): minItems (0 = no min). */
-const MOD_ARRAY_MIN_ITEMS_SHIFT = 22;
+const MOD_ARRAY_MAX_ITEMS_MASK  = 0xFFF;
+const MOD_ARRAY_MAX_ITEMS_LIMIT = 4095;
+/** Bits 24-31 (8 bits): minItems (0 = no min, 1-255). */
+const MOD_ARRAY_MIN_ITEMS_SHIFT = 24;
 const MOD_ARRAY_MIN_ITEMS_MASK  = 0xFF;
+const MOD_ARRAY_MIN_ITEMS_LIMIT = 255;
 
-// ── MOD_RECORD inline payload bits (bits 11-29) ──
-/** Bits 11-21 (11 bits): maxProperties (0 = no max). */
+// ── MOD_RECORD inline payload bits (bits 11-31) ──
+/** Bits 11-23 (13 bits): maxProperties (0 = no max, 1-8191). */
 const MOD_RECORD_MAX_PROPS_SHIFT = 11;
-const MOD_RECORD_MAX_PROPS_MASK  = 0x7FF;
-/** Bits 22-29 (8 bits): minProperties (0 = no min). */
-const MOD_RECORD_MIN_PROPS_SHIFT = 22;
+const MOD_RECORD_MAX_PROPS_MASK  = 0x1FFF;
+const MOD_RECORD_MAX_PROPS_LIMIT = 8191;
+/** Bits 24-31 (8 bits): minProperties (0 = no min, 1-255). */
+const MOD_RECORD_MIN_PROPS_SHIFT = 24;
 const MOD_RECORD_MIN_PROPS_MASK  = 0xFF;
+const MOD_RECORD_MIN_PROPS_LIMIT = 255;
 
 // ── Inline STRING validator payload bits ──
 /** Bits 9-16 (8 bits): regex cache index (0 = no pattern). */
 const STR_REGEX_IDX_SHIFT = 9;
 const STR_REGEX_IDX_MASK  = 0xFF;
-/** Bits 17-24 (8 bits): maxLength (0 = no max). */
+const STR_REGEX_IDX_LIMIT = 255;
+/** Bits 17-25 (9 bits): maxLength (0 = no max, 1-511). */
 const STR_MAX_LEN_SHIFT   = 17;
-const STR_MAX_LEN_MASK    = 0xFF;
-/** Bits 25-29 (5 bits): minLength (0 = no min). */
-const STR_MIN_LEN_SHIFT   = 25;
-const STR_MIN_LEN_MASK    = 0x1F;
+const STR_MAX_LEN_MASK    = 0x1FF;
+const STR_MAX_LEN_LIMIT   = 511;
+/** Bits 26-31 (6 bits): minLength (0 = no min, 1-63). */
+const STR_MIN_LEN_SHIFT   = 26;
+const STR_MIN_LEN_MASK    = 0x3F;
+const STR_MIN_LEN_LIMIT   = 63;
 
 // ── Inline NUMBER/INTEGER validator payload bits ──
 /** Bit 9: minimum bound present (allows min: 0 to be distinguished from "no min"). */
@@ -124,12 +131,14 @@ const NUM_EXCL_MAX_BIT  = 1 << 11;
 const NUM_MIN_NEG_BIT   = 1 << 12;
 /** Bit 13: sign of maximum bound (1 = negative). */
 const NUM_MAX_NEG_BIT   = 1 << 13;
-/** Bits 14-22 (9 bits): minimum magnitude (0-511). Only valid when NUM_HAS_MIN_BIT is set. */
+/** Bits 14-21 (8 bits): minimum magnitude (0-255). Only valid when NUM_HAS_MIN_BIT is set. */
 const NUM_MIN_MAG_SHIFT = 14;
-const NUM_MIN_MAG_MASK  = 0x1FF;
-/** Bits 23-30 (8 bits): maximum magnitude (0 = no max, 1-255). */
-const NUM_MAX_MAG_SHIFT = 23;
-const NUM_MAX_MAG_MASK  = 0xFF;
+const NUM_MIN_MAG_MASK  = 0xFF;
+const NUM_MIN_MAG_LIMIT = 255;
+/** Bits 22-31 (10 bits): maximum magnitude (0 = no max, 1-1023). */
+const NUM_MAX_MAG_SHIFT = 22;
+const NUM_MAX_MAG_MASK  = 0x3FF;
+const NUM_MAX_MAG_LIMIT = 1023;
 
 // ── Evaluation tracking bit-packing ──
 /** Shift to compute the 32-bit word index from a bit index: i >>> WORD_IDX_SHIFT. */
@@ -218,6 +227,9 @@ const V_EXCLUSIVE_MAXIMUM = 1 << 15;
  *   Segments appear in order: string, number, boolean.
  */
 const V_ENUM = 1 << 16;
+/** Boolean enum bitmask values for V_ENUM boolean segment. */
+const BOOL_ENUM_TRUE  = 1;
+const BOOL_ENUM_FALSE = 2;
 // K_OBJECT variable-length payload flags (sequential p++ only, NOT popcount-compatible).
 // These are only used by K_OBJECT (catalog API), never by K_PRIMITIVE (JSON Schema).
 const V_DEPENDENT_REQUIRED = 1 << 17;
@@ -248,7 +260,6 @@ const FMT_RE_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]
 /** @type {Record<string, number>} */
 const FMT_MAP = { email: FMT_EMAIL, ipv4: FMT_IPV4, uuid: FMT_UUID, 'date-time': FMT_DATETIME };
 
-/** @const @type {symbol} */
 const FAIL = Symbol('FAIL');
 
 const toString = Object.prototype.toString;
@@ -263,16 +274,18 @@ export {
     KINDS_SHIFT, V_PAYLOAD_MASK,
     MOD_ENUM_IS_SET, MOD_ENUM_IDX_SHIFT, MOD_ENUM_IDX_MASK,
     MOD_ARRAY_UNIQUE_BIT, MOD_ARRAY_MAX_ITEMS_SHIFT, MOD_ARRAY_MAX_ITEMS_MASK,
-    MOD_ARRAY_MIN_ITEMS_SHIFT, MOD_ARRAY_MIN_ITEMS_MASK,
-    MOD_RECORD_MAX_PROPS_SHIFT, MOD_RECORD_MAX_PROPS_MASK,
-    MOD_RECORD_MIN_PROPS_SHIFT, MOD_RECORD_MIN_PROPS_MASK,
-    STR_REGEX_IDX_SHIFT, STR_REGEX_IDX_MASK,
-    STR_MAX_LEN_SHIFT, STR_MAX_LEN_MASK,
-    STR_MIN_LEN_SHIFT, STR_MIN_LEN_MASK,
+    MOD_ARRAY_MAX_ITEMS_LIMIT, MOD_ARRAY_MIN_ITEMS_SHIFT, MOD_ARRAY_MIN_ITEMS_MASK,
+    MOD_ARRAY_MIN_ITEMS_LIMIT,
+    MOD_RECORD_MAX_PROPS_SHIFT, MOD_RECORD_MAX_PROPS_MASK, MOD_RECORD_MAX_PROPS_LIMIT,
+    MOD_RECORD_MIN_PROPS_SHIFT, MOD_RECORD_MIN_PROPS_MASK, MOD_RECORD_MIN_PROPS_LIMIT,
+    STR_REGEX_IDX_SHIFT, STR_REGEX_IDX_MASK, STR_REGEX_IDX_LIMIT,
+    STR_MAX_LEN_SHIFT, STR_MAX_LEN_MASK, STR_MAX_LEN_LIMIT,
+    STR_MIN_LEN_SHIFT, STR_MIN_LEN_MASK, STR_MIN_LEN_LIMIT,
     NUM_HAS_MIN_BIT, NUM_EXCL_MIN_BIT, NUM_EXCL_MAX_BIT,
     NUM_MIN_NEG_BIT, NUM_MAX_NEG_BIT,
-    NUM_MIN_MAG_SHIFT, NUM_MIN_MAG_MASK,
-    NUM_MAX_MAG_SHIFT, NUM_MAX_MAG_MASK,
+    NUM_MIN_MAG_SHIFT, NUM_MIN_MAG_MASK, NUM_MIN_MAG_LIMIT,
+    NUM_MAX_MAG_SHIFT, NUM_MAX_MAG_MASK, NUM_MAX_MAG_LIMIT,
+    BOOL_ENUM_TRUE, BOOL_ENUM_FALSE,
     WORD_IDX_SHIFT, WORD_BIT_MASK, UNKNOWN_KEY_FLAG,
     K_PRIMITIVE, K_OBJECT, K_ARRAY, K_RECORD,
     K_OR, K_EXCLUSIVE, K_INTERSECT,

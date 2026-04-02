@@ -20,10 +20,15 @@ import {
     MODIFIER, MOD_ARRAY, MOD_RECORD, MOD_ENUM,
     KINDS_SHIFT,
     MOD_ENUM_IS_SET, MOD_ENUM_IDX_SHIFT, MOD_ENUM_IDX_MASK,
-    STR_REGEX_IDX_SHIFT, STR_MAX_LEN_SHIFT, STR_MIN_LEN_SHIFT,
+    STR_REGEX_IDX_SHIFT, STR_REGEX_IDX_LIMIT,
+    STR_MAX_LEN_SHIFT, STR_MAX_LEN_LIMIT,
+    STR_MIN_LEN_SHIFT, STR_MIN_LEN_LIMIT,
     NUM_HAS_MIN_BIT, NUM_EXCL_MIN_BIT, NUM_EXCL_MAX_BIT,
     NUM_MIN_NEG_BIT, NUM_MAX_NEG_BIT,
-    NUM_MIN_MAG_SHIFT, NUM_MAX_MAG_SHIFT,
+    NUM_MIN_MAG_SHIFT, NUM_MIN_MAG_LIMIT,
+    NUM_MAX_MAG_SHIFT, NUM_MAX_MAG_LIMIT,
+    MOD_ARRAY_MAX_ITEMS_SHIFT, MOD_ARRAY_MAX_ITEMS_LIMIT,
+    MOD_ARRAY_MIN_ITEMS_SHIFT, MOD_ARRAY_MIN_ITEMS_LIMIT,
 } from './const.js';
 import {
     assertIsNumber, assertIsObject,
@@ -236,15 +241,15 @@ function tryInlineString(ctx, opts) {
     if (maxLen !== void 0 && maxVal === 0) {
         return 0;
     }
-    /** Range checks: 5 bits for min (1-31), 8 bits for max (1-255) */
-    if (minVal > 31 || maxVal > 255) {
+    /** Range checks against inline bit field limits */
+    if (minVal > STR_MIN_LEN_LIMIT || maxVal > STR_MAX_LEN_LIMIT) {
         return 0;
     }
 
     let regexIdx = 0;
     if (pattern !== void 0) {
         let cacheLen = ctx.REGEX_CACHE.length;
-        if (cacheLen > 255) {
+        if (cacheLen > STR_REGEX_IDX_LIMIT) {
             return 0;
         }
         let re = typeof pattern === 'string' ? new RegExp(pattern, 'u') : pattern;
@@ -256,7 +261,7 @@ function tryInlineString(ctx, opts) {
         return 0;
     }
 
-    return STRING | (regexIdx << STR_REGEX_IDX_SHIFT) | (maxVal << STR_MAX_LEN_SHIFT) | (minVal << STR_MIN_LEN_SHIFT);
+    return (STRING | (regexIdx << STR_REGEX_IDX_SHIFT) | (maxVal << STR_MAX_LEN_SHIFT) | (minVal << STR_MIN_LEN_SHIFT)) >>> 0;
 }
 
 /**
@@ -270,8 +275,8 @@ function tryInlineString(ctx, opts) {
  *   Bit 10:          EXCLUSIVE_MAX
  *   Bit 11:          MIN_NEGATIVE
  *   Bit 12:          MAX_NEGATIVE
- *   Bits 13-21 (9b): minMagnitude (0 = no min, 1-511)
- *   Bits 22-29 (8b): maxMagnitude (0 = no max, 1-255)
+ *   Bits 14-21 (8b): minMagnitude (0 = no min, 1-255)
+ *   Bits 22-31 (10b): maxMagnitude (0 = no max, 1-1023)
  *
  * @param {*} ctx
  * @param {number} primConst - NUMBER or INTEGER
@@ -334,12 +339,12 @@ function tryInlineNumber(ctx, primConst, opts) {
     let minNeg = 0;
     let minMag = 0;
     if (effMin !== void 0) {
-        /** Must be integer with magnitude 0-511 */
+        /** Must be integer with magnitude within inline limit */
         if (!Number.isInteger(effMin)) {
             return 0;
         }
         let absMin = Math.abs(effMin);
-        if (absMin > 511) {
+        if (absMin > NUM_MIN_MAG_LIMIT) {
             return 0;
         }
         hasMin = 1;
@@ -354,18 +359,18 @@ function tryInlineNumber(ctx, primConst, opts) {
             return 0;
         }
         let absMax = Math.abs(effMax);
-        if (absMax === 0 || absMax > 255) {
+        if (absMax === 0 || absMax > NUM_MAX_MAG_LIMIT) {
             return 0;
         }
         maxNeg = effMax < 0 ? 1 : 0;
         maxMag = absMax;
     }
 
-    return primConst
+    return (primConst
         | (hasMin ? NUM_HAS_MIN_BIT : 0)
         | (exclMin ? NUM_EXCL_MIN_BIT : 0) | (exclMax ? NUM_EXCL_MAX_BIT : 0)
         | (minNeg ? NUM_MIN_NEG_BIT : 0) | (maxNeg ? NUM_MAX_NEG_BIT : 0)
-        | (minMag << NUM_MIN_MAG_SHIFT) | (maxMag << NUM_MAX_MAG_SHIFT);
+        | (minMag << NUM_MIN_MAG_SHIFT) | (maxMag << NUM_MAX_MAG_SHIFT)) >>> 0;
 }
 
 /**
@@ -767,8 +772,8 @@ function objectImpl(ctx, definition, opts) {
  * MOD_ARRAY layout (MODIFIER=1, MOD_ARRAY=0<<9):
  *   Bits 3-7:        inner primitive type
  *   Bit 11:          UNIQUE flag
- *   Bits 12-21 (10b): maxItems (0 = no max, 1-1023)
- *   Bits 22-29 (8b):  minItems (0 = no min, 1-255)
+ *   Bits 12-23 (12b): maxItems (0 = no max, 1-4095)
+ *   Bits 24-31 (8b):  minItems (0 = no min, 1-255)
  *
  * @param {number} elemType
  * @param {!uvd.ArrayValidators=} opts
@@ -803,13 +808,13 @@ function tryInlineArray(elemType, opts) {
         }
         if (opts.minItems !== void 0) {
             minItems = +opts.minItems;
-            if (minItems === 0 || minItems > 255) {
+            if (minItems === 0 || minItems > MOD_ARRAY_MIN_ITEMS_LIMIT) {
                 return 0;
             }
         }
         if (opts.maxItems !== void 0) {
             maxItems = +opts.maxItems;
-            if (maxItems === 0 || maxItems > 1023) {
+            if (maxItems === 0 || maxItems > MOD_ARRAY_MAX_ITEMS_LIMIT) {
                 return 0;
             }
         }
@@ -818,8 +823,8 @@ function tryInlineArray(elemType, opts) {
         }
     }
 
-    return typeBits | MODIFIER | MOD_ARRAY
-        | (unique << 11) | (maxItems << 12) | (minItems << 22);
+    return (typeBits | MODIFIER | MOD_ARRAY
+        | (unique << 11) | (maxItems << MOD_ARRAY_MAX_ITEMS_SHIFT) | (minItems << MOD_ARRAY_MIN_ITEMS_SHIFT)) >>> 0;
 }
 
 /**

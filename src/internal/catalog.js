@@ -13,7 +13,7 @@ import {
     V_MIN_ITEMS, V_MAX_ITEMS, V_CONTAINS, V_MIN_CONTAINS, V_MAX_CONTAINS,
     V_PRIMITIVE_ITEMS, V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
     V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS,
-    V_ENUM, K_STRICT,
+    V_ENUM, K_STRICT, BOOL_ENUM_TRUE, BOOL_ENUM_FALSE,
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATE, FMT_TIME, FMT_DATETIME,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME, hasOwnProperty,
     K_HAS_ITEMS, K_HAS_REST, MODIFIER, MOD_MASK, MOD_ARRAY, MOD_RECORD, MOD_ENUM,
@@ -339,7 +339,7 @@ function catalog(cfg) {
                  * Reject if the corresponding bit is not set.
                  */
                 let boolMask = vals[p] | 0;
-                if (!(boolMask & (value ? 1 : 2))) {
+                if (!(boolMask & (value ? BOOL_ENUM_TRUE : BOOL_ENUM_FALSE))) {
                     return false;
                 }
             }

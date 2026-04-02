@@ -7,6 +7,7 @@ import {
     V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_DEPENDENT_REQUIRED,
     V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES,
     V_ENUM, K_HAS_ITEMS,
+    BOOL_ENUM_TRUE, BOOL_ENUM_FALSE,
     hasOwnProperty
 } from "./const.js";
 import { isBoolean, isObject, isString } from './util.js';
@@ -1279,8 +1280,8 @@ CompoundSchema.prototype.bundle = function (schemas) {
                      * Bit 0 = true is in enum, bit 1 = false is in enum.
                      */
                     let boolMask = 0;
-                    if (hasTrueEnum) { boolMask |= 1; }
-                    if (hasFalseEnum) { boolMask |= 2; }
+                    if (hasTrueEnum) { boolMask |= BOOL_ENUM_TRUE; }
+                    if (hasFalseEnum) { boolMask |= BOOL_ENUM_FALSE; }
                     vPayloadArr.push(boolMask);
                 }
             }

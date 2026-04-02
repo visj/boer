@@ -21,15 +21,19 @@ import {
     V_PRIMITIVE_ITEMS, V_UNIQUE_ITEMS,
     KINDS_SHIFT, V_PAYLOAD_MASK, KIND_ENUM_MASK,
     MOD_ENUM_IS_SET, MOD_ENUM_IDX_SHIFT, MOD_ENUM_IDX_MASK,
-    MOD_ARRAY_UNIQUE_BIT, MOD_ARRAY_MAX_ITEMS_SHIFT, MOD_ARRAY_MAX_ITEMS_MASK,
-    MOD_ARRAY_MIN_ITEMS_SHIFT, MOD_ARRAY_MIN_ITEMS_MASK,
-    MOD_RECORD_MAX_PROPS_SHIFT, MOD_RECORD_MAX_PROPS_MASK,
-    MOD_RECORD_MIN_PROPS_SHIFT, MOD_RECORD_MIN_PROPS_MASK,
+    MOD_ARRAY_UNIQUE_BIT, MOD_ARRAY_MAX_ITEMS_SHIFT, MOD_ARRAY_MAX_ITEMS_LIMIT,
+    MOD_ARRAY_MIN_ITEMS_SHIFT, MOD_ARRAY_MIN_ITEMS_LIMIT,
+    MOD_RECORD_MAX_PROPS_SHIFT, MOD_RECORD_MAX_PROPS_LIMIT,
+    MOD_RECORD_MIN_PROPS_SHIFT, MOD_RECORD_MIN_PROPS_LIMIT,
     V_MIN_PROPERTIES, V_MAX_PROPERTIES,
-    STR_REGEX_IDX_SHIFT, STR_MAX_LEN_SHIFT, STR_MIN_LEN_SHIFT,
+    STR_REGEX_IDX_SHIFT, STR_REGEX_IDX_LIMIT,
+    STR_MAX_LEN_SHIFT, STR_MAX_LEN_LIMIT,
+    STR_MIN_LEN_SHIFT, STR_MIN_LEN_LIMIT,
     NUM_HAS_MIN_BIT, NUM_EXCL_MIN_BIT, NUM_EXCL_MAX_BIT,
     NUM_MIN_NEG_BIT, NUM_MAX_NEG_BIT,
-    NUM_MIN_MAG_SHIFT, NUM_MAX_MAG_SHIFT,
+    NUM_MIN_MAG_SHIFT, NUM_MIN_MAG_LIMIT,
+    NUM_MAX_MAG_SHIFT, NUM_MAX_MAG_LIMIT,
+    BOOL_ENUM_TRUE, BOOL_ENUM_FALSE,
 } from "./const.js";
 
 import {
@@ -207,7 +211,7 @@ export function compile(cat, ast) {
                 let canTryInline = isSingleType && !(vHeader & V_ENUM) && !(primBits & ANY);
 
                 if (canTryInline && (typeBits === STRING)) {
-                    /** Try inline STRING: regexIdx(8b), maxLength(8b), minLength(5b) */
+                    /** Try inline STRING: regexIdx(8b), maxLength(9b), minLength(6b) */
                     let canInline = !(vHeader & V_FORMAT);
                     let regexIdx = 0;
                     let minLen = 0;
@@ -216,26 +220,26 @@ export function compile(cat, ast) {
                         let slot = popcnt16(vHeader & (V_PATTERN - 1));
                         let raw = vPayloads[off + slot];
                         regexIdx = heap.REGEX_CACHE.push(regexes[raw]) - 1;
-                        if (regexIdx > 255) {
+                        if (regexIdx > STR_REGEX_IDX_LIMIT) {
                             canInline = false;
                         }
                     }
                     if (canInline && (vHeader & V_MIN_LENGTH)) {
                         let slot = popcnt16(vHeader & (V_MIN_LENGTH - 1));
                         minLen = vPayloads[off + slot] | 0;
-                        if (minLen === 0 || minLen > 31) {
+                        if (minLen === 0 || minLen > STR_MIN_LEN_LIMIT) {
                             canInline = false;
                         }
                     }
                     if (canInline && (vHeader & V_MAX_LENGTH)) {
                         let slot = popcnt16(vHeader & (V_MAX_LENGTH - 1));
                         maxLen = vPayloads[off + slot] | 0;
-                        if (maxLen === 0 || maxLen > 255) {
+                        if (maxLen === 0 || maxLen > STR_MAX_LEN_LIMIT) {
                             canInline = false;
                         }
                     }
                     if (canInline && (regexIdx > 0 || minLen > 0 || maxLen > 0)) {
-                        let result = STRING | (regexIdx << STR_REGEX_IDX_SHIFT) | (maxLen << STR_MAX_LEN_SHIFT) | (minLen << STR_MIN_LEN_SHIFT);
+                        let result = (STRING | (regexIdx << STR_REGEX_IDX_SHIFT) | (maxLen << STR_MAX_LEN_SHIFT) | (minLen << STR_MIN_LEN_SHIFT)) >>> 0;
                         if (primBits & NULLABLE) { result |= NULLABLE; }
                         if (primBits & OPTIONAL) { result |= OPTIONAL; }
                         astCompiled[nodeId] = result;
@@ -247,7 +251,7 @@ export function compile(cat, ast) {
                 if (canTryInline && (typeBits === NUMBER || typeBits === INTEGER)) {
                     /**
                      * Try inline NUMBER/INTEGER: hasMin(1b), exclMin(1b),
-                     * exclMax(1b), minNeg(1b), maxNeg(1b), minMag(9b), maxMag(8b).
+                     * exclMax(1b), minNeg(1b), maxNeg(1b), minMag(8b), maxMag(10b).
                      * Only integer bounds can be inlined. Float or multipleOf → fallback.
                      */
                     let canInline = !(vHeader & V_MULTIPLE_OF);
@@ -266,7 +270,7 @@ export function compile(cat, ast) {
                             canInline = false;
                         } else {
                             let abs = Math.abs(val);
-                            if (abs > 511) {
+                            if (abs > NUM_MIN_MAG_LIMIT) {
                                 canInline = false;
                             } else {
                                 hasMin = 1;
@@ -285,7 +289,7 @@ export function compile(cat, ast) {
                             canInline = false;
                         } else {
                             let abs = Math.abs(val);
-                            if (abs > 255) {
+                            if (abs > NUM_MAX_MAG_LIMIT) {
                                 canInline = false;
                             } else {
                                 maxNeg = val < 0 ? 1 : 0;
@@ -297,11 +301,11 @@ export function compile(cat, ast) {
                         }
                     }
                     if (canInline && (hasMin > 0 || maxMag > 0)) {
-                        let result = typeBits
+                        let result = (typeBits
                             | (hasMin ? NUM_HAS_MIN_BIT : 0)
                             | (exclMin ? NUM_EXCL_MIN_BIT : 0) | (exclMax ? NUM_EXCL_MAX_BIT : 0)
                             | (minNeg ? NUM_MIN_NEG_BIT : 0) | (maxNeg ? NUM_MAX_NEG_BIT : 0)
-                            | (minMag << NUM_MIN_MAG_SHIFT) | (maxMag << NUM_MAX_MAG_SHIFT);
+                            | (minMag << NUM_MIN_MAG_SHIFT) | (maxMag << NUM_MAX_MAG_SHIFT)) >>> 0;
                         if (primBits & NULLABLE) { result |= NULLABLE; }
                         if (primBits & OPTIONAL) { result |= OPTIONAL; }
                         astCompiled[nodeId] = result;
@@ -873,14 +877,14 @@ export function compile(cat, ast) {
                         if (canInline && (vh & V_MIN_PROPERTIES) && finalPayloads !== null) {
                             let slot = popcnt16(vh & (V_MIN_PROPERTIES - 1));
                             minProps = finalPayloads[slot] | 0;
-                            if (minProps === 0 || minProps > MOD_RECORD_MIN_PROPS_MASK) {
+                            if (minProps === 0 || minProps > MOD_RECORD_MIN_PROPS_LIMIT) {
                                 canInline = false;
                             }
                         }
                         if (canInline && (vh & V_MAX_PROPERTIES) && finalPayloads !== null) {
                             let slot = popcnt16(vh & (V_MAX_PROPERTIES - 1));
                             maxProps = finalPayloads[slot] | 0;
-                            if (maxProps === 0 || maxProps > MOD_RECORD_MAX_PROPS_MASK) {
+                            if (maxProps === 0 || maxProps > MOD_RECORD_MAX_PROPS_LIMIT) {
                                 canInline = false;
                             }
                         }
@@ -979,14 +983,14 @@ export function compile(cat, ast) {
                                 if (canInline && (vh & V_MIN_ITEMS)) {
                                     let slot = popcnt16(vh & (V_MIN_ITEMS - 1));
                                     minItems = vp.nodePayloads[slot] | 0;
-                                    if (minItems === 0 || minItems > MOD_ARRAY_MIN_ITEMS_MASK) {
+                                    if (minItems === 0 || minItems > MOD_ARRAY_MIN_ITEMS_LIMIT) {
                                         canInline = false;
                                     }
                                 }
                                 if (canInline && (vh & V_MAX_ITEMS)) {
                                     let slot = popcnt16(vh & (V_MAX_ITEMS - 1));
                                     maxItems = vp.nodePayloads[slot] | 0;
-                                    if (maxItems === 0 || maxItems > MOD_ARRAY_MAX_ITEMS_MASK) {
+                                    if (maxItems === 0 || maxItems > MOD_ARRAY_MAX_ITEMS_LIMIT) {
                                         canInline = false;
                                     }
                                 }
@@ -996,10 +1000,10 @@ export function compile(cat, ast) {
                             }
 
                             if (canInline && (vp === null || minItems > 0 || maxItems > 0 || unique > 0 || vp.vHeader === 0)) {
-                                inlined = typeBits | MODIFIER | MOD_ARRAY
+                                inlined = (typeBits | MODIFIER | MOD_ARRAY
                                     | (unique << 11)
                                     | (maxItems << MOD_ARRAY_MAX_ITEMS_SHIFT)
-                                    | (minItems << MOD_ARRAY_MIN_ITEMS_SHIFT);
+                                    | (minItems << MOD_ARRAY_MIN_ITEMS_SHIFT)) >>> 0;
                             }
                         }
                     }
