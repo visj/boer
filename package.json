@@ -50,6 +50,7 @@
   "license": "Apache-2.0",
   "dependencies": {
     "@mitata/counters": "^0.0.8",
+    "ajv-draft-04": "^1.0.0",
     "uri-js": "^4.4.1"
   }
 }
