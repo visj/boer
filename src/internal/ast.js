@@ -50,7 +50,7 @@ import { malloc, allocEnumSet } from "./allocate.js";
 import { popcnt16 } from "./util.js";
 
 const KIND_MASK = 0x0FFFFFFF;
-const MAX_DEPTH = 512;
+const INITIAL_STACK_SIZE = 512;
 
 // Compiler states — tracks each node's progress through the two-visit pattern.
 const UNVISITED = 0;
@@ -132,8 +132,12 @@ export function compile(cat, ast) {
     /** @type {Array<[number, number]>} */
     let dynRefPatches = [];
 
-    // Explicit compilation stack
-    let stack = new Uint32Array(MAX_DEPTH);
+    /**
+     * Explicit compilation stack. Sized to nodeCount * 2.
+     * Dynamic resize as a safety net if we still exceed capacity.
+     */
+    let stackLen = Math.floor(nodeCount * 2);
+    let stack = new Uint32Array(stackLen);
     let sp = 0;
 
     // Push all entry-point roots
@@ -183,12 +187,20 @@ export function compile(cat, ast) {
     }
 
     // ── Main compilation loop ──
-
     while (sp > 0) {
         let nodeId = stack[--sp];
 
         if (astState[nodeId] === COMPILED) {
             continue;
+        }
+
+        /** Grow the stack if we're running low on capacity. */
+        if (sp + nodeCount > stackLen) {
+            stackLen = stackLen << 1;
+            console.log("resize");
+            let bigger = new Uint32Array(stackLen);
+            bigger.set(stack);
+            stack = bigger;
         }
 
         let kind = astKinds[nodeId];

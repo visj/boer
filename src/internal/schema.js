@@ -1028,7 +1028,6 @@ CompoundSchema.prototype.bundle = function (schemas) {
     let dynAnchorInnerSet = new Set();
 
     // Phase 1: Iterative depth-first parse
-
     while (tail > 0) {
         tail--;
         let schema = frameSchema[tail];
