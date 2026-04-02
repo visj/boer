@@ -1053,7 +1053,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
             continue;
         }
 
-        if (schema === null) {
+        if (schema === null || typeof schema !== 'object') {
             throw new Error('Compiler error')
         }
 

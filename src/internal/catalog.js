@@ -1424,9 +1424,8 @@ function catalog(cfg) {
                  */
             }
 
-            let ptr = typedef >>> 3;
             let kinds = KINDS;
-            let kindsIdx = ptr << 1;
+            let kindsIdx = (typedef >>> 3) << 1;
             let header = kinds[kindsIdx];
             let ct = header & KIND_ENUM_MASK;
 
@@ -1474,10 +1473,10 @@ function catalog(cfg) {
                  * is active, _validateRareKind handles tracking separately.
                  */
                 let base = slabOffset + 1;
-                for (let i = 0; i < length; i++) {
-                    let keyId = slab[base + (i << 1)];
+                for (let i = 0; i < length; i++, base += 2) {
+                    let keyId = slab[base];
                     let key = KEY_INDEX[keyId];
-                    let type = slab[base + (i << 1) + 1];
+                    let type = slab[base + 1];
                     let hasProp = hasOwnProperty.call(data, key);
                     let val = hasProp ? data[key] : void 0;
 

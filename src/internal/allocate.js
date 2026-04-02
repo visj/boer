@@ -214,7 +214,7 @@ function migrateRegex(result, cache) {
  *   Bits 25-29 (5 bits): minLength (0 = no min, 1-31)
  *
  * @param {*} ctx
- * @param {!Object} opts
+ * @param {!Record<string, number | string>} opts
  * @returns {number} inline typedef or 0
  */
 function tryInlineString(ctx, opts) {
@@ -275,7 +275,7 @@ function tryInlineString(ctx, opts) {
  *
  * @param {*} ctx
  * @param {number} primConst - NUMBER or INTEGER
- * @param {!Object} opts
+ * @param {!Record<string, number | string>} opts
  * @returns {number} inline typedef or 0
  */
 function tryInlineNumber(ctx, primConst, opts) {
@@ -288,6 +288,7 @@ function tryInlineNumber(ctx, primConst, opts) {
      * Resolve effective min/max bounds. JSON Schema allows both `minimum` and
      * `exclusiveMinimum` to coexist; the stricter one wins.
      */
+    /** @type {number | void} */
     let effMin = void 0;
     let exclMin = 0;
     let rawMin = opts.minimum;
@@ -305,7 +306,7 @@ function tryInlineNumber(ctx, primConst, opts) {
         effMin = +rawExMin;
         exclMin = 1;
     }
-
+    /** @type {number | void} */
     let effMax = void 0;
     let exclMax = 0;
     let rawMax = opts.maximum;
@@ -370,7 +371,7 @@ function tryInlineNumber(ctx, primConst, opts) {
 /**
  * @param {*} ctx
  * @param {number} primConst
- * @param {!Object=} opts
+ * @param {!Record<string, string | number>=} opts
  * @returns {number}
  */
 function valueImpl(ctx, primConst, opts) {
@@ -480,6 +481,7 @@ function literalImpl(ctx, value) {
     if (typeof value === 'object') {
         /** Desugar to K_OBJECT with additionalProperties:false: each property is a literal type. */
         let keys = Object.keys(value);
+        /** @type {Record<string, number>} */
         let def = {};
         for (let i = 0; i < keys.length; i++) {
             def[keys[i]] = literalImpl(ctx, value[keys[i]]);
@@ -769,7 +771,7 @@ function objectImpl(ctx, definition, opts) {
  *   Bits 22-29 (8b):  minItems (0 = no min, 1-255)
  *
  * @param {number} elemType
- * @param {!Object|undefined} opts
+ * @param {!uvd.ArrayValidators=} opts
  * @returns {number} inline typedef or 0
  */
 function tryInlineArray(elemType, opts) {
