@@ -10,7 +10,7 @@ import {
 } from "./catalog.js";
 
 import {
-    popcnt16, ANY, STRING, NUMBER, INTEGER, BOOLEAN, VALUE, PRIM_MASK, SIMPLE,
+    ANY, STRING, NUMBER, INTEGER, BOOLEAN, VALUE, PRIM_MASK, SIMPLE,
     K_ANY_INNER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES,
     V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS, V_ENUM, V_CONTAINS,
     V_PROPERTY_NAMES, K_HAS_ITEMS, K_HAS_REST,
@@ -41,6 +41,8 @@ import {
 } from "./schema.js";
 
 import { malloc, allocEnumSet } from "./allocate.js";
+
+import { popcnt16 } from "./util.js";
 
 const KIND_MASK = 0x0FFFFFFF;
 const MAX_DEPTH = 512;

@@ -1,3 +1,9 @@
+/**
+ * Modified version of fast-deep-equal.
+ * Original Copyright (c) 2017 Evgeny Poberezkin
+ * See THIRD-PARTY-NOTICES.md for full attribution and license.
+ */
+
 import {
     COMPLEX, NULLABLE, OPTIONAL,
     ANY, BOOLEAN,
@@ -274,6 +280,37 @@ function _isValue(raw, mask) {
     );
 }
 
+/**
+ * SWAR popcount for lower 16 bits. Returns the number of set bits in x & 0xFFFF.
+ * Used to compute payload offset: popcnt16(vHeader & (FLAG - 1))
+ * @param {number} x
+ * @returns {number}
+ */
+function popcnt16(x) {
+    x = x - ((x >> 1) & 0x5555);
+    x = (x & 0x3333) + ((x >> 2) & 0x3333);
+    x = (x + (x >> 4)) & 0x0F0F;
+    return (x + (x >> 8)) & 0x1F;
+}
+
+/**
+ * Returns the number of Unicode code points in a string.
+ * JSON Schema counts code points, not UTF-16 code units.
+ * @param {string} str
+ * @returns {number}
+ */
+function codepointLen(str) {
+    let len = 0;
+    let strlen = str.length;
+    for (let i = 0; i < strlen; i++) {
+        let code = str.charCodeAt(i);
+        if (code >= 0xD800 && code <= 0xDBFF) {
+            i++;
+        }
+        len++;
+    }
+    return len;
+}
 
 /**
  * Appends primitive type labels from bit flags to parts array.
@@ -354,35 +391,117 @@ function describeType(type, kinds) {
 
 /**
  * 
- * @param {*} a 
- * @param {*} b 
- * @returns 
+ * @param {*} a
+ * @param {*} b
+ * @returns {boolean}
  */
 function deepEqual(a, b) {
-    if (a === b) return true;
-    if (a == null || b == null) return false;
-    let ta = typeof a, tb = typeof b;
-    if (ta !== tb) return false;
-    if (ta !== 'object') return false; 
-    let isArrA = Array.isArray(a);
-    let isArrB = Array.isArray(b);
-    if (isArrA !== isArrB) return false;
-    if (isArrA) {
-        if (a.length !== b.length) return false;
-        for (let i = 0; i < a.length; i++) {
-            if (!deepEqual(a[i], b[i])) return false;
-        }
+    if (a === b) {
         return true;
     }
-    let keysA = Object.keys(a);
-    let keysB = Object.keys(b);
-    if (keysA.length !== keysB.length) return false;
-    for (let i = 0; i < keysA.length; i++) {
-        let k = keysA[i];
-        if (!hasOwnProperty.call(b, k)) return false;
-        if (!deepEqual(a[k], b[k])) return false;
+
+    if (a && b && typeof a == 'object' && typeof b == 'object') {
+        if (a.constructor !== b.constructor) {
+            return false;
+        }
+
+        let length, i;
+
+        if (Array.isArray(a)) {
+            length = a.length;
+            if (length !== b.length) {
+                return false;
+            }
+            for (i = length; i-- !== 0;) {
+                if (!deepEqual(a[i], b[i])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        if ((a instanceof Map) && (b instanceof Map)) {
+            if (a.size !== b.size) {
+                return false;
+            }
+            for (i of a.entries()) {
+                if (!b.has(i[0])) {
+                    return false;
+                }
+            }
+            for (i of a.entries()) {
+                if (!deepEqual(i[1], b.get(i[0]))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        if ((a instanceof Set) && (b instanceof Set)) {
+            if (a.size !== b.size) {
+                return false;
+            }
+            for (i of a.entries()) {
+                if (!b.has(i[0])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        if (ArrayBuffer.isView(a) && ArrayBuffer.isView(b)) {
+            length = a.length;
+            if (length !== b.length) {
+                return false;
+            }
+            for (i = length; i-- !== 0;) {
+                if (a[i] !== b[i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        if (a.constructor === RegExp) {
+            return a.source === b.source && a.flags === b.flags;
+        }
+        if (a.valueOf !== Object.prototype.valueOf) {
+            return a.valueOf() === b.valueOf();
+        }
+        if (a.toString !== Object.prototype.toString) {
+            return a.toString() === b.toString();
+        }
+
+        /**
+         * Plain object comparison without Object.keys() allocation.
+         * Pass 1: iterate a's own keys, verify each exists in b with
+         * equal value, and count them.
+         * Pass 2: count b's own keys to detect extras.
+         */
+        let countA = 0;
+        for (let k in a) {
+            if (!hasOwnProperty.call(a, k)) {
+                continue;
+            }
+            countA++;
+            if (!hasOwnProperty.call(b, k)) {
+                return false;
+            }
+            if (!deepEqual(a[k], b[k])) {
+                return false;
+            }
+        }
+        let countB = 0;
+        for (let k in b) {
+            if (hasOwnProperty.call(b, k)) {
+                countB++;
+            }
+        }
+        return countA === countB;
     }
-    return true;
+
+    /** True if both NaN, false otherwise */
+    return a !== a && b !== b;
 }
 
 /**
@@ -436,5 +555,6 @@ export {
     isValidDate, isValidTime, isValidDateTime,
     deepEqual, sortByKeyId, parseValue,
     _isValue, describeType,
-    binarySearch, binarySearchPair
+    binarySearch, binarySearchPair,
+    popcnt16, codepointLen
 }

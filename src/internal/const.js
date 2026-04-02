@@ -230,19 +230,6 @@ const V_UNEVALUATED_PROPERTIES = 1 << 22;
 const V_UNIQUE_ITEMS = 1 << 29;
 const V_ADDITIONAL_PROPERTIES = 1 << 30;
 
-/**
- * SWAR popcount for lower 16 bits. Returns the number of set bits in x & 0xFFFF.
- * Used to compute payload offset: popcnt16(vHeader & (FLAG - 1))
- * @param {number} x
- * @returns {number}
- */
-function popcnt16(x) {
-    x = x - ((x >> 1) & 0x5555);
-    x = (x & 0x3333) + ((x >> 2) & 0x3333);
-    x = (x + (x >> 4)) & 0x0F0F;
-    return (x + (x >> 8)) & 0x1F;
-}
-
 // Format enum values (string format validator)
 const FMT_EMAIL = 1;
 const FMT_IPV4 = 2;
@@ -262,25 +249,6 @@ const FMT_MAP = { email: FMT_EMAIL, ipv4: FMT_IPV4, uuid: FMT_UUID, 'date-time':
 
 /** @const @type {symbol} */
 const FAIL = Symbol('FAIL');
-
-/**
- * Returns the number of Unicode code points in a string.
- * JSON Schema counts code points, not UTF-16 code units.
- * @param {string} str
- * @returns {number}
- */
-function codepointLen(str) {
-    let len = 0;
-    let strlen = str.length;
-    for (let i = 0; i < strlen; i++) {
-        let code = str.charCodeAt(i);
-        if (code >= 0xD800 && code <= 0xDBFF) {
-            i++;
-        }
-        len++;
-    }
-    return len;
-}
 
 const toString = Object.prototype.toString;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
@@ -315,12 +283,10 @@ export {
     V_MIN_ITEMS, V_MAX_ITEMS, V_CONTAINS, V_MIN_CONTAINS, V_MAX_CONTAINS,
     V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
     V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED,
-    V_UNEVALUATED_ITEMS, V_UNEVALUATED_PROPERTIES, V_DEPENDENT_SCHEMAS,
-    V_ENUM,
-    popcnt16,
+    V_UNEVALUATED_ITEMS, V_UNEVALUATED_PROPERTIES, V_DEPENDENT_SCHEMAS, V_ENUM,
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATE, FMT_TIME, FMT_DATETIME, FMT_MAP,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
-    FAIL, codepointLen, toString, hasOwnProperty
+    FAIL, toString, hasOwnProperty
 }
 
 // Backward-compatible aliases

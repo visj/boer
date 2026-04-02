@@ -14,10 +14,8 @@ import {
     V_UNIQUE_ITEMS, V_MIN_PROPERTIES, V_MAX_PROPERTIES, V_PATTERN_PROPERTIES, V_PROPERTY_NAMES,
     V_ADDITIONAL_PROPERTIES, V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS,
     V_ENUM, K_STRICT,
-    popcnt16,
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATE, FMT_TIME, FMT_DATETIME,
-    FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME,
-    codepointLen, hasOwnProperty,
+    FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME, hasOwnProperty,
     K_HAS_ITEMS, K_HAS_REST, MODIFIER, MOD_MASK, MOD_ARRAY, MOD_RECORD, MOD_ENUM,
     NUMBER, INTEGER, BOOLEAN,
     KINDS_SHIFT, V_PAYLOAD_MASK,
@@ -36,8 +34,8 @@ import {
     WORD_IDX_SHIFT, WORD_BIT_MASK, UNKNOWN_KEY_FLAG,
 } from './const.js';
 import {
-    sortByKeyId, _isValue, deepEqual,
-    binarySearch, binarySearchPair,
+    sortByKeyId, _isValue, deepEqual, codepointLen,
+    binarySearch, binarySearchPair, popcnt16,
     isValidTime, isValidDate, isValidDateTime
 } from './util.js';
 
@@ -90,6 +88,14 @@ function catalog(cfg) {
     const ENUMS = [];
     /** @type {!Array<*>} Inline constant arena for const values (MOD_ENUM, isSet=0) */
     const CONSTANTS = [];
+
+    /**
+     * Cached Set for primitive uniqueItems checks on large arrays.
+     * Lazily initialized, cleared after each use. Replaced with a fresh
+     * Set when capacity exceeds 256 to avoid retaining a large hash table.
+     * @type {Set<*>|null}
+     */
+    let UNIQUES = null;
 
     /** @type {number} */
     let keyseq = 1;
@@ -366,10 +372,59 @@ function catalog(cfg) {
         }
         if (vHeader & V_UNIQUE_ITEMS) {
             let length = data.length;
-            for (let i = 0; i < length; i++) {
-                for (let j = i + 1; j < length; j++) {
-                    if (deepEqual(data[i], data[j])) {
-                        return false;
+            if (length <= 16) {
+                /** Small array: O(n^2) with deepEqual, avoids Set overhead */
+                for (let i = 0; i < length; i++) {
+                    for (let j = i + 1; j < length; j++) {
+                        if (deepEqual(data[i], data[j])) {
+                            return false;
+                        }
+                    }
+                }
+            } else {
+                /**
+                 * Large array: probe whether all items are primitive.
+                 * If so, use O(n) Set path. Otherwise fall back to O(n^2) deepEqual.
+                 */
+                let allPrimitive = true;
+                for (let i = 0; i < length; i++) {
+                    let v = data[i];
+                    if (v !== null && typeof v === 'object') {
+                        allPrimitive = false;
+                        break;
+                    }
+                }
+                if (allPrimitive) {
+                    if (UNIQUES === null) {
+                        UNIQUES = new Set();
+                    } else if (UNIQUES.size > 0) {
+                        UNIQUES.clear();
+                    }
+                    let set = UNIQUES;
+                    for (let i = 0; i < length; i++) {
+                        let v = data[i];
+                        if (set.has(v)) {
+                            if (set.size > 256) {
+                                UNIQUES = null;
+                            } else {
+                                set.clear();
+                            }
+                            return false;
+                        }
+                        set.add(v);
+                    }
+                    if (set.size > 256) {
+                        UNIQUES = null;
+                    } else {
+                        set.clear();
+                    }
+                } else {
+                    for (let i = 0; i < length; i++) {
+                        for (let j = i + 1; j < length; j++) {
+                            if (deepEqual(data[i], data[j])) {
+                                return false;
+                            }
+                        }
                     }
                 }
             }
@@ -653,13 +708,40 @@ function catalog(cfg) {
                     return false;
                 }
             }
-            let unique = (typedef & MOD_ARRAY_UNIQUE_BIT) !== 0;
-            if (unique) {
-                for (let i = 0; i < len; i++) {
-                    for (let j = i + 1; j < len; j++) {
-                        if (deepEqual(data[i], data[j])) {
+            if ((typedef & MOD_ARRAY_UNIQUE_BIT) !== 0) {
+                if (len <= 16) {
+                    /** Small array: O(n^2) with === is faster than Set overhead */
+                    for (let i = 0; i < len; i++) {
+                        for (let j = i + 1; j < len; j++) {
+                            if (data[i] === data[j]) {
+                                return false;
+                            }
+                        }
+                    }
+                } else {
+                    /** Large primitive array: O(n) via Set */
+                    if (UNIQUES === null) {
+                        UNIQUES = new Set();
+                    } else if (UNIQUES.size > 0) {
+                        UNIQUES.clear();
+                    }
+                    let set = UNIQUES;
+                    for (let i = 0; i < len; i++) {
+                        let v = data[i];
+                        if (set.has(v)) {
+                            if (set.size > 256) {
+                                UNIQUES = null;
+                            } else {
+                                set.clear();
+                            }
                             return false;
                         }
+                        set.add(v);
+                    }
+                    if (set.size > 256) {
+                        UNIQUES = null;
+                    } else {
+                        set.clear();
                     }
                 }
             }
