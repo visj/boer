@@ -55,6 +55,10 @@ const FMT_NAMES = ['', 'email', 'ipv4', 'uuid', 'date', 'time', 'date-time'];
  * for every validation failure. Unlike validate, it collects ALL errors
  * (allErrors mode) rather than short-circuiting on the first failure.
  *
+ * This implementation is fully self-contained — it never calls `_validate`.
+ * Where a boolean result is needed (e.g. anyOf branch testing), it uses
+ * `_diagnose` with a temporary errors array and checks `tempErrors.length === 0`.
+ *
  * @template {symbol} R
  * @param {uvd.Catalog<R>} cat
  * @returns {uvd.Catalog<R>['diagnose']}
@@ -68,7 +72,6 @@ function createDiagnose(cat) {
     let CALLBACKS = h.CALLBACKS;
     let CONSTANTS = h.CONSTANTS;
     let ENUMS = h.ENUMS;
-    let _validate = h._validate;
 
     /**
      * Dynamic anchor scope stack for K_DYN_ANCHOR / K_DYN_REF.
@@ -78,6 +81,24 @@ function createDiagnose(cat) {
     let DYN_ANCHORS = [];
     /** @type {number} */
     let DYN_PTR = 0;
+
+    /**
+     * Tests whether data passes a typedef by running _diagnose with a
+     * temporary errors array. Returns true if no errors were produced.
+     * Used wherever validate needs a boolean result (anyOf branch testing,
+     * not checks, if/then/else conditions, etc.)
+     *
+     * @param {*} data
+     * @param {number} typedef
+     * @param {string} path
+     * @returns {boolean}
+     */
+    function _passes(data, typedef, path) {
+        /** @type {!Array<uvd.PathError>} */
+        let tempErrors = [];
+        _diagnose(data, typedef, path, tempErrors);
+        return tempErrors.length === 0;
+    }
 
     /**
      * Diagnoses a primitive validator (K_PRIMITIVE with K_VALIDATOR).
@@ -212,7 +233,8 @@ function createDiagnose(cat) {
 
     /**
      * Diagnoses an array validator (K_ARRAY / K_TUPLE with K_VALIDATOR).
-     * Mirrors runArrayValidator from catalog.js.
+     * Mirrors runArrayValidator from catalog.js. Fully self-contained:
+     * uses _passes instead of _validate for contains checks.
      *
      * @param {!Array<*>} data
      * @param {number} vHeader - validator bitmask
@@ -273,7 +295,8 @@ function createDiagnose(cat) {
             let matchCount = 0;
             let length = data.length;
             for (let i = 0; i < length; i++) {
-                if (_validate(data[i], containsType, 0, 0)) {
+                /** Use _passes instead of _validate for self-contained checking */
+                if (_passes(data[i], containsType, path + '[' + i + ']')) {
                     matchCount++;
                 }
             }
@@ -288,7 +311,8 @@ function createDiagnose(cat) {
 
     /**
      * Diagnoses an object validator (K_OBJECT with K_VALIDATOR).
-     * Mirrors runObjectValidator from catalog.js.
+     * Mirrors runObjectValidator from catalog.js. Fully self-contained:
+     * uses _diagnose and _passes instead of _validate throughout.
      *
      * @param {!Record<string,any>} data
      * @param {number} vHeader - validator bitmask
@@ -344,16 +368,18 @@ function createDiagnose(cat) {
             }
         }
 
-        /** V_DEPENDENT_SCHEMAS: validate dependent schemas when trigger is present */
+        /**
+         * V_DEPENDENT_SCHEMAS: validate dependent schemas when trigger is present.
+         * Uses _diagnose directly instead of _validate — collects all errors
+         * from the dependent schema into the main errors array.
+         */
         if (vHeader & V_DEPENDENT_SCHEMAS) {
             let depCount = vals[p++] | 0;
             for (let di = 0; di < depCount; di++) {
                 let triggerKey = KEY_INDEX[vals[p++] | 0];
                 let depSchemaType = vals[p++];
                 if (triggerKey !== void 0 && data[triggerKey] !== void 0) {
-                    if (!_validate(data, depSchemaType, 0, 0)) {
-                        _diagnose(data, depSchemaType, path, errors);
-                    }
+                    _diagnose(data, depSchemaType, path, errors);
                 }
             }
         }
@@ -402,9 +428,12 @@ function createDiagnose(cat) {
                 hasMaxProps = false;
             }
 
-            /** propertyNames: validate the key itself */
+            /**
+             * propertyNames: validate the key itself against the name schema.
+             * Uses _passes instead of _validate for self-contained checking.
+             */
             if (hasPropertyNames) {
-                if (!_validate(key, nameSchema, 0, 0)) {
+                if (!_passes(key, nameSchema, path)) {
                     errors.push({ path, message: "property name '" + key + "' does not match schema" });
                 }
             }
@@ -420,7 +449,10 @@ function createDiagnose(cat) {
                 }
             }
 
-            /** patternProperties: test key against each regex pattern */
+            /**
+             * patternProperties: test key against each regex pattern.
+             * Uses _diagnose directly to collect deep errors from matching patterns.
+             */
             if (hasPatterns) {
                 let pp = pPatternStart;
                 let patternCount = vals[pp++] | 0;
@@ -429,25 +461,24 @@ function createDiagnose(cat) {
                     let schemaType = vals[pp++];
                     if (REGEX_CACHE[reIdx].test(key)) {
                         patternMatched = true;
-                        if (!_validate(data[key], schemaType, 0, 0)) {
-                            let fieldPath = path ? path + '.' + key : key;
-                            errors.push({ path: fieldPath, message: "property '" + key + "' does not match pattern schema" });
-                        }
+                        let fieldPath = path ? path + '.' + key : key;
+                        _diagnose(data[key], schemaType, fieldPath, errors);
                     }
                 }
             }
 
-            /** additionalProperties: validate undeclared, unmatched keys */
+            /**
+             * additionalProperties: validate undeclared, unmatched keys.
+             * Uses _diagnose directly to collect deep errors.
+             */
             if (hasAdditional && !isDeclared && !patternMatched) {
                 if (addType === 0) {
                     /** additionalProperties: false */
                     let fieldPath = path ? path + '.' + key : key;
                     errors.push({ path: fieldPath, message: "additional property '" + key + "' is not allowed" });
                 } else {
-                    if (!_validate(data[key], addType, 0, 0)) {
-                        let fieldPath = path ? path + '.' + key : key;
-                        errors.push({ path: fieldPath, message: "additional property '" + key + "' does not match schema" });
-                    }
+                    let fieldPath = path ? path + '.' + key : key;
+                    _diagnose(data[key], addType, fieldPath, errors);
                 }
             }
         }
@@ -711,8 +742,568 @@ function createDiagnose(cat) {
     }
 
     /**
+     * Collects all property keys that a type structurally declares as "evaluated".
+     * Used by K_UNEVALUATED to determine which properties are covered by the
+     * inner type's structural keywords without needing the TRACK_* mechanism.
+     *
+     * For object types, declared properties are added to the set. For composition
+     * types (allOf, anyOf, oneOf, if/then/else), the function recurses into
+     * children and unions the results.
+     *
+     * @param {*} data - the actual data being validated (needed for conditional checks)
+     * @param {number} typedef - the type to walk
+     * @param {!Set<string>} result - accumulator set of evaluated key strings
+     */
+    function _collectEvaluatedKeys(data, typedef, result) {
+        /**
+         * Non-COMPLEX types: check for inline MOD_RECORD which evaluates
+         * all keys since it provides a schema for every property.
+         */
+        if (!(typedef & COMPLEX)) {
+            if ((typedef & MODIFIER) && (typedef & MOD_MASK) === MOD_RECORD) {
+                if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+                    for (let key in data) {
+                        if (hasOwnProperty.call(data, key)) {
+                            result.add(key);
+                        }
+                    }
+                }
+            }
+            return;
+        }
+        let kinds = HEAP.KINDS;
+        let slab = HEAP.SLAB;
+        let kindsIdx = (typedef >>> 3) << 1;
+        let header = kinds[kindsIdx];
+        let ct = header & KIND_ENUM_MASK;
+
+        if (ct === K_OBJECT) {
+            /** All declared property keys are evaluated */
+            let slabOffset = kinds[kindsIdx + 1];
+            let length = slab[slabOffset];
+            let base = slabOffset + 1;
+            for (let i = 0; i < length; i++) {
+                let keyId = slab[base + i * 2];
+                let key = KEY_INDEX[keyId];
+                if (key !== void 0) {
+                    result.add(key);
+                }
+            }
+            /**
+             * If the object has a validator with additionalProperties or patternProperties,
+             * those cover additional keys too.
+             */
+            if (header & K_VALIDATOR) {
+                let vHeader = kinds[kindsIdx + 2];
+                if (vHeader & V_ADDITIONAL_PROPERTIES) {
+                    /**
+                     * additionalProperties covers ALL remaining keys (even if false,
+                     * because "false" means they're evaluated-and-rejected).
+                     */
+                    if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+                        for (let key in data) {
+                            if (hasOwnProperty.call(data, key)) {
+                                result.add(key);
+                            }
+                        }
+                    }
+                }
+                if (vHeader & V_PATTERN_PROPERTIES) {
+                    /**
+                     * Pattern properties evaluate any key matching the patterns.
+                     */
+                    let vals = HEAP.VALIDATORS;
+                    let valPtr = kinds[kindsIdx + 3];
+                    /** Skip past min/maxProperties to reach pattern payload */
+                    let pp = valPtr;
+                    if (vHeader & V_MIN_PROPERTIES) {
+                        pp++;
+                    }
+                    if (vHeader & V_MAX_PROPERTIES) {
+                        pp++;
+                    }
+                    let patternCount = vals[pp++] | 0;
+                    if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+                        for (let key in data) {
+                            if (!hasOwnProperty.call(data, key)) {
+                                continue;
+                            }
+                            for (let pi = 0; pi < patternCount; pi++) {
+                                let reIdx = vals[pp + pi * 2] | 0;
+                                if (REGEX_CACHE[reIdx].test(key)) {
+                                    result.add(key);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                /**
+                 * V_DEPENDENT_SCHEMAS: when a trigger key is present in data,
+                 * the dependent schema structurally evaluates additional keys.
+                 * Walk the validator payload to find dependent schemas and
+                 * recursively collect their evaluated keys.
+                 */
+                if (vHeader & V_DEPENDENT_SCHEMAS) {
+                    let vals = HEAP.VALIDATORS;
+                    let valPtr = kinds[kindsIdx + 3];
+                    /**
+                     * Walk the payload in bit order to reach the dependent schemas
+                     * section. Must skip past all earlier sections.
+                     */
+                    let dp = valPtr;
+                    if (vHeader & V_MIN_PROPERTIES) {
+                        dp++;
+                    }
+                    if (vHeader & V_MAX_PROPERTIES) {
+                        dp++;
+                    }
+                    if (vHeader & V_PATTERN_PROPERTIES) {
+                        let patternCount = vals[dp++] | 0;
+                        dp += patternCount * 2;
+                    }
+                    if (vHeader & V_PROPERTY_NAMES) {
+                        dp++;
+                    }
+                    if (vHeader & V_DEPENDENT_REQUIRED) {
+                        let triggerCount = vals[dp++] | 0;
+                        for (let ti = 0; ti < triggerCount; ti++) {
+                            dp++; // triggerKeyId
+                            let depCount = vals[dp++] | 0;
+                            dp += depCount; // skip dep keyIds
+                        }
+                    }
+                    /** Now at V_DEPENDENT_SCHEMAS payload */
+                    if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+                        let depCount = vals[dp++] | 0;
+                        for (let di = 0; di < depCount; di++) {
+                            let triggerKey = KEY_INDEX[vals[dp++] | 0];
+                            let depSchemaType = vals[dp++];
+                            if (triggerKey !== void 0 && data[triggerKey] !== void 0) {
+                                _collectEvaluatedKeys(data, depSchemaType, result);
+                            }
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
+        if (ct === K_INTERSECT) {
+            /** allOf: union of evaluated keys from all branches */
+            let slabOffset = kinds[kindsIdx + 1];
+            let count = slab[slabOffset];
+            for (let i = 0; i < count; i++) {
+                _collectEvaluatedKeys(data, slab[slabOffset + 1 + i], result);
+            }
+            return;
+        }
+
+        if (ct === K_OR) {
+            /**
+             * anyOf: per JSON Schema spec, annotations from all passing
+             * branches are collected. Union of evaluated keys from passing branches.
+             */
+            let slabOffset = kinds[kindsIdx + 1];
+            let count = slab[slabOffset];
+            for (let i = 0; i < count; i++) {
+                let branchType = slab[slabOffset + 1 + i];
+                if (_passes(data, branchType, '')) {
+                    _collectEvaluatedKeys(data, branchType, result);
+                }
+            }
+            return;
+        }
+
+        if (ct === K_EXCLUSIVE) {
+            /** oneOf: evaluated keys from the single passing branch */
+            let slabOffset = kinds[kindsIdx + 1];
+            let count = slab[slabOffset];
+            for (let i = 0; i < count; i++) {
+                let branchType = slab[slabOffset + 1 + i];
+                if (_passes(data, branchType, '')) {
+                    _collectEvaluatedKeys(data, branchType, result);
+                    break;
+                }
+            }
+            return;
+        }
+
+        if (ct === K_CONDITIONAL) {
+            /**
+             * if/then/else: if passes -> evaluated from if + then.
+             * if fails -> evaluated from else.
+             */
+            let slabOffset = kinds[kindsIdx + 1];
+            let ifType = slab[slabOffset + 1];
+            let thenType = slab[slabOffset + 2];
+            let elseType = slab[slabOffset + 3];
+            if (_passes(data, ifType, '')) {
+                _collectEvaluatedKeys(data, ifType, result);
+                _collectEvaluatedKeys(data, thenType, result);
+            } else {
+                _collectEvaluatedKeys(data, elseType, result);
+            }
+            return;
+        }
+
+        if (ct === K_REFINE) {
+            /** Refine wraps an inner type: evaluated keys come from the inner type */
+            let slabOffset = kinds[kindsIdx + 1];
+            let innerType = slab[slabOffset + 1];
+            _collectEvaluatedKeys(data, innerType, result);
+            return;
+        }
+
+        if (ct === K_RECORD) {
+            /**
+             * Record types evaluate all own keys since they provide
+             * a schema for every possible property.
+             */
+            if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+                for (let key in data) {
+                    if (hasOwnProperty.call(data, key)) {
+                        result.add(key);
+                    }
+                }
+            }
+            return;
+        }
+
+        if (ct === K_UNEVALUATED) {
+            /**
+             * Nested unevaluated: the inner type's evaluated keys
+             * plus the unevalType covers the rest.
+             */
+            let slabOffset = kinds[kindsIdx + 1];
+            let innerType = slab[slabOffset + 1];
+            _collectEvaluatedKeys(data, innerType, result);
+            /** The unevalType covers everything the inner type didn't */
+            if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+                for (let key in data) {
+                    if (hasOwnProperty.call(data, key)) {
+                        result.add(key);
+                    }
+                }
+            }
+            return;
+        }
+
+        if (ct === K_DYN_ANCHOR) {
+            /**
+             * Dynamic anchor wraps an inner type and provides a scope
+             * for dynamic references. Push scope, walk inner type, pop scope.
+             */
+            let slabOffset = kinds[kindsIdx + 1];
+            DYN_ANCHORS[DYN_PTR++] = slabOffset;
+            _collectEvaluatedKeys(data, slab[slabOffset + 1], result);
+            DYN_PTR--;
+            return;
+        }
+
+        if (ct === K_DYN_REF) {
+            /**
+             * Dynamic reference: resolve target type through DYN_ANCHORS
+             * scope stack, then collect evaluated keys from resolved target.
+             */
+            let slabOffset = kinds[kindsIdx + 1];
+            let anchorKeyId = slab[slabOffset + 1];
+            let targetType = slab[slabOffset + 2];
+            for (let i = 0; i < DYN_PTR; i++) {
+                let scopeSlabOffset = DYN_ANCHORS[i];
+                let scopeCount = slab[scopeSlabOffset];
+                let pairBase = scopeSlabOffset + 2;
+                let mid = binarySearchPair(slab, pairBase, scopeCount, anchorKeyId);
+                if (mid >= 0) {
+                    targetType = slab[pairBase + mid * 2 + 1];
+                    break;
+                }
+            }
+            _collectEvaluatedKeys(data, targetType, result);
+            return;
+        }
+
+        if (ct === K_PRIMITIVE) {
+            /** Primitive types don't evaluate object keys */
+            return;
+        }
+    }
+
+    /**
+     * Collects the set of array indices that a type structurally evaluates.
+     * Used by K_UNEVALUATED (mode=1) to determine which items are covered
+     * by the inner type's structural keywords.
+     *
+     * @param {*} data - the actual data (needed for conditional/branch checks)
+     * @param {number} typedef - the type to walk
+     * @param {number} dataLength - length of the array being validated
+     * @param {!Set<number>} result - accumulator set of evaluated item indices
+     */
+    function _collectEvaluatedItems(data, typedef, dataLength, result) {
+        /**
+         * Non-COMPLEX types: check for inline MOD_ARRAY which evaluates
+         * all items since it provides a schema for every element.
+         */
+        if (!(typedef & COMPLEX)) {
+            if ((typedef & MODIFIER) && (typedef & MOD_MASK) === MOD_ARRAY) {
+                for (let i = 0; i < dataLength; i++) {
+                    result.add(i);
+                }
+            }
+            return;
+        }
+        let kinds = HEAP.KINDS;
+        let slab = HEAP.SLAB;
+        let kindsIdx = (typedef >>> 3) << 1;
+        let header = kinds[kindsIdx];
+        let ct = header & KIND_ENUM_MASK;
+
+        if (ct === K_ARRAY) {
+            /**
+             * K_ARRAY with K_HAS_ITEMS evaluates all items.
+             * Without K_HAS_ITEMS it's a bare array container.
+             */
+            if (header & K_HAS_ITEMS) {
+                for (let i = 0; i < dataLength; i++) {
+                    result.add(i);
+                }
+            }
+            /**
+             * If the array has a validator with V_CONTAINS, matching items
+             * are evaluated. We check each item against the contains type.
+             */
+            if (header & K_VALIDATOR) {
+                let vHeader = kinds[kindsIdx + 2];
+                if (vHeader & V_CONTAINS) {
+                    let vals = HEAP.VALIDATORS;
+                    let valPtr = kinds[kindsIdx + 3];
+                    let cp = valPtr + popcnt16(vHeader & (V_CONTAINS - 1));
+                    let containsType = vals[cp] >>> 0;
+                    for (let i = 0; i < dataLength; i++) {
+                        if (_passes(data[i], containsType, '')) {
+                            result.add(i);
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
+        if (ct === K_TUPLE) {
+            /** Tuple evaluates prefix items, and rest items if K_HAS_REST */
+            let slabOffset = kinds[kindsIdx + 1];
+            let count = slab[slabOffset];
+            let hasRest = (header & K_HAS_REST) !== 0;
+            let fixedCount = hasRest ? count - 1 : count;
+            let evalCount = dataLength < fixedCount ? dataLength : fixedCount;
+            for (let i = 0; i < evalCount; i++) {
+                result.add(i);
+            }
+            if (hasRest) {
+                for (let i = fixedCount; i < dataLength; i++) {
+                    result.add(i);
+                }
+            }
+            /**
+             * If the tuple has a validator with V_CONTAINS, matching items
+             * are evaluated.
+             */
+            if (header & K_VALIDATOR) {
+                let vHeader = kinds[kindsIdx + 2];
+                if (vHeader & V_CONTAINS) {
+                    let vals = HEAP.VALIDATORS;
+                    let valPtr = kinds[kindsIdx + 3];
+                    let cp = valPtr + popcnt16(vHeader & (V_CONTAINS - 1));
+                    let containsType = vals[cp] >>> 0;
+                    for (let i = 0; i < dataLength; i++) {
+                        if (_passes(data[i], containsType, '')) {
+                            result.add(i);
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
+        if (ct === K_INTERSECT) {
+            /** allOf: union of evaluated items from all branches */
+            let slabOffset = kinds[kindsIdx + 1];
+            let count = slab[slabOffset];
+            for (let i = 0; i < count; i++) {
+                _collectEvaluatedItems(data, slab[slabOffset + 1 + i], dataLength, result);
+            }
+            return;
+        }
+
+        if (ct === K_OR) {
+            /** anyOf: union of evaluated items from passing branches */
+            let slabOffset = kinds[kindsIdx + 1];
+            let count = slab[slabOffset];
+            for (let i = 0; i < count; i++) {
+                let branchType = slab[slabOffset + 1 + i];
+                if (_passes(data, branchType, '')) {
+                    _collectEvaluatedItems(data, branchType, dataLength, result);
+                }
+            }
+            return;
+        }
+
+        if (ct === K_EXCLUSIVE) {
+            /** oneOf: evaluated items from the single passing branch */
+            let slabOffset = kinds[kindsIdx + 1];
+            let count = slab[slabOffset];
+            for (let i = 0; i < count; i++) {
+                let branchType = slab[slabOffset + 1 + i];
+                if (_passes(data, branchType, '')) {
+                    _collectEvaluatedItems(data, branchType, dataLength, result);
+                    break;
+                }
+            }
+            return;
+        }
+
+        if (ct === K_CONDITIONAL) {
+            /** if/then/else: evaluated items depend on which branch passes */
+            let slabOffset = kinds[kindsIdx + 1];
+            let ifType = slab[slabOffset + 1];
+            let thenType = slab[slabOffset + 2];
+            let elseType = slab[slabOffset + 3];
+            if (_passes(data, ifType, '')) {
+                _collectEvaluatedItems(data, ifType, dataLength, result);
+                _collectEvaluatedItems(data, thenType, dataLength, result);
+            } else {
+                _collectEvaluatedItems(data, elseType, dataLength, result);
+            }
+            return;
+        }
+
+        if (ct === K_REFINE) {
+            let slabOffset = kinds[kindsIdx + 1];
+            let innerType = slab[slabOffset + 1];
+            _collectEvaluatedItems(data, innerType, dataLength, result);
+            return;
+        }
+
+        if (ct === K_UNEVALUATED) {
+            /**
+             * Nested unevaluated covers inner + unevalType for everything else.
+             * Mark all items as evaluated since the wrapper covers them.
+             */
+            let slabOffset = kinds[kindsIdx + 1];
+            let innerType = slab[slabOffset + 1];
+            _collectEvaluatedItems(data, innerType, dataLength, result);
+            for (let i = 0; i < dataLength; i++) {
+                result.add(i);
+            }
+            return;
+        }
+
+        if (ct === K_DYN_ANCHOR) {
+            /**
+             * Dynamic anchor wraps an inner type and provides a scope
+             * for dynamic references. Push scope, walk inner type, pop scope.
+             */
+            let slabOffset = kinds[kindsIdx + 1];
+            DYN_ANCHORS[DYN_PTR++] = slabOffset;
+            _collectEvaluatedItems(data, slab[slabOffset + 1], dataLength, result);
+            DYN_PTR--;
+            return;
+        }
+
+        if (ct === K_DYN_REF) {
+            /**
+             * Dynamic reference: resolve target type through DYN_ANCHORS
+             * scope stack, then collect evaluated items from resolved target.
+             */
+            let slabOffset = kinds[kindsIdx + 1];
+            let anchorKeyId = slab[slabOffset + 1];
+            let targetType = slab[slabOffset + 2];
+            for (let i = 0; i < DYN_PTR; i++) {
+                let scopeSlabOffset = DYN_ANCHORS[i];
+                let scopeCount = slab[scopeSlabOffset];
+                let pairBase = scopeSlabOffset + 2;
+                let mid = binarySearchPair(slab, pairBase, scopeCount, anchorKeyId);
+                if (mid >= 0) {
+                    targetType = slab[pairBase + mid * 2 + 1];
+                    break;
+                }
+            }
+            _collectEvaluatedItems(data, targetType, dataLength, result);
+            return;
+        }
+    }
+
+    /**
+     * Diagnoses K_UNEVALUATED — wraps an inner type with evaluation tracking.
+     * This implementation is fully self-contained: it walks the inner type
+     * structure via _collectEvaluatedKeys/_collectEvaluatedItems to determine
+     * which properties/items are "evaluated", then diagnoses any unevaluated
+     * ones against the unevalType schema.
+     *
+     * @param {*} data
+     * @param {number} innerType - the inner type that the unevaluated wrapper contains
+     * @param {number} unevalType - the schema that unevaluated properties/items must match
+     * @param {number} unevalMode - 0 = property tracking (objects), 1 = item tracking (arrays)
+     * @param {string} path
+     * @param {!Array<uvd.PathError>} errors
+     */
+    function _diagnoseUnevaluated(data, innerType, unevalType, unevalMode, path, errors) {
+        if (unevalMode === 1) {
+            /** Items tracking (arrays) */
+            if (!Array.isArray(data)) {
+                /** Not an array: just diagnose the inner type */
+                _diagnose(data, innerType, path, errors);
+                return;
+            }
+
+            /** First, diagnose the inner type to collect its errors */
+            _diagnose(data, innerType, path, errors);
+
+            /**
+             * Collect which items are structurally evaluated by the inner type.
+             * Any item NOT in this set must match unevalType.
+             */
+            let evaluated = new Set();
+            _collectEvaluatedItems(data, innerType, data.length, evaluated);
+            for (let i = 0; i < data.length; i++) {
+                if (!evaluated.has(i)) {
+                    _diagnose(data[i], unevalType, path + '[' + i + ']', errors);
+                }
+            }
+            return;
+        }
+
+        /** Property tracking (objects) */
+        if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+            /** Not an object: just diagnose the inner type */
+            _diagnose(data, innerType, path, errors);
+            return;
+        }
+
+        /** First, diagnose the inner type to collect its errors */
+        _diagnose(data, innerType, path, errors);
+
+        /**
+         * Collect which keys are structurally evaluated by the inner type.
+         * Any key NOT in this set must match unevalType.
+         */
+        let evaluated = new Set();
+        _collectEvaluatedKeys(data, innerType, evaluated);
+        for (let key in data) {
+            if (!hasOwnProperty.call(data, key)) {
+                continue;
+            }
+            if (!evaluated.has(key)) {
+                let fieldPath = path ? path + '.' + key : key;
+                _diagnose(data[key], unevalType, fieldPath, errors);
+            }
+        }
+    }
+
+    /**
      * Main diagnose function. Mirrors _validate from catalog.js, collecting
      * all errors into the errors array instead of returning false.
+     * Fully self-contained — never calls _validate.
      *
      * @param {*} data
      * @param {number} typedef
@@ -804,8 +1395,9 @@ function createDiagnose(cat) {
                             /**
                              * COMPLEX types may accept null through composition
                              * operators (oneOf/anyOf with a null branch).
+                             * Use _passes instead of _validate to check.
                              */
-                            if (!(type & NULLABLE) && !_validate(val, type, 0, 0)) {
+                            if (!(type & NULLABLE) && !_passes(val, type, fieldPath)) {
                                 _diagnose(val, type, fieldPath, errors);
                             }
                         } else if (!(type & (NULLABLE | ANY))) {
@@ -937,7 +1529,8 @@ function createDiagnose(cat) {
 
     /**
      * Handles rare complex kinds that are not on the hot path.
-     * Mirrors _validateRareKind from catalog.js.
+     * Mirrors _validateRareKind from catalog.js. Fully self-contained:
+     * uses _diagnose + _passes instead of _validate throughout.
      *
      * @param {*} data
      * @param {number} ct - kind enum
@@ -965,21 +1558,31 @@ function createDiagnose(cat) {
                 return;
             }
             case K_INTERSECT: {
+                /**
+                 * allOf: diagnose each branch directly into the main errors array.
+                 * This naturally collects all errors from all failing branches.
+                 */
                 let slabOffset = kinds[kindsIdx + 1];
                 let count = slab[slabOffset];
                 for (let i = 0; i < count; i++) {
-                    let branchType = slab[slabOffset + 1 + i];
-                    if (!_validate(data, branchType, 0, 0)) {
-                        _diagnose(data, branchType, path, errors);
-                    }
+                    _diagnose(data, slab[slabOffset + 1 + i], path, errors);
                 }
                 return;
             }
             case K_OR: {
+                /**
+                 * anyOf: test each branch with temp errors. If any branch
+                 * produces 0 errors, the data passes. If none pass, push
+                 * a single "did not match any" error.
+                 */
                 let slabOffset = kinds[kindsIdx + 1];
                 let count = slab[slabOffset];
                 for (let i = 0; i < count; i++) {
-                    if (_validate(data, slab[slabOffset + 1 + i], 0, 0)) {
+                    /** @type {!Array<uvd.PathError>} */
+                    let tempErrors = [];
+                    _diagnose(data, slab[slabOffset + 1 + i], path, tempErrors);
+                    if (tempErrors.length === 0) {
+                        /** Branch matched: anyOf passes */
                         return;
                     }
                 }
@@ -987,11 +1590,18 @@ function createDiagnose(cat) {
                 return;
             }
             case K_EXCLUSIVE: {
+                /**
+                 * oneOf: test each branch with temp errors. Count how many
+                 * produce 0 errors. Exactly 1 must pass.
+                 */
                 let slabOffset = kinds[kindsIdx + 1];
                 let count = slab[slabOffset];
                 let matchCount = 0;
                 for (let i = 0; i < count; i++) {
-                    if (_validate(data, slab[slabOffset + 1 + i], 0, 0)) {
+                    /** @type {!Array<uvd.PathError>} */
+                    let tempErrors = [];
+                    _diagnose(data, slab[slabOffset + 1 + i], path, tempErrors);
+                    if (tempErrors.length === 0) {
                         matchCount++;
                     }
                 }
@@ -1068,16 +1678,21 @@ function createDiagnose(cat) {
                 return;
             }
             case K_REFINE: {
+                /**
+                 * Diagnose inner type first. If inner passes (0 errors from
+                 * temp check), test callback and report if it fails.
+                 */
                 let slabOffset = kinds[kindsIdx + 1];
                 let innerType = slab[slabOffset + 1];
                 let callbackIdx = slab[slabOffset + 2];
-                /** First recurse into the inner type to collect its errors */
+                /** Collect inner type errors into the main errors array */
                 _diagnose(data, innerType, path, errors);
                 /**
-                 * If the inner type validates but the callback fails,
-                 * report the refinement failure separately.
+                 * Check if inner type passes (using temp errors) to decide
+                 * whether to run the callback. Only test the callback if
+                 * the data actually matches the inner type.
                  */
-                if (_validate(data, innerType, 0, 0)) {
+                if (_passes(data, innerType, path)) {
                     if (!CALLBACKS[callbackIdx](data)) {
                         errors.push({ path, message: 'refinement check failed' });
                     }
@@ -1085,39 +1700,57 @@ function createDiagnose(cat) {
                 return;
             }
             case K_NOT: {
-                if (_validate(data, kinds[kindsIdx + 1], 0, 0)) {
+                /**
+                 * not: call _diagnose with temp errors. If temp is empty
+                 * (value matched the inner type), push "should NOT match".
+                 * If temp has errors (value didn't match), that's correct.
+                 */
+                /** @type {!Array<uvd.PathError>} */
+                let tempErrors = [];
+                _diagnose(data, kinds[kindsIdx + 1], path, tempErrors);
+                if (tempErrors.length === 0) {
                     errors.push({ path, message: 'value should NOT match the given type' });
                 }
                 return;
             }
             case K_CONDITIONAL: {
+                /**
+                 * if/then/else: test if-branch with temp errors.
+                 * If empty (if passed), diagnose then-branch.
+                 * If temp has errors (if failed), diagnose else-branch.
+                 */
                 let slabOffset = kinds[kindsIdx + 1];
                 let ifType = slab[slabOffset + 1];
                 let thenType = slab[slabOffset + 2];
                 let elseType = slab[slabOffset + 3];
-                if (_validate(data, ifType, 0, 0)) {
+                /** @type {!Array<uvd.PathError>} */
+                let tempErrors = [];
+                _diagnose(data, ifType, path, tempErrors);
+                if (tempErrors.length === 0) {
+                    /** if-branch passed: diagnose then-branch */
                     _diagnose(data, thenType, path, errors);
                 } else {
+                    /** if-branch failed: diagnose else-branch */
                     _diagnose(data, elseType, path, errors);
                 }
                 return;
             }
             case K_DYN_ANCHOR: {
+                /** Push scope onto DYN_ANCHORS stack, diagnose inner type */
                 let slabOffset = kinds[kindsIdx + 1];
-                /** Push scope onto DYN_ANCHORS stack */
                 DYN_ANCHORS[DYN_PTR++] = slabOffset;
                 _diagnose(data, slab[slabOffset + 1], path, errors);
                 DYN_PTR--;
                 return;
             }
             case K_DYN_REF: {
+                /**
+                 * Resolve the target type by searching the DYN_ANCHORS scope
+                 * stack, then diagnose the resolved type directly.
+                 */
                 let slabOffset = kinds[kindsIdx + 1];
                 let anchorKeyId = slab[slabOffset + 1];
                 let targetType = slab[slabOffset + 2];
-                /**
-                 * Search the scope stack outermost (0) to innermost (DYN_PTR - 1).
-                 * The first match wins per Draft 2020-12 spec.
-                 */
                 for (let i = 0; i < DYN_PTR; i++) {
                     let scopeSlabOffset = DYN_ANCHORS[i];
                     let scopeCount = slab[scopeSlabOffset];
@@ -1133,102 +1766,15 @@ function createDiagnose(cat) {
             }
             case K_UNEVALUATED: {
                 /**
-                 * K_UNEVALUATED wraps an inner type with evaluation tracking.
-                 * For diagnose, we use _validate (with tracking) to identify which
-                 * items/props are evaluated, then check unevaluated ones.
+                 * K_UNEVALUATED: delegates to _diagnoseUnevaluated which walks the
+                 * inner type structure to determine evaluated keys/items, then
+                 * diagnoses any unevaluated ones against unevalType.
                  */
                 let slabOffset = kinds[kindsIdx + 1];
                 let innerType = slab[slabOffset + 1];
                 let unevalType = slab[slabOffset + 2];
                 let unevalMode = slab[slabOffset + 3];
-
-                if (unevalMode === 1) {
-                    /** Items tracking (arrays) */
-                    if (!Array.isArray(data)) {
-                        /** Not an array: delegate to inner type */
-                        _diagnose(data, innerType, path, errors);
-                        return;
-                    }
-                    /**
-                     * First diagnose the inner type to collect its errors.
-                     * Then use _validate with tracking to find unevaluated items.
-                     */
-                    _diagnose(data, innerType, path, errors);
-
-                    /**
-                     * For unevaluated items, we need to know which items were evaluated.
-                     * We use _validate on each item individually to determine this.
-                     * An item is "evaluated" if the inner type's item schema matched it.
-                     * Items not evaluated must pass the unevalType.
-                     */
-                    if (_validate(data, innerType, 0, 0)) {
-                        /**
-                         * Inner type passed. Any item not structurally covered
-                         * needs to match unevalType. We rely on the catalog's
-                         * tracking mechanism: call _validate with trackPtr to discover.
-                         * For diagnose, we approximate: if the overall validates, check
-                         * each item against unevalType if it doesn't match any known schema.
-                         */
-                    }
-                    /**
-                     * Simpler approach: run full _validate with tracking to find
-                     * unevaluated items, then diagnose the failing ones.
-                     */
-                    let itemCount = data.length;
-                    for (let i = 0; i < itemCount; i++) {
-                        /**
-                         * Check if this item fails the unevalType, but only if it
-                         * wasn't covered by the inner type's item schemas.
-                         * Since we can't easily track without the internal TRACK_* arrays,
-                         * we use a simplified check: try the full typedef _validate first.
-                         * If it fails, and the inner type also fails this specific item,
-                         * then report via _diagnose.
-                         */
-                        if (!_validate(data[i], unevalType, 0, 0)) {
-                            /**
-                             * This item doesn't match unevalType. But it might have been
-                             * evaluated by the inner type. The full typedef's _validate
-                             * will tell us if the overall schema rejects this.
-                             */
-                            if (!_validate(data, typedef, 0, 0)) {
-                                /** Only report if the overall typedef fails */
-                                errors.push({ path: path + '[' + i + ']', message: 'unevaluated item [' + i + '] is not allowed' });
-                            }
-                        }
-                    }
-                    return;
-                }
-
-                /** Property tracking (objects) */
-                if (typeof data !== 'object' || data === null || Array.isArray(data)) {
-                    _diagnose(data, innerType, path, errors);
-                    return;
-                }
-
-                /** Diagnose inner type errors first */
-                _diagnose(data, innerType, path, errors);
-
-                /**
-                 * For unevaluated properties: the full typedef's _validate with
-                 * tracking determines which properties are evaluated. If the
-                 * overall schema fails, check each property individually.
-                 */
-                let overallFails = !_validate(data, typedef, 0, 0);
-                if (overallFails) {
-                    for (let key in data) {
-                        if (!hasOwnProperty.call(data, key)) {
-                            continue;
-                        }
-                        if (!_validate(data[key], unevalType, 0, 0)) {
-                            /**
-                             * Check if this property was covered by inner type's
-                             * declared properties. Use the inner type to test.
-                             */
-                            let fieldPath = path ? path + '.' + key : key;
-                            errors.push({ path: fieldPath, message: "unevaluated property '" + key + "' is not allowed" });
-                        }
-                    }
-                }
+                _diagnoseUnevaluated(data, innerType, unevalType, unevalMode, path, errors);
                 return;
             }
             default: {

@@ -673,13 +673,15 @@ describe('diagnose: JSON Schema suite agreement', () => {
                         compileError = err;
                     }
 
-                    if (compileError) {
-                        continue;
-                    }
-
                     describe(`${file} — ${group.description}`, () => {
                         for (let tc of group.tests) {
                             test(tc.description, () => {
+                                if (compileError) {
+                                    throw new Error(
+                                        `Parser/Compiler failed: ${compileError.message}\n` +
+                                        `Schema: ${JSON.stringify(group.schema)}`
+                                    );
+                                }
                                 let valid = suiteCat.validate(tc.data, compiledRoot);
                                 let errs = suiteDiagnose(tc.data, compiledRoot);
 
