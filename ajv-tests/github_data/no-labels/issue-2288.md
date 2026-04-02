@@ -1,6 +1,0 @@
-# [2288] Modify value while validating
-
-hello there.... i am new to `Ajv`. i just want to ask how can i modify value while validatiing...
-**For example**
-lets say i have date field and date is in format `yyyy-MM-dd` and i just want to add time `hh:mm:ss`...
-how can i acheive this....?

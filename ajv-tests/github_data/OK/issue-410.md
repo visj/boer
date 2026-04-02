@@ -1,5 +1,0 @@
-# [410] additionalProperties and switch don't mix very well together
-
-I'm an [objection](https://github.com/Vincit/objection.js) user, and i've implemented a 'block' schema that can be extended depending on the value of a `type` property, using `switch` keyword: [an example schema and data here](https://github.com/Vincit/objection.js/issues/299).
-However, when i try to add `additionalProperties: false` somewhere in that schema, it either just doesn't work if i put it on the root `properties` object, or complains about properties (supposedly) inherited from the root `properties` object if i put it on the switch `properties` objects.
-It looks like there is some problem with the specification but i figured i would talk about it here before reporting anything to https://github.com/json-schema-org/json-schema-spec.

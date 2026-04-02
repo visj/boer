@@ -1,3 +1,0 @@
-# [1009] question: Validating data against a portion of a schema
-
-Is there a way to validate data against a specific sub-schema within a JSON Schema document?  Let's say I have an object representing a person, and it's JSON Schema is located in my full schema at `#/models/Person`.  How can I ask `ajv` to validate my data against `#/models/Person`?  I could use [json-refs](https://github.com/whitlockjc/json-refs) to fully-resolve my large JSON Schema document _(to make sure all `$ref` under `#/definitions/Person` are resolved, resulting in a complete JSON Schema at `#/models/Person`)_, cherry-pick the sub-schema at `#/models/Person` and then use `ajv` but it would be slick if I could ask `ajv` to use a schema within an existing JSON Schema.

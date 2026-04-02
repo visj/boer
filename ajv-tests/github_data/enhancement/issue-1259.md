@@ -1,3 +1,0 @@
-# [1259] v7 - Optional properties
-
-It is probably wrong to include this into strict mode (#1258), as it is a substantial change in behaviour. But it is also source of many mistakes, so it could be an extra option `strictProperties: true` that defines keyword `optionalProperties: ["foo", "bar"]` and requires that ALL properties defined in "properties" keyword are either listed in "required" keyword or in "optionalProperties" keyword.
