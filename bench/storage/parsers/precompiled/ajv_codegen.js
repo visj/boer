@@ -49,7 +49,7 @@ let ajv;
 if (draft === 'draft-04') {
     ajv = new AjvDraft04({ allErrors: false, strict: false, code: { source: true, esm: true } });
 } else {
-    ajv = new Ajv({ allErrors: false, code: { source: true, esm: true } });
+    ajv = new Ajv({ allErrors: false, strict: false, code: { source: true, esm: true } });
 }
 
 console.log('Step 1: Compiling with AJV...');

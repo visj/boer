@@ -4,7 +4,7 @@ import Ajv from 'ajv';
 import standaloneCode from 'ajv/dist/standalone/index.js';
 import * as z from "zod";
 
-import { catalog, CompoundSchema, compile } from '../src/core.js';
+import { catalog, CompoundSchema, compile } from 'uvd/core';
 
 // Note: Adjust these imports to match exactly where your new schema compiler lives!
 // import { CompoundSchema } from '../src/internal/schema.js';

@@ -23,8 +23,8 @@ const {
     optional, nullable,
 } = allocators(uvd);
 
-export const conform = createConform(uvd);
 export const validate = uvd.validate;
+export const conform = createConform(uvd);
 export const diagnose = createDiagnose(uvd);
 
 export {

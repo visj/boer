@@ -3,7 +3,7 @@ import { run, bench, group } from 'mitata';
 import Ajv from 'ajv';
 import * as z from "zod";
 
-import { catalog, CompoundSchema, compile } from '../dist/core.js';
+import { catalog, CompoundSchema, compile } from '../../dist/core.js';
 
 // ────────────────────────────────────────────────────────────────────────────
 // 1. THE SCHEMA (Massive B2B Logistics & Fraud Telemetry)
