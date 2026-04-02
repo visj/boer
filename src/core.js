@@ -21,4 +21,4 @@ export {
 } from './internal/allocate.js';
 export { compile } from './internal/ast.js';
 export { CompoundSchema } from './internal/schema.js';
-export { print, dump } from './internal/inspect.js';
+export { print, dump, load } from './internal/inspect.js';

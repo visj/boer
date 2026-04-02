@@ -1,6 +1,8 @@
 import { describe, test, expect } from 'bun:test';
 import { STRING, NUMBER, BOOLEAN } from 'uvd';
-import { catalog, allocators, print, dump } from 'uvd/core';
+import { catalog, allocators, print, dump, load, compile, CompoundSchema } from 'uvd/core';
+import fs from 'fs';
+import path from 'path';
 
 /**
  * Parse the 96-byte binary header into a plain object for easy assertions.
@@ -651,4 +653,343 @@ describe('dump — round-trip with schemas', () => {
         expect(hdr.enumCount).toBe(info.stats.enums.size);
         expect(hdr.callbackCount).toBe(info.stats.callbacks.size);
     });
+});
+
+// ========== Binary seeding tests ==========
+
+describe('load + catalog — seeding', () => {
+    test('loaded catalog validates the same schemas correctly', () => {
+        let cat1 = catalog();
+        let alloc1 = allocators(cat1);
+
+        let personType = alloc1.object({
+            name: alloc1.string({ minLength: 1 }),
+            age: alloc1.number({ minimum: 0 }),
+        });
+
+        /* Verify original catalog works */
+        expect(cat1.validate({ name: 'Alice', age: 30 }, personType)).toBe(true);
+        expect(cat1.validate({ name: '', age: 30 }, personType)).toBe(false);
+        expect(cat1.validate({ name: 'Bob', age: -1 }, personType)).toBe(false);
+
+        /* Dump and reload */
+        let bin = dump(cat1);
+        let cat2 = catalog(load(bin));
+
+        /* Same typedef pointers should work on the loaded catalog */
+        expect(cat2.validate({ name: 'Alice', age: 30 }, personType)).toBe(true);
+        expect(cat2.validate({ name: '', age: 30 }, personType)).toBe(false);
+        expect(cat2.validate({ name: 'Bob', age: -1 }, personType)).toBe(false);
+    });
+
+    test('loaded catalog preserves KEY_DICT and KEY_INDEX', () => {
+        let cat1 = catalog();
+        let alloc1 = allocators(cat1);
+        alloc1.object({ foo: STRING, bar: NUMBER });
+
+        let bin = dump(cat1);
+        let cat2 = catalog(load(bin));
+
+        let h1 = cat1.__heap;
+        let h2 = cat2.__heap;
+
+        expect(h2.KEY_INDEX.length).toBe(h1.KEY_INDEX.length);
+        for (let i = 0; i < h1.KEY_INDEX.length; i++) {
+            expect(h2.KEY_INDEX[i]).toBe(h1.KEY_INDEX[i]);
+        }
+        h1.KEY_DICT.forEach((val, key) => {
+            expect(h2.KEY_DICT.get(key)).toBe(val);
+        });
+    });
+
+    test('loaded catalog preserves REGEX_CACHE', () => {
+        let cat1 = catalog();
+        let alloc1 = allocators(cat1);
+        alloc1.string({ pattern: '^[a-z]+$' });
+
+        let bin = dump(cat1);
+        let cat2 = catalog(load(bin));
+
+        let rc1 = cat1.__heap.REGEX_CACHE;
+        let rc2 = cat2.__heap.REGEX_CACHE;
+
+        expect(rc2.length).toBe(rc1.length);
+        for (let i = 1; i < rc1.length; i++) {
+            expect(rc2[i].source).toBe(rc1[i].source);
+            expect(rc2[i].flags).toBe(rc1[i].flags);
+        }
+    });
+
+    test('loaded catalog preserves CONSTANTS and ENUMS', () => {
+        let cat1 = catalog();
+        let alloc1 = allocators(cat1);
+
+        alloc1.string({ const: 'red' });
+        alloc1.string({ enum: ['a', 'b', 'c'] });
+
+        let bin = dump(cat1);
+        let cat2 = catalog(load(bin));
+
+        let c1 = cat1.__heap.CONSTANTS;
+        let c2 = cat2.__heap.CONSTANTS;
+        expect(c2.length).toBe(c1.length);
+        for (let i = 0; i < c1.length; i++) {
+            expect(c2[i]).toBe(c1[i]);
+        }
+
+        let e1 = cat1.__heap.ENUMS;
+        let e2 = cat2.__heap.ENUMS;
+        expect(e2.length).toBe(e1.length);
+        for (let i = 0; i < e1.length; i++) {
+            expect(e2[i].size).toBe(e1[i].size);
+            e1[i].forEach(v => {
+                expect(e2[i].has(v)).toBe(true);
+            });
+        }
+    });
+
+    test('loaded catalog preserves typed array data', () => {
+        let { cat } = makePopulatedCatalog();
+        let h1 = cat.__heap.HEAP;
+
+        let bin = dump(cat);
+        let cat2 = catalog(load(bin));
+        let h2 = cat2.__heap.HEAP;
+
+        /* Pointers should match */
+        expect(h2.PTR).toBe(h1.PTR);
+        expect(h2.KIND_PTR).toBe(h1.KIND_PTR);
+        expect(h2.VAL_PTR).toBe(h1.VAL_PTR);
+
+        /* Data should match */
+        for (let i = 0; i < h1.PTR; i++) {
+            expect(h2.SLAB[i]).toBe(h1.SLAB[i]);
+        }
+        for (let i = 0; i < h1.KIND_PTR; i++) {
+            expect(h2.KINDS[i]).toBe(h1.KINDS[i]);
+        }
+        for (let i = 0; i < h1.VAL_PTR; i++) {
+            expect(h2.VALIDATORS[i]).toBe(h1.VALIDATORS[i]);
+        }
+    });
+
+    test('binary + explicit config uses max of both for capacity', () => {
+        let { cat } = makePopulatedCatalog();
+        let info = print(cat);
+        let bin = dump(cat);
+
+        /* Request larger capacity than the binary data */
+        let extraSlab = info.stats.slab.size + 5000;
+        let cat2 = catalog(load(bin, { slab: extraSlab }));
+        let h2 = cat2.__heap.HEAP;
+
+        /* Capacity should be the larger value */
+        expect(h2.SLAB_LEN).toBe(extraSlab);
+
+        /* Data pointer should still match the binary */
+        expect(h2.PTR).toBe(info.stats.slab.size);
+    });
+
+    test('binary with smaller explicit config uses binary count', () => {
+        let { cat } = makePopulatedCatalog();
+        let info = print(cat);
+        let bin = dump(cat);
+
+        /* Request smaller capacity than the binary data — binary wins */
+        let cat2 = catalog(load(bin, { slab: 4 }));
+        let h2 = cat2.__heap.HEAP;
+
+        expect(h2.SLAB_LEN).toBe(info.stats.slab.size);
+        expect(h2.PTR).toBe(info.stats.slab.size);
+    });
+
+    test('loaded catalog can have new schemas added', () => {
+        let cat1 = catalog();
+        let alloc1 = allocators(cat1);
+        let nameType = alloc1.string({ minLength: 1 });
+
+        let bin = dump(cat1);
+
+        /* Load with extra capacity for new schemas */
+        let cat2 = catalog(load(bin, { slab: 16384, kinds: 2048, validators: 512 }));
+        let alloc2 = allocators(cat2);
+
+        /* The original typedef still works */
+        expect(cat2.validate('hello', nameType)).toBe(true);
+        expect(cat2.validate('', nameType)).toBe(false);
+
+        /* Add a new schema to the loaded catalog */
+        let ageType = alloc2.number({ minimum: 0, maximum: 200 });
+        expect(cat2.validate(25, ageType)).toBe(true);
+        expect(cat2.validate(-1, ageType)).toBe(false);
+        expect(cat2.validate(201, ageType)).toBe(false);
+    });
+
+    test('rejects binary with bad magic', () => {
+        let bin = new Uint8Array(96);
+        bin[0] = 0x00;
+        expect(() => catalog(load(bin))).toThrow('bad magic');
+    });
+
+    test('rejects binary with corrupted checksum', () => {
+        let { cat } = makePopulatedCatalog();
+        let bin = dump(cat);
+        /* Corrupt a payload byte */
+        bin[100] ^= 0xFF;
+        expect(() => catalog(load(bin))).toThrow('checksum');
+    });
+
+    test('empty catalog dump/reload round-trips', () => {
+        let cat1 = catalog();
+        let bin = dump(cat1);
+        let cat2 = catalog(load(bin));
+
+        let h2 = cat2.__heap.HEAP;
+        expect(h2.KIND_PTR).toBe(6); // pre-allocated bare types
+        expect(h2.PTR).toBe(0);
+        expect(h2.VAL_PTR).toBe(0);
+    });
+});
+
+// ========== JSON Schema suite dump/reload compliance ==========
+
+describe('dump/reload — JSON Schema suite compliance', () => {
+    const __dirname = import.meta.dir;
+    const SUITE_DIR = path.resolve(__dirname, 'suite/tests');
+    const REMOTE_DIR = path.resolve(__dirname, 'suite/remotes');
+    const SPECS_DIR = path.resolve(__dirname, 'specs');
+
+    const SUPPORTED_DRAFTS = ['draft-04', 'draft-06', 'draft-07', 'draft2019-09', 'draft2020-12'];
+
+    /**
+     * @param {string} draft
+     * @returns {string}
+     */
+    function getTestFolder(draft) {
+        switch (draft) {
+            case 'draft2020-12': return 'draft2020-12';
+            case 'draft2019-09': return 'draft2019-09';
+            case 'draft-07': return 'draft7';
+            case 'draft-06': return 'draft6';
+            case 'draft-04': return 'draft4';
+        }
+        throw new Error('Not implemented');
+    }
+
+    /**
+     * Recursively reads all JSON files in a directory.
+     * @param {string} rootDir
+     * @returns {!Array<{path: string, schema: *}>}
+     */
+    function readDirRecursive(rootDir) {
+        let files = [];
+        function readDir(dirName) {
+            let content = fs.readdirSync(dirName);
+            for (let file of content) {
+                let abspath = path.join(dirName, file);
+                let stats = fs.statSync(abspath);
+                if (stats.isDirectory()) {
+                    readDir(abspath);
+                } else if (file.endsWith('.json')) {
+                    let str = fs.readFileSync(abspath, 'utf8');
+                    let relativePath = path.relative(rootDir, abspath);
+                    files.push({ path: relativePath, schema: JSON.parse(str) });
+                }
+            }
+        }
+        readDir(rootDir);
+        return files;
+    }
+
+    let remoteFiles = readDirRecursive(REMOTE_DIR);
+
+    for (let draft of SUPPORTED_DRAFTS) {
+        let draftFolder = getTestFolder(draft);
+        let suiteDir = path.join(SUITE_DIR, draftFolder);
+
+        if (!fs.existsSync(suiteDir)) {
+            continue;
+        }
+
+        let allFiles = fs.readdirSync(suiteDir).filter(f => f.endsWith('.json'));
+
+        let specDir = path.join(SPECS_DIR, draft);
+        let rootMetaSchema = JSON.parse(fs.readFileSync(path.join(specDir, 'schema.json'), 'utf8'));
+        let rootMetaUri = rootMetaSchema.$id || rootMetaSchema.id || `https://json-schema.org/${draft}/schema`;
+
+        let vocabSchemas = [];
+        if (Array.isArray(rootMetaSchema.allOf)) {
+            for (let branch of rootMetaSchema.allOf) {
+                if (branch.$ref && branch.$ref.startsWith('meta/')) {
+                    let vocabFileName = branch.$ref.replace('meta/', '') + '.json';
+                    let vocabPath = path.join(specDir, 'meta', vocabFileName);
+                    if (fs.existsSync(vocabPath)) {
+                        let vocabSchema = JSON.parse(fs.readFileSync(vocabPath, 'utf8'));
+                        let vocabUri = vocabSchema.$id || vocabSchema.id;
+                        if (vocabUri) {
+                            vocabSchemas.push({ schema: vocabSchema, uri: vocabUri });
+                        }
+                    }
+                }
+            }
+        }
+
+        describe(`Dump/Reload: ${draft}`, () => {
+            /**
+             * Phase 1: compile all schemas into a single catalog,
+             * collecting the compiled roots and test data.
+             */
+            let originalCat = catalog();
+            let compiledGroups = [];
+
+            for (let file of allFiles) {
+                let filePath = path.join(suiteDir, file);
+                let testGroups = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+
+                for (let group of testGroups) {
+                    try {
+                        let compound = new CompoundSchema(draft);
+                        compound.add(structuredClone(rootMetaSchema), rootMetaUri);
+                        for (let vocab of vocabSchemas) {
+                            compound.add(structuredClone(vocab.schema), vocab.uri);
+                        }
+                        for (let remoteFile of remoteFiles) {
+                            let uriPath = remoteFile.path.split(path.sep).join('/');
+                            let uri = `http://localhost:1234/${uriPath}`;
+                            compound.add(structuredClone(remoteFile.schema), uri);
+                        }
+                        let ref = compound.add(group.schema);
+                        let ast = compound.bundle(ref);
+                        let compiled = compile(originalCat, ast);
+                        compiledGroups.push({
+                            file,
+                            description: group.description,
+                            compiledRoot: compiled[0].schema,
+                            tests: group.tests,
+                        });
+                    } catch (err) {
+                        /* Skip groups that fail to compile — the main suite.test.js handles those */
+                    }
+                }
+            }
+
+            /**
+             * Phase 2: dump the catalog, reload into a fresh catalog,
+             * and validate every test case against the reloaded catalog.
+             */
+            let bin = dump(originalCat);
+            let reloadedCat = catalog(load(bin));
+
+            for (let group of compiledGroups) {
+                describe(`${group.file} — ${group.description}`, () => {
+                    for (let tc of group.tests) {
+                        test(tc.description, () => {
+                            let isValid = reloadedCat.validate(tc.data, group.compiledRoot);
+                            expect(isValid).toBe(tc.valid);
+                        });
+                    }
+                });
+            }
+        });
+    }
 });

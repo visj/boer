@@ -38,7 +38,6 @@ import {
     binarySearch, binarySearchPair, popcnt16,
     isValidTime, isValidDate, isValidDateTime
 } from './util.js';
-
 /**
  * Pre-allocated typedef pointers for common bare complex types.
  * KINDS[0] = K_ARRAY|K_ANY_INNER, KINDS[1] = K_OBJECT|K_ANY_INNER, KINDS[2] = K_RECORD|K_ANY_INNER.
@@ -75,19 +74,24 @@ function createHeap(cfg) {
  * @returns {uvd.Catalog<R>}
  */
 function catalog(cfg) {
-    const HEAP = createHeap(cfg);
+    /**
+     * Detect whether cfg is a pre-built seed from load() or a normal config.
+     * A seed has a HEAP property; a normal config does not.
+     */
+    const isSeed = cfg !== void 0 && cfg.HEAP !== void 0;
+    const HEAP = isSeed ? cfg.HEAP : createHeap(cfg);
 
     let SLAB = HEAP.SLAB;
     let KINDS = HEAP.KINDS;
     let VALIDATORS = HEAP.VALIDATORS;
     /** @type {!Array<RegExp>} First slot reserved; index 0 is the no-match sentinel. */
-    const REGEX_CACHE = [/(?:)/];
+    const REGEX_CACHE = isSeed ? cfg.REGEX_CACHE : [/(?:)/];
     /** @type {!Array<function>} */
     const CALLBACKS = [];
     /** @type {!Array<!Set<*>>} Inline enum arena for enum Sets (MOD_ENUM, isSet=1) */
-    const ENUMS = [];
+    const ENUMS = isSeed ? cfg.ENUMS : [];
     /** @type {!Array<*>} Inline constant arena for const values (MOD_ENUM, isSet=0) */
-    const CONSTANTS = [];
+    const CONSTANTS = isSeed ? cfg.CONSTANTS : [];
 
     /**
      * Cached Set for primitive uniqueItems checks on large arrays.
@@ -98,23 +102,25 @@ function catalog(cfg) {
     let UNIQUES = null;
 
     /** @type {number} */
-    let keyseq = 1;
+    let keyseq = isSeed ? cfg.keyseq : 1;
     /** @const @type {!Map<string,number>} */
-    const KEY_DICT = new Map();
+    const KEY_DICT = isSeed ? cfg.KEY_DICT : new Map();
     /** @const @type {!Array<string>} */
-    const KEY_INDEX = [""];
+    const KEY_INDEX = isSeed ? cfg.KEY_INDEX : [""];
 
-    // --- PRE-ALLOCATED COMPLEX TYPE CONSTANTS (stride-2) ---
-    // Bare array: logical ptr 0, kindsIdx 0
-    KINDS[0] = K_ARRAY | K_ANY_INNER;
-    // KINDS[1] = 0; (slab_offset unused, implicit zero in typed array)
-    // Bare object: logical ptr 1, kindsIdx 2
-    KINDS[2] = K_OBJECT | K_ANY_INNER;
-    // KINDS[3] = 0;
-    // Bare record: logical ptr 2, kindsIdx 4
-    KINDS[4] = K_RECORD | K_ANY_INNER;
-    // KINDS[5] = 0;
-    HEAP.KIND_PTR = 6;
+    if (!isSeed) {
+        // --- PRE-ALLOCATED COMPLEX TYPE CONSTANTS (stride-2) ---
+        // Bare array: logical ptr 0, kindsIdx 0
+        KINDS[0] = K_ARRAY | K_ANY_INNER;
+        // KINDS[1] = 0; (slab_offset unused, implicit zero in typed array)
+        // Bare object: logical ptr 1, kindsIdx 2
+        KINDS[2] = K_OBJECT | K_ANY_INNER;
+        // KINDS[3] = 0;
+        // Bare record: logical ptr 2, kindsIdx 4
+        KINDS[4] = K_RECORD | K_ANY_INNER;
+        // KINDS[5] = 0;
+        HEAP.KIND_PTR = 6;
+    }
 
 
     /** Global stack tracking active dynamic scope boundaries during validation. */

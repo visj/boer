@@ -59,6 +59,211 @@ const FLAG_V = 64;
 const FLAG_D = 128;
 
 const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+/**
+ * Decode a regex flag byte back into a flags string.
+ * @param {number} bits
+ * @returns {string}
+ */
+function decodeRegexFlags(bits) {
+    let flags = '';
+    if (bits & FLAG_G) { flags += 'g'; }
+    if (bits & FLAG_I) { flags += 'i'; }
+    if (bits & FLAG_M) { flags += 'm'; }
+    if (bits & FLAG_S) { flags += 's'; }
+    if (bits & FLAG_U) { flags += 'u'; }
+    if (bits & FLAG_Y) { flags += 'y'; }
+    if (bits & FLAG_V) { flags += 'v'; }
+    if (bits & FLAG_D) { flags += 'd'; }
+    return flags;
+}
+
+/**
+ * Read a tagged value from the binary at the given offset.
+ * Returns [value, newOffset].
+ * @param {!Uint8Array} buf
+ * @param {!DataView} view
+ * @param {number} off
+ * @returns {[*, number]}
+ */
+function readTaggedValue(buf, view, off) {
+    let tag = buf[off];
+    off += 1;
+    if (tag === TAG_NULL) {
+        return [null, off];
+    }
+    if (tag === TAG_UNDEFINED) {
+        return [void 0, off];
+    }
+    if (tag === TAG_BOOL) {
+        return [buf[off] === 1, off + 1];
+    }
+    if (tag === TAG_NUMBER) {
+        return [view.getFloat64(off, true), off + 8];
+    }
+    if (tag === TAG_STRING) {
+        let len = view.getUint32(off, true);
+        off += 4;
+        let str = decoder.decode(buf.subarray(off, off + len));
+        return [str, off + len];
+    }
+    return [void 0, off];
+}
+
+/**
+ * Parse a binary dump and return a fully initialized seed object
+ * that can be passed directly to `catalog()`. The optional config
+ * allows reserving extra capacity beyond what the binary contains,
+ * so users can seed from binary but still add schemas dynamically.
+ *
+ * When both binary data and config values are present, the larger
+ * of the two is used for each typed array capacity.
+ *
+ * @param {!Uint8Array} bin
+ * @param {uvd.Config=} cfg
+ * @returns {Object} A seed object accepted by catalog()
+ */
+function load(bin, cfg) {
+    /* Validate magic bytes */
+    if (bin.length < HEADER_SIZE ||
+        bin[0] !== 0x55 || bin[1] !== 0x56 || bin[2] !== 0x44 || bin[3] !== 0x00) {
+        throw new Error('Invalid UVD binary: bad magic bytes');
+    }
+
+    let view = new DataView(bin.buffer, bin.byteOffset, bin.byteLength);
+
+    /* Verify checksum */
+    let storedChecksum = view.getUint32(16, true);
+    let computedChecksum = crc32(bin, HEADER_SIZE, bin.byteLength - HEADER_SIZE);
+    if (storedChecksum !== computedChecksum) {
+        throw new Error('Invalid UVD binary: checksum mismatch');
+    }
+
+    /* Read header fields */
+    let slabOffset = view.getUint32(20, true);
+    let slabCount = view.getUint32(24, true);
+    let kindsOffset = view.getUint32(32, true);
+    let kindsCount = view.getUint32(36, true);
+    let valsOffset = view.getUint32(44, true);
+    let valsCount = view.getUint32(48, true);
+    let strtabOffset = view.getUint32(56, true);
+    let strtabCount = view.getUint32(60, true);
+    let regexOffset = view.getUint32(64, true);
+    let regexCount = view.getUint32(68, true);
+    let constOffset = view.getUint32(72, true);
+    let constCount = view.getUint32(76, true);
+    let enumOffset = view.getUint32(80, true);
+    let enumCount = view.getUint32(84, true);
+    let callbackCount = view.getUint32(88, true);
+
+    /**
+     * Compute final capacities: max of binary data count and config value.
+     * This lets users reserve extra room for dynamically added schemas.
+     */
+    let useConfig = cfg !== void 0;
+    let cfgSlab = (useConfig && cfg.slab !== void 0) ? cfg.slab : 0;
+    let cfgKinds = (useConfig && cfg.kinds !== void 0) ? cfg.kinds : 0;
+    let cfgVals = (useConfig && cfg.validators !== void 0) ? cfg.validators : 0;
+
+    let slabLen = cfgSlab > slabCount ? cfgSlab : slabCount;
+    let kindsLen = cfgKinds > kindsCount ? cfgKinds : kindsCount;
+    let valsLen = cfgVals > valsCount ? cfgVals : valsCount;
+
+    /* Allocate typed arrays at final capacity and fill from binary */
+    let SLAB = new Uint32Array(slabLen);
+    if (slabCount > 0) {
+        SLAB.set(new Uint32Array(bin.buffer, bin.byteOffset + slabOffset, slabCount));
+    }
+
+    let KINDS = new Uint32Array(kindsLen);
+    if (kindsCount > 0) {
+        KINDS.set(new Uint32Array(bin.buffer, bin.byteOffset + kindsOffset, kindsCount));
+    }
+
+    let VALIDATORS = new Float64Array(valsLen);
+    if (valsCount > 0) {
+        VALIDATORS.set(new Float64Array(bin.buffer, bin.byteOffset + valsOffset, valsCount));
+    }
+
+    /* Build KEY_INDEX and KEY_DICT from string table */
+    /** @type {!Array<string>} */
+    let KEY_INDEX = new Array(strtabCount);
+    /** @type {!Map<string,number>} */
+    let KEY_DICT = new Map();
+    let off = strtabOffset;
+    for (let i = 0; i < strtabCount; i++) {
+        let len = view.getUint32(off, true);
+        off += 4;
+        let key = decoder.decode(bin.subarray(off, off + len));
+        KEY_INDEX[i] = key;
+        if (i > 0) {
+            KEY_DICT.set(key, i);
+        }
+        off += len;
+    }
+
+    /* Build REGEX_CACHE with sentinel at index 0 */
+    /** @type {!Array<RegExp>} */
+    let REGEX_CACHE = [/(?:)/];
+    off = regexOffset;
+    for (let i = 0; i < regexCount; i++) {
+        let len = view.getUint32(off, true);
+        off += 4;
+        let source = decoder.decode(bin.subarray(off, off + len));
+        off += len;
+        let flagByte = bin[off];
+        off += 1;
+        REGEX_CACHE[i + 1] = new RegExp(source, decodeRegexFlags(flagByte));
+    }
+
+    /* Decode constants */
+    /** @type {!Array<*>} */
+    let CONSTANTS = new Array(constCount);
+    off = constOffset;
+    for (let i = 0; i < constCount; i++) {
+        let pair = readTaggedValue(bin, view, off);
+        CONSTANTS[i] = pair[0];
+        off = pair[1];
+    }
+
+    /* Decode enums */
+    /** @type {!Array<!Set<*>>} */
+    let ENUMS = new Array(enumCount);
+    off = enumOffset;
+    for (let i = 0; i < enumCount; i++) {
+        let size = view.getUint32(off, true);
+        off += 4;
+        let set = new Set();
+        for (let j = 0; j < size; j++) {
+            let pair = readTaggedValue(bin, view, off);
+            set.add(pair[0]);
+            off = pair[1];
+        }
+        ENUMS[i] = set;
+    }
+
+    /**
+     * Return a seed object that catalog() accepts directly.
+     * The HEAP property signals to catalog that this is a pre-built seed.
+     */
+    return {
+        HEAP: {
+            PTR: slabCount,
+            SLAB_LEN: slabLen,
+            KIND_LEN: kindsLen,
+            KIND_PTR: kindsCount,
+            VAL_LEN: valsLen,
+            VAL_PTR: valsCount,
+            SLAB, KINDS, VALIDATORS,
+        },
+        KEY_INDEX, KEY_DICT,
+        keyseq: strtabCount,
+        REGEX_CACHE,
+        CONSTANTS, ENUMS,
+        callbackCount,
+    };
+}
 
 /**
  * Inspect a catalog and return allocation statistics and an optimized config.
@@ -396,4 +601,4 @@ function dump(cat) {
     return out;
 }
 
-export { print, dump, crc32 };
+export { print, dump, load, crc32 };
