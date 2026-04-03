@@ -13,23 +13,6 @@ export interface Complex<T, R extends symbol = any> {
     readonly [CATALOG_ID]?: (tag: R) => R;
 }
 
-export const NULL: Value<null, any>;
-export const UNDEFINED: Value<undefined, any>;
-export const BOOLEAN: Value<boolean, any>;
-export const TRUE: Value<true, any>;
-export const FALSE: Value<false, any>;
-export const NUMBER: Value<number, any>;
-export const STRING: Value<string, any>;
-export const BIGINT: Value<bigint, any>;
-export const DATE: Value<Date, any>;
-export const URI: Value<URL, any>;
-export const ARRAY: Value<any[], any>;
-export const OBJECT: Value<Record<string, any>, any>;
-export const ANY: Value<any, any>;
-export const NEVER: Value<never, any>;
-
-export const VALUE: Value<boolean, any> | Value<number, any> | Value<string, any> | Value<bigint, any> | Value<Date, any> | Value<URL, any>;
-
 export type Type<T, R extends symbol = any> = Value<T, R> | Complex<T, R>;
 
 export type Infer<T, R extends symbol = any> =
@@ -67,6 +50,10 @@ export type InferStrictSchema<T extends StrictSchema<any, any>, R extends symbol
     never;
 };
 
+// ────────────────────────────────────────────────────────────────────────────
+// Validator option interfaces (user-facing DSL constraints)
+// ────────────────────────────────────────────────────────────────────────────
+
 export interface StringValidators {
     minLength?: number;
     maxLength?: number;
@@ -97,135 +84,156 @@ export interface ObjectValidators {
     patternProperties?: Record<string, number>;
     propertyNames?: number;
     dependentRequired?: Record<string, string[]>;
-    additionalProperties?: false;
+    additionalProperties?: false | number;
 }
 
-export interface WhenValidators {
+export interface WhenConfig {
     if: number;
     then?: number;
     else?: number;
 }
 
-export type Validators = StringValidators | NumberValidators | ArrayValidators | ObjectValidators | WhenValidators;
-
-export interface Transformers { }
-
-export interface SchemaBuilder<R extends symbol> {
-    object<T extends StrictSchema<any, R>>(
-        definition: T extends StrictSchema<T, R> ? T : StrictSchema<T, R>,
-        opts?: any
-    ): Complex<InferStrictSchema<T, R>, R>;
-    array<T>(itemType: Type<T, R>, opts?: any): Complex<T[], R>;
-    union<T extends Record<string, Type<any, R>>, D extends string>(
-        discriminator: D,
-        variants: T
-    ): Complex<{ [K in keyof T]: Infer<T[K]> & { [P in D]: K } }[keyof T], R>;
-
-    refine<T>(typedef: Type<T, R>, fn: (data: T) => boolean): Complex<T, R>;
-
-    transform<
-        TBase extends Type<any, R>,
-        TKey extends keyof Transformers
-    >(
-        typedef: TBase,
-        key: TKey
-    ): Complex<Transformers[TKey], R>;
-
-    // Tuple (prefixItems)
-    tuple<A>(a: Type<A, R>): Complex<[A], R>;
-    tuple<A, B>(a: Type<A, R>, b: Type<B, R>): Complex<[A, B], R>;
-    tuple<A, B, C>(a: Type<A, R>, b: Type<B, R>, c: Type<C, R>): Complex<[A, B, C], R>;
-    tuple<T extends any[]>(types: { [K in keyof T]: Type<T[K], R> }): Complex<T, R>;
-
-    // Record
-    record<T>(valueType: Type<T, R>): Complex<Record<string, T>, R>;
-
-    // Or (anyOf) — first match wins
-    or<A, B>(a: Type<A, R>, b: Type<B, R>): Type<A | B, R>;
-    or<A, B, C>(a: Type<A, R>, b: Type<B, R>, c: Type<C, R>): Type<A | B | C, R>;
-    or<T>(types: Type<T, R>[]): Type<T, R>;
-
-    // Exclusive (oneOf) — exactly one must match
-    exclusive<A, B>(a: Type<A, R>, b: Type<B, R>): Complex<A | B, R>;
-    exclusive<A, B, C>(a: Type<A, R>, b: Type<B, R>, c: Type<C, R>): Complex<A | B | C, R>;
-    exclusive<T>(types: Type<T, R>[]): Complex<T, R>;
-
-    // Intersect (allOf) — all must match
-    intersect<A, B>(a: Type<A, R>, b: Type<B, R>): Complex<A & B, R>;
-    intersect<A, B, C>(a: Type<A, R>, b: Type<B, R>, c: Type<C, R>): Complex<A & B & C, R>;
-    intersect<T>(types: Type<T, R>[]): Complex<T, R>;
-
-    // Not — negation
-    not<T>(typedef: Type<T, R>): Complex<unknown, R>;
-
-    // When (if/then/else conditional)
-    when(config: { if: number; then?: number; else?: number }): Complex<unknown, R>;
-
-    string(opts?: any): Value<string, R>;
-    number(opts?: any): Value<number, R>;
-    boolean(): Value<boolean, R>;
-    bigint(): Value<bigint, R>;
-    date(): Value<Date, R>;
-    uri(): Value<URL, R>;
-    nullable<T>(typedef: Value<T, R>): Value<T | null, R>;
-    nullable<T>(typedef: Complex<T, R>): Complex<T | null, R>;
-    optional<T>(typedef: Value<T, R>): Value<T | undefined, R>;
-    optional<T>(typedef: Complex<T, R>): Complex<T | undefined, R>;
-}
-
-export declare function object<T extends StrictSchema<any, R>>(
-    definition: T extends StrictSchema<T, R> ? T : StrictSchema<T, R>,
-    opts?: any
-): Complex<InferStrictSchema<T, R>, R>;
-export declare function array<T>(itemType: Type<T, R>, opts?: any): Complex<T[], R>;
-export declare function union<T extends Record<string, Type<any, R>>, D extends string>(
-    discriminator: D,
-    variants: T
-): Complex<{ [K in keyof T]: Infer<T[K]> & { [P in D]: K } }[keyof T], R>;
-export declare function refine<T>(typedef: Type<T, R>, fn: (data: T) => boolean): Complex<T, R>;
-export declare function transform<
-    TBase extends Type<any, R>,
-    TKey extends keyof Transformers
->(
-    typedef: TBase,
-    key: TKey
-): Complex<Transformers[TKey], R>;
-export declare function tuple<A>(a: Type<A, R>): Complex<[A], R>;
-export declare function tuple<A, B>(a: Type<A, R>, b: Type<B, R>): Complex<[A, B], R>;
-export declare function tuple<A, B, C>(a: Type<A, R>, b: Type<B, R>, c: Type<C, R>): Complex<[A, B, C], R>;
-export declare function tuple<T extends any[]>(types: { [K in keyof T]: Type<T[K], R> }): Complex<T, R>;
-export declare function record<T>(valueType: Type<T, R>): Complex<Record<string, T>, R>;
-export declare function or<A, B>(a: Type<A, R>, b: Type<B, R>): Type<A | B, R>;
-export declare function or<A, B, C>(a: Type<A, R>, b: Type<B, R>, c: Type<C, R>): Type<A | B | C, R>;
-export declare function or<T>(types: Type<T, R>[]): Type<T, R>;
-export declare function exclusive<A, B>(a: Type<A, R>, b: Type<B, R>): Complex<A | B, R>;
-export declare function exclusive<A, B, C>(a: Type<A, R>, b: Type<B, R>, c: Type<C, R>): Complex<A | B | C, R>;
-export declare function exclusive<T>(types: Type<T, R>[]): Complex<T, R>;
-export declare function intersect<A, B>(a: Type<A, R>, b: Type<B, R>): Complex<A & B, R>;
-export declare function intersect<A, B, C>(a: Type<A, R>, b: Type<B, R>, c: Type<C, R>): Complex<A & B & C, R>;
-export declare function intersect<T>(types: Type<T, R>[]): Complex<T, R>;
-export declare function not<T>(typedef: Type<T, R>): Complex<unknown, R>;
-export declare function when(config: { if: number; then?: number; else?: number }): Complex<unknown, R>;
-export declare function string(opts?: any): Value<string, R>;
-export declare function number(opts?: any): Value<number, R>;
-export declare function boolean(): Value<boolean, R>;
-export declare function bigint(): Value<bigint, R>;
-export declare function date(): Value<Date, R>;
-export declare function uri(): Value<URL, R>;
-export declare function nullable<T>(typedef: Value<T, R>): Value<T | null, R>;
-export declare function nullable<T>(typedef: Complex<T, R>): Complex<T | null, R>;
-export declare function optional<T>(typedef: Value<T, R>): Value<T | undefined, R>;
-export declare function optional<T>(typedef: Complex<T, R>): Complex<T | undefined, R>;
-
+// ────────────────────────────────────────────────────────────────────────────
+// PathError — returned by diagnose()
+// ────────────────────────────────────────────────────────────────────────────
 
 export interface PathError {
     path: string;
     message: string;
 }
 
-export interface Dictionary {
-    readonly KEY_DICT: Map<string, number>;
-    readonly KEY_INDEX: Map<number, string>;
+// ────────────────────────────────────────────────────────────────────────────
+// Allocator function signatures — defined once, used by Allocators and index
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface ObjectFn<R extends symbol> {
+    <T extends StrictSchema<any, R>>(
+        definition: T extends StrictSchema<T, R> ? T : StrictSchema<T, R>,
+        opts?: ObjectValidators
+    ): Complex<InferStrictSchema<T, R>, R>;
+}
+
+export interface ArrayFn<R extends symbol> {
+    <T>(itemType: Type<T, R>, opts?: ArrayValidators): Complex<T[], R>;
+}
+
+export interface UnionFn<R extends symbol> {
+    <T extends Record<string, Type<any, R>>, D extends string>(
+        discriminator: D,
+        variants: T
+    ): Complex<{ [K in keyof T]: Infer<T[K]> & { [P in D]: K } }[keyof T], R>;
+}
+
+export interface RefineFn<R extends symbol> {
+    <T>(typedef: Type<T, R>, fn: (data: T) => boolean): Complex<T, R>;
+}
+
+export interface TupleFn<R extends symbol> {
+    <A>(a: Type<A, R>): Complex<[A], R>;
+    <A, B>(a: Type<A, R>, b: Type<B, R>): Complex<[A, B], R>;
+    <A, B, C>(a: Type<A, R>, b: Type<B, R>, c: Type<C, R>): Complex<[A, B, C], R>;
+    <T extends any[]>(types: { [K in keyof T]: Type<T[K], R> }): Complex<T, R>;
+}
+
+export interface RecordFn<R extends symbol> {
+    <T>(valueType: Type<T, R>): Complex<Record<string, T>, R>;
+}
+
+export interface OrFn<R extends symbol> {
+    <A, B>(a: Type<A, R>, b: Type<B, R>): Type<A | B, R>;
+    <A, B, C>(a: Type<A, R>, b: Type<B, R>, c: Type<C, R>): Type<A | B | C, R>;
+    <T>(types: Type<T, R>[]): Type<T, R>;
+}
+
+export interface ExclusiveFn<R extends symbol> {
+    <A, B>(a: Type<A, R>, b: Type<B, R>): Complex<A | B, R>;
+    <A, B, C>(a: Type<A, R>, b: Type<B, R>, c: Type<C, R>): Complex<A | B | C, R>;
+    <T>(types: Type<T, R>[]): Complex<T, R>;
+}
+
+export interface IntersectFn<R extends symbol> {
+    <A, B>(a: Type<A, R>, b: Type<B, R>): Complex<A & B, R>;
+    <A, B, C>(a: Type<A, R>, b: Type<B, R>, c: Type<C, R>): Complex<A & B & C, R>;
+    <T>(types: Type<T, R>[]): Complex<T, R>;
+}
+
+export interface NotFn<R extends symbol> {
+    <T>(typedef: Type<T, R>): Complex<unknown, R>;
+}
+
+export interface WhenFn<R extends symbol> {
+    (config: WhenConfig): Complex<unknown, R>;
+}
+
+export interface LiteralFn<R extends symbol> {
+    (value: any): Type<any, R>;
+}
+
+export interface EnumFn<R extends symbol> {
+    (values: any[]): Type<any, R>;
+}
+
+export interface StringFn<R extends symbol> {
+    (opts?: StringValidators): Value<string, R>;
+}
+
+export interface NumberFn<R extends symbol> {
+    (opts?: NumberValidators): Value<number, R>;
+}
+
+export interface BooleanFn<R extends symbol> {
+    (): Value<boolean, R>;
+}
+
+export interface NullableFn<R extends symbol> {
+    <T>(typedef: Value<T, R>): Value<T | null, R>;
+    <T>(typedef: Complex<T, R>): Complex<T | null, R>;
+}
+
+export interface OptionalFn<R extends symbol> {
+    <T>(typedef: Value<T, R>): Value<T | undefined, R>;
+    <T>(typedef: Complex<T, R>): Complex<T | undefined, R>;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Allocators — returned by allocators(cat)
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface Allocators<R extends symbol> {
+    object: ObjectFn<R>;
+    array: ArrayFn<R>;
+    union: UnionFn<R>;
+    refine: RefineFn<R>;
+    tuple: TupleFn<R>;
+    record: RecordFn<R>;
+    or: OrFn<R>;
+    exclusive: ExclusiveFn<R>;
+    intersect: IntersectFn<R>;
+    not: NotFn<R>;
+    when: WhenFn<R>;
+    literal: LiteralFn<R>;
+    enum: EnumFn<R>;
+    string: StringFn<R>;
+    number: NumberFn<R>;
+    boolean: BooleanFn<R>;
+    nullable: NullableFn<R>;
+    optional: OptionalFn<R>;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Catalog — returned by catalog()
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface Heap {
+    PTR: number;
+    SLAB_LEN: number;
+    KIND_LEN: number;
+    KIND_PTR: number;
+    VAL_LEN: number;
+    VAL_PTR: number;
+    SLAB: Uint32Array;
+    KINDS: Uint32Array;
+    VALIDATORS: Float64Array;
 }
 
 export interface Catalog<R extends symbol> {
@@ -233,99 +241,69 @@ export interface Catalog<R extends symbol> {
 
     readonly __heap: {
         readonly HEAP: Heap;
-        readonly SCR_HEAP: Heap;
-        readonly DICT: Dictionary;
-        readonly CALLBACKS: Array<(...args: any[]) => any>;
         readonly REGEX_CACHE: RegExp[];
-        readonly S_CALLBACKS: Array<(...args: any[]) => any>;
-        readonly S_REGEX_CACHE: RegExp[];
-
-        readonly malloc: (
-            header: number,
-            scratch: boolean,
-            inline: number,
-            slabData: number[] | Uint32Array<ArrayBufferLike> | null,
-            shapeLen: number,
-            vHeader: number,
-            vPayloads: Array<number> | null
-        ) => number;
-
-        /** Performs a dictionary lookup for a given key string. */
+        readonly CALLBACKS: Array<(...args: any[]) => any>;
+        readonly CONSTANTS: Array<any>;
+        readonly ENUMS: Array<Set<any>>;
+        readonly KEY_DICT: Map<string, number>;
+        readonly KEY_INDEX: string[];
         readonly lookup: (key: string) => number;
-    }
-
-}
-
-export function catalog<R extends symbol>(): Catalog<R>;
-
-// Internal stuff
-
-export interface Heap {
-    PTR: number;
-    SLAB_LEN: number;
-    SHAPE_LEN: number;
-    SHAPE_COUNT: number;
-    KIND_LEN: number;
-    KIND_PTR: number;
-    VAL_LEN: number;
-    VAL_PTR: number;
-    SLAB: Uint32Array;
-    SHAPES: Uint32Array;
-    KINDS: Uint32Array;
-    VALIDATORS: Float64Array;
-    REGEX_CACHE: RegExp[];
-    CALLBACKS: Array<(...args: any[]) => any>;
+        readonly _validate: (data: any, typedef: number, trackPtr: number, snapPtr: number) => boolean;
+        readonly resizeSlab: () => void;
+        readonly resizeKinds: () => void;
+        readonly resizeValidators: () => void;
+    };
 }
 
 export interface Config {
-    slab: number;
-    shapes: number;
-    kinds: number;
-    validators: number;
+    slab?: number;
+    kinds?: number;
+    validators?: number;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// FlatAst — Structure-of-Arrays representation of a parsed JSON Schema.
-//
-// Produced by parseJsonSchema(), consumed by compile().
-//
-// ## Core node arrays (parallel, indexed by nodeId)
-//
-//   astKinds[nodeId]   — node kind (N_PRIM, N_OBJECT, N_ARRAY, etc.)
-//   astFlags[nodeId]   — for N_PRIM: primitive bitmask (STRING | NUMBER, etc.)
-//   astChild0[nodeId]  — primary child pointer (usage varies by kind)
-//   astChild1[nodeId]  — secondary data (prop count, branch count, callback idx)
-//   astVHeaders[nodeId] — validator bitmask (V_STR_MIN_LEN | V_NUM_MAX, etc.)
-//   astVOffset[nodeId]  — start index into vPayloads for this node's payloads
-//
-// ## Unified edge slab
-//
-//   astEdges — all variable-length child pointers, interleaved:
-//     Object:      [nameIdx, childId, flags] x count
-//     List:        [childId] x count
-//     Conditional: [ifId, thenId, elseId]
-//
-// ## Validator payloads
-//
-//   vPayloads — flat array of numeric payloads for validator constraints.
-//     Offset into this array is computed via popcount:
-//     offset = popcnt16(vHeader & (FLAG - 1))
-//
+// Bit-level constants
 // ────────────────────────────────────────────────────────────────────────────
 
-export declare const N_PRIM = 0;
-export declare const N_OBJECT = 1;
-export declare const N_ARRAY = 2;
-export declare const N_REFINE = 4;
-export declare const N_OR = 7;
-export declare const N_EXCLUSIVE = 8;
-export declare const N_INTERSECT = 9;
-export declare const N_NOT = 10;
-export declare const N_CONDITIONAL = 11;
-export declare const N_REF = 12;
+export declare const COMPLEX: number;
+export declare const NULLABLE: number;
+export declare const OPTIONAL: number;
+
+// ────────────────────────────────────────────────────────────────────────────
+// Factory functions (uvd/core entry point)
+// ────────────────────────────────────────────────────────────────────────────
+
+export declare function catalog<R extends symbol>(cfg?: Config): Catalog<R>;
+
+export declare function allocators<R extends symbol>(cat: Catalog<R>): Allocators<R>;
+
+export declare function objectAllocator<R extends symbol>(cat: Catalog<R>): ObjectFn<R>;
+export declare function arrayAllocator<R extends symbol>(cat: Catalog<R>): ArrayFn<R>;
+export declare function unionAllocator<R extends symbol>(cat: Catalog<R>): UnionFn<R>;
+export declare function valueAllocator<R extends symbol>(cat: Catalog<R>, primConst: number): (opts?: StringValidators | NumberValidators) => Value<any, R>;
+export declare function refineAllocator<R extends symbol>(cat: Catalog<R>): RefineFn<R>;
+export declare function tupleAllocator<R extends symbol>(cat: Catalog<R>): TupleFn<R>;
+export declare function recordAllocator<R extends symbol>(cat: Catalog<R>): RecordFn<R>;
+export declare function orAllocator<R extends symbol>(cat: Catalog<R>): OrFn<R>;
+export declare function exclusiveAllocator<R extends symbol>(cat: Catalog<R>): ExclusiveFn<R>;
+export declare function intersectAllocator<R extends symbol>(cat: Catalog<R>): IntersectFn<R>;
+export declare function notAllocator<R extends symbol>(cat: Catalog<R>): NotFn<R>;
+export declare function whenAllocator<R extends symbol>(cat: Catalog<R>): WhenFn<R>;
+
+export declare function createDiagnose<R extends symbol>(
+    cat: Catalog<R>
+): (data: any, typedef: Type<any, R>) => PathError[];
+
+export declare function createConform<R extends symbol>(
+    cat: Catalog<R>
+): <T>(data: any, typedef: Type<T, R>, preserve?: boolean) => data is T;
+
+// ────────────────────────────────────────────────────────────────────────────
+// FlatAst — Structure-of-Arrays representation of a parsed JSON Schema.
+// Produced by CompoundSchema.bundle(), consumed by compile().
+// ────────────────────────────────────────────────────────────────────────────
 
 export interface FlatAst {
-    // 1. CORE NODE ARRAYS (parallel SoA, indexed by nodeId)
     readonly astKinds: Uint8Array;
     readonly astFlags: Uint32Array;
     readonly astChild0: Uint32Array;
@@ -333,78 +311,65 @@ export interface FlatAst {
     readonly astVHeaders: Uint32Array;
     readonly astVOffset: Uint32Array;
 
-    // 2. UNIFIED EDGE SLAB
-    // Replaces the old propChildren, propFlags, listChildren, condSlots arrays.
-    // Object edges:      [nameIdx, childId, flags] per property
-    // List edges:        [childId] per branch
-    // Conditional edges: [ifId, thenId, elseId]
     readonly astEdges: Uint32Array;
 
-    // 3. VALIDATOR PAYLOADS
-    // One numeric value per set payload flag (bits 0-15 of vHeader).
-    // Boolean flags (bits 16-31) have no payload.
     readonly vPayloads: number[];
 
-    // 4. STRING STORAGE
-    // Property names can't live in a typed array, so they stay here.
-    // Object edges reference these by index (nameIdx).
     readonly propNames: string[];
 
-    // 5. CALLBACK/REGEX STORAGE
-    // For validators that can't be expressed as numeric payloads
-    // (enum, const, pattern). Referenced by N_REFINE's astChild1.
     readonly callbacks: Array<(data: any) => boolean>;
     readonly regexes: Array<RegExp>;
 
-    // 6. SCHEMA METADATA
     readonly rootIds: number[];
     readonly rootUris: Array<string | null>;
     readonly rootNames: Array<string | null>;
     readonly nodeCount: number;
 }
 
-export interface SchemaResource<T = any, R extends symbol> {
-  /** The canonical, absolute URI of the resource. 
-   * Resolved using the $id and the base URI context.
-   */
-  uri: string;
-  /** The literal value of the $id (or id) keyword as found in the source JSON.
-   * Can be a relative path or a simple identifier like "User".
-   */
-  id: string | null;
-
-  /** The plain-name fragment identifier (e.g., "my-anchor").
-   * Defined by the $anchor keyword (2020-12) or a fragment-only $id (Draft 07).
-   */
-  anchor: string | null;
-
-  /** The opaque handle used by the validator to execute this schema.
-   * Internally, this is the 32-bit memory offset in the Catalog.
-   * Note: Inside the compiler, schema is just a number representing the memory offset.
-   */
-  schema: Type<T, R>;
-  /**
-   * The friendly name provided to .add(), if any
-   */
-  name: string | null;
+export interface SchemaResource<T = any, R extends symbol = any> {
+    uri: string;
+    id: string | null;
+    anchor: string | null;
+    schema: Type<T, R>;
+    name: string | null;
 }
 
-export function compile<R extends symbol>(catalog: Catalog<R>, ast: FlatAst): SchemaResource[];
+export declare function compile<R extends symbol>(
+    catalog: Catalog<R>,
+    ast: FlatAst
+): SchemaResource<any, R>[];
 
-export declare const N_PRIM = 0;
-export declare const N_OBJECT = 1;
-export declare const N_ARRAY = 2;
-export declare const N_REFINE = 4;
-export declare const N_OR = 7;
-export declare const N_EXCLUSIVE = 8;
-export declare const N_INTERSECT = 9;
-export declare const N_NOT = 10;
-export declare const N_CONDITIONAL = 11;
-export declare const N_REF = 12;
+// ────────────────────────────────────────────────────────────────────────────
+// CompoundSchema — multi-schema bundler for JSON Schema compilation
+// ────────────────────────────────────────────────────────────────────────────
 
-/**
- * Parses a JSON Schema object into a FlatAst suitable for compile().
- * Two-pass: iterative parse then link ($ref resolution).
- * Supports draft 2020-12 keywords.
- */
-export function parseJsonSchema(schema: uvd.JSONSchema | boolean): FlatAst;
+export declare class CompoundSchema {
+    constructor(dialect?: string);
+
+    readonly schemas: any[];
+    readonly names: Array<string | null>;
+    readonly count: number;
+
+    /**
+     * Adds a schema to this compound. Returns an index to pass to bundle().
+     */
+    add(schema: any, id?: string, name?: string): number;
+
+    /**
+     * Bundles one or more schema entry points into a FlatAst.
+     */
+    bundle(schemas: number | number[]): FlatAst;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Inspection utilities — print, dump, load
+// ────────────────────────────────────────────────────────────────────────────
+
+export declare function print(cat: Catalog<any>): {
+    stats: Record<string, number>;
+    config: Config;
+};
+
+export declare function dump(cat: Catalog<any>): Uint8Array;
+
+export declare function load(bin: Uint8Array, cfg?: Config): Catalog<any>;
