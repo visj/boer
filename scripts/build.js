@@ -1,89 +1,29 @@
-import fs from 'fs';
+import { execSync } from 'child_process';
 import path from 'path';
-import { rolldown } from 'rolldown';
-import { minify } from 'terser';
 
-const cwd = process.cwd();
-const outputDir = path.resolve(cwd, 'dist');
-const buildDir = path.resolve(cwd, 'build');
+const root = process.cwd();
 
-async function buildFormat(format, ext) {
-    console.log(`2. Generating ${format.toUpperCase()} build...`);
+/**
+ * Build stages in topological dependency order.
+ * Packages within the same stage can be built in parallel,
+ * but we run them sequentially for simplicity and clearer logs.
+ */
+const stages = [
+    ['core', 'inspect'],
+    ['validate', 'builder', 'diagnose', 'conform'],
+    ['schema'],
+    ['compiler'],
+    ['uvd'],
+];
 
-    fs.rmSync(outputDir, { recursive: true, force: true });
-    fs.mkdirSync(outputDir);
-    // ⚠️ NEW: create a fresh bundle per format
-    const bundle = await rolldown({
-        input: {
-            core: 'src/core.js',
-            index: 'src/index.js'
-        },
-    });
-
-    const { output } = await bundle.generate({
-        format,
-        sourcemap: true,
-        // Ensure shared code goes into a 'chunks' directory or stays clean
-        chunkFileNames: `[name]-[hash].${ext}`,
-        entryFileNames: `[name].${ext}`
-    });
-
-    for (const chunk of output) {
-        // Handle both entry points and shared chunks
-        if (chunk.type !== 'chunk') continue;
-
-        const fileName = chunk.fileName;
-
-        // const minified = { code: chunk.code, map: JSON.stringify(chunk.map) };
-        const minified = await minify(chunk.code, {
-            sourceMap: {
-                // Pass the bundler's map so Terser chains it correctly
-                content: chunk.map, 
-                url: `${path.basename(fileName)}.map`
-            },
-            compress: {
-                // A good default for VMs: run compression twice to squeeze out dead code
-                passes: 2, 
-                inline: false,         // Never inline functions into hot paths
-                reduce_funcs: false,   // Don't rewrite function declarations
-                hoist_funs: true       // Do hoist functions to the top level to avoid closur
-            },
-            mangle: true
-        });
-        const outputPath = path.resolve(outputDir, fileName);
-        const outputDirName = path.dirname(outputPath);
-
-        if (!fs.existsSync(outputDirName)) {
-            fs.mkdirSync(outputDirName, { recursive: true });
-        }
-
-        fs.writeFileSync(outputPath, minified.code);
-        fs.writeFileSync(`${outputPath}.map`, minified.map);
+let total = 0;
+for (const stage of stages) {
+    for (const pkg of stage) {
+        total++;
+        const pkgDir = path.resolve(root, 'packages', pkg);
+        console.log(`[${total}/${9}] Building ${pkg}...`);
+        execSync('bun scripts/build.js', { cwd: pkgDir, stdio: 'inherit' });
     }
 }
 
-async function build() {
-    console.log('1. Bundling with Rolldown...');
-
-    if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
-    }
-
-    // ✅ Build ESM
-    await buildFormat('esm', 'js', true);
-
-    // ✅ Build CJS (separate graph → correct imports)
-    // await buildFormat('cjs', 'cjs', true);
-
-    const typesToCopy = ['core.d.ts', 'index.d.ts'];
-    typesToCopy.forEach(file => {
-        const src = path.resolve('types', file);
-        if (fs.existsSync(src)) {
-            fs.copyFileSync(src, path.resolve(outputDir, file));
-        }
-    });
-
-    console.log('Success! Outputs written to dist/');
-}
-
-build().catch(console.error);
+console.log(`\nSuccess! Built ${total} packages.`);

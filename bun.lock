@@ -22,6 +22,93 @@
         "zod": "^4.3.6",
       },
     },
+    "packages/builder": {
+      "name": "@uvd/builder",
+      "version": "0.2.0",
+      "dependencies": {
+        "@uvd/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@uvd/conform": "workspace:*",
+        "@uvd/diagnose": "workspace:*",
+        "@uvd/validate": "workspace:*",
+      },
+    },
+    "packages/compiler": {
+      "name": "@uvd/compiler",
+      "version": "0.2.0",
+      "dependencies": {
+        "@uvd/builder": "workspace:*",
+        "@uvd/core": "workspace:*",
+        "@uvd/schema": "workspace:*",
+        "@uvd/validate": "workspace:*",
+      },
+    },
+    "packages/conform": {
+      "name": "@uvd/conform",
+      "version": "0.2.0",
+      "dependencies": {
+        "@uvd/core": "workspace:*",
+      },
+    },
+    "packages/core": {
+      "name": "@uvd/core",
+      "version": "0.2.0",
+    },
+    "packages/diagnose": {
+      "name": "@uvd/diagnose",
+      "version": "0.2.0",
+      "dependencies": {
+        "@uvd/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@uvd/builder": "workspace:*",
+        "@uvd/compiler": "workspace:*",
+        "@uvd/schema": "workspace:*",
+        "@uvd/validate": "workspace:*",
+      },
+    },
+    "packages/inspect": {
+      "name": "@uvd/inspect",
+      "version": "0.2.0",
+      "devDependencies": {
+        "@uvd/builder": "workspace:*",
+        "@uvd/compiler": "workspace:*",
+        "@uvd/core": "workspace:*",
+        "@uvd/schema": "workspace:*",
+        "@uvd/validate": "workspace:*",
+      },
+    },
+    "packages/schema": {
+      "name": "@uvd/schema",
+      "version": "0.2.0",
+      "dependencies": {
+        "@uvd/core": "workspace:*",
+        "uri-js": "^4.4.1",
+      },
+      "devDependencies": {
+        "@uvd/compiler": "workspace:*",
+        "@uvd/validate": "workspace:*",
+      },
+    },
+    "packages/uvd": {
+      "name": "uvd",
+      "version": "0.2.0",
+      "dependencies": {
+        "@uvd/builder": "workspace:*",
+        "@uvd/conform": "workspace:*",
+        "@uvd/core": "workspace:*",
+        "@uvd/diagnose": "workspace:*",
+        "@uvd/validate": "workspace:*",
+      },
+    },
+    "packages/validate": {
+      "name": "@uvd/validate",
+      "version": "0.2.0",
+      "dependencies": {
+        "@uvd/core": "workspace:*",
+      },
+    },
   },
   "packages": {
     "@bcoe/v8-coverage": ["@bcoe/v8-coverage@1.0.2", "", {}, "sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA=="],
@@ -91,6 +178,22 @@
     "@types/istanbul-lib-coverage": ["@types/istanbul-lib-coverage@2.0.6", "", {}, "sha512-2QF/t/auWm0lsy8XtKVPG19v3sSOQlJe/YHZgfjb/KBBHOGSV+J2q/S671rcq9uTBrLAXmZpqJiaQbMT+zNU1w=="],
 
     "@types/node": ["@types/node@25.5.0", "", { "dependencies": { "undici-types": "~7.18.0" } }, "sha512-jp2P3tQMSxWugkCUKLRPVUpGaL5MVFwF8RDuSRztfwgN1wmqJeMSbKlnEtQqU8UrhTmzEmZdu2I6v2dpp7XIxw=="],
+
+    "@uvd/builder": ["@uvd/builder@workspace:packages/builder"],
+
+    "@uvd/compiler": ["@uvd/compiler@workspace:packages/compiler"],
+
+    "@uvd/conform": ["@uvd/conform@workspace:packages/conform"],
+
+    "@uvd/core": ["@uvd/core@workspace:packages/core"],
+
+    "@uvd/diagnose": ["@uvd/diagnose@workspace:packages/diagnose"],
+
+    "@uvd/inspect": ["@uvd/inspect@workspace:packages/inspect"],
+
+    "@uvd/schema": ["@uvd/schema@workspace:packages/schema"],
+
+    "@uvd/validate": ["@uvd/validate@workspace:packages/validate"],
 
     "acorn": ["acorn@8.16.0", "", { "bin": { "acorn": "bin/acorn" } }, "sha512-UVJyE9MttOsBQIDKw1skb9nAwQuR5wuGD3+82K6JgJlm/Y+KI92oNsMNGZCYdDsVtRHSak0pcV5Dno5+4jh9sw=="],
 
@@ -215,6 +318,8 @@
     "undici-types": ["undici-types@7.18.2", "", {}, "sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w=="],
 
     "uri-js": ["uri-js@4.4.1", "", { "dependencies": { "punycode": "^2.1.0" } }, "sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg=="],
+
+    "uvd": ["uvd@workspace:packages/uvd"],
 
     "v8-to-istanbul": ["v8-to-istanbul@9.3.0", "", { "dependencies": { "@jridgewell/trace-mapping": "^0.3.12", "@types/istanbul-lib-coverage": "^2.0.1", "convert-source-map": "^2.0.0" } }, "sha512-kiGUalWN+rgBJ/1OHZsBtU4rXZOfj/7rKQxULKlIzwzQSvMJUUNgPwJEEh7gU6xEVxC0ahoOBvN2YI8GH6FNgA=="],
 

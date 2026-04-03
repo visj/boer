@@ -1,0 +1,24 @@
+{
+  "name": "@uvd/compiler",
+  "version": "0.2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "make": "node scripts/build.js"
+  },
+  "dependencies": {
+    "@uvd/core": "workspace:*",
+    "@uvd/validate": "workspace:*",
+    "@uvd/schema": "workspace:*",
+    "@uvd/builder": "workspace:*"
+  },
+  "license": "Apache-2.0"
+}

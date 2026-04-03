@@ -16,8 +16,8 @@
     "moduleResolution": "node16"
   },
   "include": [
-    "src/**/*.js",
-    "types/*.d.ts",
+   "packages/**/*.js",
+   "packages/**/*.d.ts",
     "global.d.ts"
   ]
 }

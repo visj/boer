@@ -1,0 +1,18 @@
+export {
+    malloc,
+    allocConstant,
+    allocEnumSet,
+    allocators,
+    objectAllocator,
+    arrayAllocator,
+    unionAllocator,
+    valueAllocator,
+    refineAllocator,
+    tupleAllocator,
+    recordAllocator,
+    orAllocator,
+    exclusiveAllocator,
+    intersectAllocator,
+    notAllocator,
+    whenAllocator,
+} from './allocate.js';
