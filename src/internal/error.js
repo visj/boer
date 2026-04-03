@@ -777,6 +777,15 @@ function createDiagnose(cat) {
         let header = kinds[kindsIdx];
         let ct = header & KIND_ENUM_MASK;
 
+        /**
+         * K_ANY_INNER objects/arrays/records are bare container type checks
+         * (e.g. type:"object") that don't evaluate individual properties or items.
+         * They must not contribute to the evaluated set.
+         */
+        if (header & K_ANY_INNER) {
+            return;
+        }
+
         if (ct === K_OBJECT) {
             /** All declared property keys are evaluated */
             let slabOffset = kinds[kindsIdx + 1];
@@ -1057,6 +1066,14 @@ function createDiagnose(cat) {
         let kindsIdx = (typedef >>> 3) << 1;
         let header = kinds[kindsIdx];
         let ct = header & KIND_ENUM_MASK;
+
+        /**
+         * K_ANY_INNER arrays/objects are bare container type checks
+         * that don't evaluate individual items or properties.
+         */
+        if (header & K_ANY_INNER) {
+            return;
+        }
 
         if (ct === K_ARRAY) {
             /**
