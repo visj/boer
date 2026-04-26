@@ -305,17 +305,19 @@ export function transpile(schema, dialect) {
     //   An empty fragment ("#") would set isDynamic = false and degrade to a
     //   plain root $ref, losing all recursive-anchor semantics.
     if (dialect === DRAFT_2019) {
-        if (schema.$recursiveAnchor === true) {
+        /** @type {Record<string,any>} */
+        let s = (schema);
+        if (s.$recursiveAnchor === true) {
             schema.$dynamicAnchor = 'recursive';
-            schema.$recursiveAnchor = void 0;
-        } else if (schema.$recursiveAnchor === false) {
-            schema.$recursiveAnchor = void 0;
+            s.$recursiveAnchor = void 0;
+        } else if (s.$recursiveAnchor === false) {
+            s.$recursiveAnchor = void 0;
         }
-        if (isString(schema.$recursiveRef)) {
+        if (isString(s.$recursiveRef)) {
             // $recursiveRef is always "#" per spec — map to "#recursive" so the
             // named fragment triggers dynamic lookup against $dynamicAnchor: "recursive".
             schema.$dynamicRef = '#recursive';
-            schema.$recursiveRef = void 0;
+            s.$recursiveRef = void 0;
         }
     }
 
@@ -339,7 +341,7 @@ export function transpile(schema, dialect) {
             // In draft7 and older, $ref completely ignores sibling keywords.
             for (let key in schema) {
                 if (key !== '$ref') {
-                    delete schema[key];
+                    delete /** @type {Record<string,any>} */(schema)[key];
                 }
             }
             return;
@@ -571,7 +573,7 @@ CompoundSchema.prototype.add = function (schema, id, name) {
  * @param {string} baseUri absolute URI context inherited from parent scope
  * @param {number} dialect DRAFT_* constant inherited from parent scope
  * @param {string} resourceUri absolute URI of the nearest ancestor schema resource ($id)
- * @param {Set<string>|null} stripKeys keywords to delete from every schema in this
+ * @param {Set<string>|null} [stripKeys] keywords to delete from every schema in this
  *   resource (derived from a custom metaschema that omits certain vocabularies)
  */
 function walkSchema(compound, obj, baseUri, dialect, resourceUri, stripKeys) {
@@ -630,7 +632,7 @@ function walkSchema(compound, obj, baseUri, dialect, resourceUri, stripKeys) {
     if (stripKeys !== void 0 && stripKeys !== null) {
         for (let k of stripKeys) {
             if (hasOwnProperty.call(obj, k)) {
-                obj[k] = void 0;
+                /** @type {Record<string,any>} */(obj)[k] = void 0;
             }
         }
     }
@@ -683,7 +685,7 @@ function walkSchema(compound, obj, baseUri, dialect, resourceUri, stripKeys) {
         if (WALK_SKIP_KEYS.has(key)) {
             continue;
         }
-        let val = obj[key];
+        let val = /** @type {Record<string,any>} */(obj)[key];
         if (typeof val === 'object' && val !== null) {
             if (Array.isArray(val)) {
                 for (let i = 0; i < val.length; i++) {
@@ -747,7 +749,7 @@ function resolvePointer(rootObj, fragment) {
 
     let parts = path.split('/');
     /** @type {Record<string, any>} */
-    let current = rootObj;
+    let current = /** @type {Record<string, any>} */(rootObj);
 
     for (let i = 0; i < parts.length; i++) {
         // 1. Unescape JSON Pointer special characters
@@ -780,7 +782,7 @@ function resolvePointerTracked(rootObj, fragment, rootBaseUri) {
     }
     let parts = path.split('/');
     /** @type {Record<string, any>} */
-    let current = rootObj;
+    let current = /** @type {Record<string, any>} */(rootObj);
     let baseUri = rootBaseUri;
     for (let i = 0; i < parts.length; i++) {
         let key = decodeURIComponent(parts[i].replace(/~1/g, '/').replace(/~0/g, '~'));
@@ -1140,6 +1142,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
 
         // ── Type + validators + structural keywords ──
 
+        /** @type {number[]} */
         let result = packValidators(schema, SCHEMA_PURE_MASK, virtualLookup);
         let vHeader = result[0];
         /** @type {number[]} */
@@ -1181,8 +1184,8 @@ CompoundSchema.prototype.bundle = function (schemas) {
         let enumComplexSchemas = [];
 
         if (hasEnum) {
-            for (let i = 0; i < enumValues.length; i++) {
-                let v = enumValues[i];
+            for (let i = 0; i < /** @type {any[]} */(enumValues).length; i++) {
+                let v = /** @type {any[]} */(enumValues)[i];
                 if (v === null) {
                     enumPrimBits |= NULLABLE;
                 } else if (v === true) {
@@ -1203,6 +1206,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
                 } else if (typeof v === 'object') {
                     /** Rule B (object): desugar to {type:"object",properties:{k:{enum:[v[k]]},...},required,additionalProperties:false} */
                     let propKeys = Object.keys(v);
+                    /** @type {Record<string,any>} */
                     let properties = {};
                     for (let j = 0; j < propKeys.length; j++) {
                         properties[propKeys[j]] = { enum: [v[propKeys[j]]] };
@@ -1344,7 +1348,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
                 astKinds[unevalChildId] = N_PRIM;
                 astFlags[unevalChildId] = (ANY | NULLABLE) >>> 0;
             } else {
-                pushFrame(unevalPropsSchema, unevalChildId, LINK_EDGE, unevalSlot, currentBaseUri, currentDocRoot);
+                pushFrame(/** @type {JSONSchema} */(unevalPropsSchema), unevalChildId, LINK_EDGE, unevalSlot, currentBaseUri, currentDocRoot);
             }
 
             // Redirect all subsequent parsing to the inner node
@@ -1378,7 +1382,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
                 astKinds[unevalChildId] = N_PRIM;
                 astFlags[unevalChildId] = (ANY | NULLABLE) >>> 0;
             } else {
-                pushFrame(unevalItemsSchema, unevalChildId, LINK_EDGE, unevalSlot, currentBaseUri, currentDocRoot);
+                pushFrame(/** @type {JSONSchema} */(unevalItemsSchema), unevalChildId, LINK_EDGE, unevalSlot, currentBaseUri, currentDocRoot);
             }
 
             nodeId = innerNodeId;
@@ -1412,7 +1416,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
                     'minProperties', 'maxProperties', 'pattern',
                     'format', 'dependentRequired', 'minContains', 'maxContains',
                     'enum', 'const']) {
-                    if (schema[key] !== void 0) siblingSchema[key] = schema[key];
+                    if (/** @type {Record<string,any>} */(schema)[key] !== void 0) siblingSchema[key] = /** @type {Record<string,any>} */(schema)[key];
                 }
                 parts.push(siblingSchema);
             }
@@ -1857,7 +1861,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
                     let addChildId = allocNode();
                     let addSlot = astEdges.length;
                     astEdges.push(0); // placeholder
-                    pushFrame(additionalProps, addChildId, LINK_EDGE, addSlot, currentBaseUri, currentDocRoot);
+                    pushFrame(/** @type {JSONSchema} */(additionalProps), addChildId, LINK_EDGE, addSlot, currentBaseUri, currentDocRoot);
                 }
             }
 
@@ -1938,13 +1942,13 @@ CompoundSchema.prototype.bundle = function (schemas) {
             let edgeBase = astEdges.length;
             astKinds[tupleNodeId] = N_TUPLE;
             astChild0[tupleNodeId] = edgeBase;
-            astChild1[tupleNodeId] = prefixItems.length;
+            astChild1[tupleNodeId] = /** @type {any[]} */(prefixItems).length;
 
-            for (let i = 0; i < prefixItems.length; i++) {
+            for (let i = 0; i < /** @type {any[]} */(prefixItems).length; i++) {
                 let slot = astEdges.length;
                 astEdges.push(0); // placeholder
                 let childId = allocNode();
-                pushFrame(prefixItems[i], childId, LINK_EDGE, slot, currentBaseUri, currentDocRoot);
+                pushFrame(/** @type {any[]} */(prefixItems)[i], childId, LINK_EDGE, slot, currentBaseUri, currentDocRoot);
             }
 
             // items alongside prefixItems → rest type
@@ -1954,7 +1958,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
                 let restSlot = astEdges.length;
                 astEdges.push(0);
                 let restChildId = allocNode();
-                pushFrame(items, restChildId, LINK_EDGE, restSlot, currentBaseUri, currentDocRoot);
+                pushFrame(/** @type {JSONSchema} */(items), restChildId, LINK_EDGE, restSlot, currentBaseUri, currentDocRoot);
             }
 
             if (hasContains) {
@@ -1962,7 +1966,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
                 let containsSlot = astEdges.length;
                 astEdges.push(0);
                 let containsChildId = allocNode();
-                pushFrame(containsSchema, containsChildId, LINK_EDGE, containsSlot, currentBaseUri, currentDocRoot);
+                pushFrame(/** @type {JSONSchema} */(containsSchema), containsChildId, LINK_EDGE, containsSlot, currentBaseUri, currentDocRoot);
             }
 
             if (hasVHeader) {
@@ -2033,14 +2037,14 @@ CompoundSchema.prototype.bundle = function (schemas) {
             astFlags[arrNodeId] |= AST_FLAG_HAS_ITEMS;
             astKinds[arrNodeId] = N_ARRAY;
             astChild0[arrNodeId] = elemId;
-            pushFrame(items, elemId, LINK_CHILD0, arrNodeId, currentBaseUri, currentDocRoot);
+            pushFrame(/** @type {JSONSchema} */(items), elemId, LINK_CHILD0, arrNodeId, currentBaseUri, currentDocRoot);
 
             // Wire contains child into astChild1 when both items and contains are present
             if (hasContains) {
                 astFlags[arrNodeId] |= AST_FLAG_HAS_CONTAINS; // bit 1 = has contains child
                 let containsChildId = allocNode();
                 astChild1[arrNodeId] = containsChildId;
-                pushFrame(containsSchema, containsChildId, LINK_CHILD1, arrNodeId, currentBaseUri, currentDocRoot);
+                pushFrame(/** @type {JSONSchema} */(containsSchema), containsChildId, LINK_CHILD1, arrNodeId, currentBaseUri, currentDocRoot);
             }
 
             // Attach validators (minItems, maxItems, uniqueItems, etc.)
@@ -2064,8 +2068,9 @@ CompoundSchema.prototype.bundle = function (schemas) {
              * they are complex-only types with no primitive bit representation.
              * Mixed type arrays with containers are wrapped in N_OR.
              */
-            let typeArr = typeof typeVal === 'string' ? null : typeVal;
-            let singleType = typeof typeVal === 'string' ? typeVal : (typeVal.length === 1 ? typeVal[0] : null);
+            /** @type {any[]|null} */
+            let typeArr = typeof typeVal === 'string' ? null : /** @type {any[]} */(typeVal);
+            let singleType = typeof typeVal === 'string' ? typeVal : (/** @type {any[]} */(typeVal).length === 1 ? /** @type {any[]} */(typeVal)[0] : null);
 
             if (singleType !== null) {
                 if (singleType === 'array') {
@@ -2082,16 +2087,16 @@ CompoundSchema.prototype.bundle = function (schemas) {
                 let primMerged = 0;
                 let hasArrayType = false;
                 let hasObjectType = false;
-                for (let i = 0; i < typeArr.length; i++) {
-                    if (isContainerType(typeArr[i])) {
+                for (let i = 0; i < /** @type {any[]} */(typeArr).length; i++) {
+                    if (isContainerType(/** @type {any[]} */(typeArr)[i])) {
                         hasContainer = true;
-                        if (typeArr[i] === 'array') {
+                        if (/** @type {any[]} */(typeArr)[i] === 'array') {
                             hasArrayType = true;
                         } else {
                             hasObjectType = true;
                         }
                     } else {
-                        primMerged |= mapSingleTypePrim(typeArr[i]);
+                        primMerged |= mapSingleTypePrim(/** @type {any[]} */(typeArr)[i]);
                     }
                 }
                 if (!hasContainer) {
@@ -2195,8 +2200,8 @@ CompoundSchema.prototype.bundle = function (schemas) {
         rootNames.push(this.names[index]);
 
         let uri = null;
-        if (isObject(schema) && schema.$id !== void 0) {
-            uri = schema.$id;
+        if (isObject(schema) && /** @type {Record<string,any>} */(schema).$id !== void 0) {
+            uri = /** @type {Record<string,any>} */(schema).$id;
         }
         rootUris.push(uri);
     }

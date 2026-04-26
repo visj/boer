@@ -445,10 +445,10 @@ export declare function isValidDate(s: string): boolean;
 export declare function isValidTime(s: string): boolean;
 export declare function isValidDateTime(s: string): boolean;
 export declare function deepEqual(a: any, b: any): boolean;
-export declare function sortByKeyId(pairs: Array<[number, number]>): Uint32Array;
-export declare function parseValue(data: any): number;
+export declare function sortByKeyId(buffer: number[]): void;
+export declare function parseValue(data: any, mask: number, reify: boolean): any;
 export declare function _isValue(data: any, primBits: number): boolean;
-export declare function describeType(typedef: number): string;
+export declare function describeType(typedef: number, kinds?: Uint32Array): string;
 export declare function binarySearch(arr: Uint32Array, key: number, lo: number, hi: number): number;
 export declare function binarySearchPair(arr: Uint32Array, key: number, lo: number, hi: number): number;
 export declare function popcnt16(x: number): number;
@@ -458,16 +458,16 @@ export declare function codepointLen(s: string): number;
 // Validator packing (validator.js)
 // ────────────────────────────────────────────────────────────────────────────
 
-export declare const PAYLOAD_QUEUE: Record<string, number>;
-export declare function packValidators(opts: any, mask: number, lookup: (key: string) => number): { vHeader: number; vPayloads: number[] };
+export declare const PAYLOAD_QUEUE: { REGEX: Array<RegExp | null>; REGEX_LEN: number };
+export declare function packValidators(opts: any, mask: number, lookup: ((key: string) => number) | null): number[];
 
 // ────────────────────────────────────────────────────────────────────────────
 // Assertions (assert.js)
 // ────────────────────────────────────────────────────────────────────────────
 
-export declare const ERROR_MESSAGES: Record<string, string>;
-export declare const ERR_ARRAY_ELEMENT_MUST_BE_NUMBER: string;
-export declare const ERR_CONFIG_FIELD_MUST_BE_NUMBER: string;
-export declare function assert(condition: boolean, message: string): void;
-export declare function assertIsNumber(value: any, message: string): void;
-export declare function assertIsObject(value: any, message: string): void;
+export declare const ERROR_MESSAGES: string[];
+export declare const ERR_ARRAY_ELEMENT_MUST_BE_NUMBER: number;
+export declare const ERR_CONFIG_FIELD_MUST_BE_NUMBER: number;
+export declare function assert<T>(value: any, predicate: (v: any) => v is T, errorId: number): asserts value is T;
+export declare function assertIsNumber(value: any, errorId: number): asserts value is number;
+export declare function assertIsObject(value: any, errorId: number): asserts value is object;

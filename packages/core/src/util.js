@@ -77,6 +77,8 @@ function isObject(value) {
 
 /**
  * Fast RFC 3339 Date Validator (YYYY-MM-DD)
+ * @param {string} str
+ * @param {number} [offset]
  */
 function isValidDate(str, offset = 0) {
     // Length must be at least 10 for the date part
@@ -104,6 +106,8 @@ function isValidDate(str, offset = 0) {
 /**
  * Fast RFC 3339 Time Validator (HH:MM:SS[.frac][Z|+HH:MM|-HH:MM])
  * Supports leap seconds (23:59:60).
+ * @param {string} str
+ * @param {number} [offset]
  */
 function isValidTime(str, offset = 0) {
     if (str.length < offset + 8) return false;
@@ -151,6 +155,7 @@ function isValidTime(str, offset = 0) {
     return false;
 }
 
+/** @param {string} str */
 function isValidDateTime(str) {
     if (str.length < 19) return false;
 
@@ -450,12 +455,16 @@ function deepEqual(a, b) {
         }
 
         if (ArrayBuffer.isView(a) && ArrayBuffer.isView(b)) {
-            length = a.length;
-            if (length !== b.length) {
+            /** @type {any} */
+            let viewA = a;
+            /** @type {any} */
+            let viewB = b;
+            length = viewA.length;
+            if (length !== viewB.length) {
                 return false;
             }
             for (i = length; i-- !== 0;) {
-                if (a[i] !== b[i]) {
+                if (viewA[i] !== viewB[i]) {
                     return false;
                 }
             }

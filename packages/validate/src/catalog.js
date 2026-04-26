@@ -1712,17 +1712,17 @@ function catalog(cfg) {
     }
 
     /**
-     * @param {Uint32Array<ArrayBuffer>} buf
+     * @param {Uint32Array} buf
      */
     function resizeSlab(buf) { SLAB = buf; }
 
     /**
-     * @param {Uint32Array<ArrayBuffer>} buf
+     * @param {Uint32Array} buf
      */
     function resizeKinds(buf) { KINDS = buf; }
 
     /**
-     * @param {Float64Array<ArrayBuffer>} buf
+     * @param {Float64Array} buf
      */
     function resizeValidators(buf) { VALIDATORS = buf; }
 

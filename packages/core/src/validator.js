@@ -153,7 +153,7 @@ export function packValidators(opts, mask, lookup) {
     }
     if ((mask & V_CONTAINS) && opts.contains !== void 0) {
         vHeader |= V_CONTAINS;
-        out.push(opts.contains >>> 0);
+        out.push(/** @type {number} */(opts.contains) >>> 0);
     }
     if ((mask & V_MIN_CONTAINS) && opts.minContains !== void 0) {
         vHeader |= V_MIN_CONTAINS;
@@ -173,11 +173,11 @@ export function packValidators(opts, mask, lookup) {
     }
     if ((mask & V_UNEVALUATED_ITEMS) && opts.unevaluatedItems !== void 0) {
         vHeader |= V_UNEVALUATED_ITEMS;
-        out.push(opts.unevaluatedItems >>> 0);
+        out.push(/** @type {number} */(opts.unevaluatedItems) >>> 0);
     }
     if ((mask & V_UNEVALUATED_PROPERTIES) && opts.unevaluatedProperties !== void 0) {
         vHeader |= V_UNEVALUATED_PROPERTIES;
-        out.push(opts.unevaluatedProperties >>> 0);
+        out.push(/** @type {number} */(opts.unevaluatedProperties) >>> 0);
     }
 
     // ── Boolean modifier flags (no payload slot) ──
@@ -213,13 +213,13 @@ export function packValidators(opts, mask, lookup) {
             let pat = pKeys[i];
             PAYLOAD_QUEUE.REGEX[PAYLOAD_QUEUE.REGEX_LEN++] = new RegExp(pat, 'u');
             out.push(-1); // placeholder for regex cache index
-            out.push(opts.patternProperties[pat] >>> 0); // compiled type id
+            out.push(/** @type {number} */(opts.patternProperties[pat]) >>> 0); // compiled type id
         }
     }
 
     if ((mask & V_PROPERTY_NAMES) && opts.propertyNames !== void 0) {
         vHeader |= V_PROPERTY_NAMES;
-        out.push(opts.propertyNames >>> 0);
+        out.push(/** @type {number} */(opts.propertyNames) >>> 0);
     }
 
     if ((mask & V_ADDITIONAL_PROPERTIES) && opts.additionalProperties !== void 0
@@ -228,7 +228,7 @@ export function packValidators(opts, mask, lookup) {
         if (opts.additionalProperties === false) {
             out.push(0);
         } else {
-            out.push(opts.additionalProperties >>> 0);
+            out.push(/** @type {number} */(opts.additionalProperties) >>> 0);
         }
     }
 

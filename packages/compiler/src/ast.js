@@ -459,7 +459,7 @@ export function compile(cat, ast) {
                 astCompiled[nodeId] = malloc(heap, K_ARRAY | K_VALIDATOR,
                     (ANY | NULLABLE) >>> 0, null, 0, vp.vHeader, vp.nodePayloads);
             } else {
-                astCompiled[nodeId] = BARE_ARRAY;
+                astCompiled[nodeId] = /** @type {number} */(BARE_ARRAY);
             }
             astState[nodeId] = COMPILED;
             continue;
@@ -471,7 +471,7 @@ export function compile(cat, ast) {
                 astCompiled[nodeId] = malloc(heap, K_OBJECT | K_VALIDATOR,
                     0, [], 0, vp.vHeader, vp.nodePayloads);
             } else {
-                astCompiled[nodeId] = BARE_OBJECT;
+                astCompiled[nodeId] = /** @type {number} */(BARE_OBJECT);
             }
             astState[nodeId] = COMPILED;
             continue;

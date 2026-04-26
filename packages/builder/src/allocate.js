@@ -197,7 +197,7 @@ function migrateRegex(result, cache) {
     let ri = 0;
     for (let i = 1; i < result.length; i++) {
         if (result[i] === -1) {
-            result[i] = cache.push(PAYLOAD_QUEUE.REGEX[ri++]) - 1;
+            result[i] = cache.push(/** @type {RegExp} */(PAYLOAD_QUEUE.REGEX[ri++])) - 1;
         }
     }
 }
@@ -869,7 +869,7 @@ function arrayImpl(ctx, elemType, opts) {
 /**
  * @param {*} ctx
  * @param {string} discriminator
- * @param {!Object} variants
+ * @param {!Record<string, number>} variants
  * @returns {number}
  */
 function unionImpl(ctx, discriminator, variants) {
@@ -886,7 +886,7 @@ function unionImpl(ctx, discriminator, variants) {
     /** @type {!Array<number>} */
     let resolved = new Array(required);
     for (let i = 0; i < count; i++) {
-        let type = variants[keys[i]];
+        let type = /** @type {number} */(variants[keys[i]]);
         if (typeof type !== 'number') {
             throw new Error('Invalid variant type for key ' + keys[i]);
         }
@@ -906,61 +906,110 @@ function unionImpl(ctx, discriminator, variants) {
 
 // --- Allocator factories ---
 
+/**
+ * @param {uvd.Catalog<any>} cat
+ * @returns {(def: *, opts?: *) => number}
+ */
 function objectAllocator(cat) {
     let ctx = cat.__heap;
     return (def, opts) => objectImpl(ctx, def, opts);
 }
 
+/**
+ * @param {uvd.Catalog<any>} cat
+ * @returns {(type: number, opts?: *) => number}
+ */
 function arrayAllocator(cat) {
     let ctx = cat.__heap;
     return (type, opts) => arrayImpl(ctx, type, opts);
 }
 
+/**
+ * @param {uvd.Catalog<any>} cat
+ * @returns {(disc: string, variants: *) => number}
+ */
 function unionAllocator(cat) {
     let ctx = cat.__heap;
     return (disc, variants) => unionImpl(ctx, disc, variants);
 }
 
+/**
+ * @param {uvd.Catalog<any>} cat
+ * @param {number} primConst
+ * @returns {(opts?: *) => number}
+ */
 function valueAllocator(cat, primConst) {
     let ctx = cat.__heap;
     return (opts) => valueImpl(ctx, primConst, opts);
 }
 
+/**
+ * @param {uvd.Catalog<any>} cat
+ * @returns {(typedef: number, fn: function(*): boolean) => number}
+ */
 function refineAllocator(cat) {
     let ctx = cat.__heap;
     return (typedef, fn) => refineImpl(ctx, typedef, fn);
 }
 
+/**
+ * @param {uvd.Catalog<any>} cat
+ * @returns {(first: *, second?: *, third?: *) => number}
+ */
 function tupleAllocator(cat) {
     let ctx = cat.__heap;
     return (first, second, third) => tupleArrayImpl(ctx, normalizeTypeArgs(first, second, third));
 }
 
+/**
+ * @param {uvd.Catalog<any>} cat
+ * @returns {(valueType: number) => number}
+ */
 function recordAllocator(cat) {
     let ctx = cat.__heap;
     return (valueType) => recordImpl(ctx, valueType);
 }
 
+/**
+ * @param {uvd.Catalog<any>} cat
+ * @returns {(first: *, second?: *, third?: *) => number}
+ */
 function orAllocator(cat) {
     let ctx = cat.__heap;
     return (first, second, third) => orImpl(ctx, normalizeTypeArgs(first, second, third));
 }
 
+/**
+ * @param {uvd.Catalog<any>} cat
+ * @returns {(first: *, second?: *, third?: *) => number}
+ */
 function exclusiveAllocator(cat) {
     let ctx = cat.__heap;
     return (first, second, third) => exclusiveImpl(ctx, normalizeTypeArgs(first, second, third));
 }
 
+/**
+ * @param {uvd.Catalog<any>} cat
+ * @returns {(first: *, second?: *, third?: *) => number}
+ */
 function intersectAllocator(cat) {
     let ctx = cat.__heap;
     return (first, second, third) => intersectImpl(ctx, normalizeTypeArgs(first, second, third));
 }
 
+/**
+ * @param {uvd.Catalog<any>} cat
+ * @returns {(typedef: number) => number}
+ */
 function notAllocator(cat) {
     let ctx = cat.__heap;
     return (typedef) => notImpl(ctx, typedef);
 }
 
+/**
+ * @param {uvd.Catalog<any>} cat
+ * @returns {(config: *) => number}
+ */
 function whenAllocator(cat) {
     let ctx = cat.__heap;
     return (config) => whenImpl(ctx, config);
@@ -968,28 +1017,32 @@ function whenAllocator(cat) {
 
 // --- Convenience bundle ---
 
+/**
+ * @param {uvd.Catalog<any>} cat
+ * @returns {uvd.Allocators<any>}
+ */
 function allocators(cat) {
     let ctx = cat.__heap;
-    return {
-        object: (def, opts) => objectImpl(ctx, def, opts),
-        array: (type, opts) => arrayImpl(ctx, type, opts),
-        union: (disc, variants) => unionImpl(ctx, disc, variants),
-        string: (opts) => valueImpl(ctx, STRING, opts),
-        number: (opts) => valueImpl(ctx, NUMBER, opts),
-        boolean: (opts) => valueImpl(ctx, BOOLEAN, opts),
-        refine: (typedef, fn) => refineImpl(ctx, typedef, fn),
-        tuple: (first, second, third) => tupleArrayImpl(ctx, normalizeTypeArgs(first, second, third)),
-        record: (valueType) => recordImpl(ctx, valueType),
-        or: (first, second, third) => orImpl(ctx, normalizeTypeArgs(first, second, third)),
-        exclusive: (first, second, third) => exclusiveImpl(ctx, normalizeTypeArgs(first, second, third)),
-        intersect: (first, second, third) => intersectImpl(ctx, normalizeTypeArgs(first, second, third)),
-        not: (typedef) => notImpl(ctx, typedef),
-        when: (config) => whenImpl(ctx, config),
-        literal: (value) => literalImpl(ctx, value),
-        enum: (values) => enumImpl(ctx, values),
+    return /** @type {uvd.Allocators<any>} */({
+        object: (/** @type {*} */ def, /** @type {*} */ opts) => objectImpl(ctx, def, opts),
+        array: (/** @type {*} */ type, /** @type {*} */ opts) => arrayImpl(ctx, type, opts),
+        union: (/** @type {*} */ disc, /** @type {*} */ variants) => unionImpl(ctx, disc, variants),
+        string: (/** @type {*} */ opts) => valueImpl(ctx, STRING, opts),
+        number: (/** @type {*} */ opts) => valueImpl(ctx, NUMBER, opts),
+        boolean: (/** @type {*} */ opts) => valueImpl(ctx, BOOLEAN, opts),
+        refine: (/** @type {*} */ typedef, /** @type {*} */ fn) => refineImpl(ctx, typedef, fn),
+        tuple: (/** @type {*} */ first, /** @type {*} */ second, /** @type {*} */ third) => tupleArrayImpl(ctx, normalizeTypeArgs(first, second, third)),
+        record: (/** @type {*} */ valueType) => recordImpl(ctx, valueType),
+        or: (/** @type {*} */ first, /** @type {*} */ second, /** @type {*} */ third) => orImpl(ctx, normalizeTypeArgs(first, second, third)),
+        exclusive: (/** @type {*} */ first, /** @type {*} */ second, /** @type {*} */ third) => exclusiveImpl(ctx, normalizeTypeArgs(first, second, third)),
+        intersect: (/** @type {*} */ first, /** @type {*} */ second, /** @type {*} */ third) => intersectImpl(ctx, normalizeTypeArgs(first, second, third)),
+        not: (/** @type {*} */ typedef) => notImpl(ctx, typedef),
+        when: (/** @type {*} */ config) => whenImpl(ctx, config),
+        literal: (/** @type {*} */ value) => literalImpl(ctx, value),
+        enum: (/** @type {*} */ values) => enumImpl(ctx, values),
         optional,
         nullable,
-    };
+    });
 }
 
 export {

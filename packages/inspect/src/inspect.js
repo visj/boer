@@ -457,7 +457,7 @@ function dump(cat) {
     let enumsBytes = 0;
     for (let i = 0; i < ENUMS.length; i++) {
         enumsBytes += 4; // u32 set size
-        ENUMS[i].forEach(function (val) {
+        ENUMS[i].forEach(function (/** @type {*} */ val) {
             enumsBytes += taggedValueSize(val);
         });
     }
@@ -587,7 +587,7 @@ function dump(cat) {
         let s = ENUMS[i];
         view.setUint32(off, s.size, true);
         off += 4;
-        s.forEach(function (val) {
+        s.forEach(function (/** @type {*} */ val) {
             off = writeTaggedValue(view, out, off, val);
         });
     }

@@ -48,7 +48,7 @@ function createConform(cat) {
         let vm = type & PRIM_MASK;
         if (vm !== 0) {
             let result = parseValue(data, vm, reify);
-            if (result === FAIL) {
+            if (/** @type {*} */(result) === FAIL) {
                 return false;
             }
             holder[slot] = result;
@@ -111,9 +111,9 @@ function createConform(cat) {
                      */
                     if (header & K_ANY_INNER) {
                         if (vm === 0) { return true; }
-                        return parseValue(data, vm, reify) !== FAIL;
+                        return /** @type {*} */(parseValue(data, vm, reify)) !== FAIL;
                     }
-                    return vm !== 0 && parseValue(data, vm, reify) !== FAIL;
+                    return vm !== 0 && /** @type {*} */(parseValue(data, vm, reify)) !== FAIL;
                 }
                 case K_OBJECT: {
                     if (typeof data !== 'object' || data === null || Array.isArray(data)) {
@@ -281,7 +281,7 @@ function createConform(cat) {
         if (valueMask === 0) {
             return false;
         }
-        return parseValue(data, valueMask, reify) !== FAIL;
+        return /** @type {*} */(parseValue(data, valueMask, reify)) !== FAIL;
     }
 
     /**
