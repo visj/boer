@@ -12,6 +12,14 @@
       "devDependencies": {
         "@sinclair/typebox": "^0.34.48",
         "@types/bun": "^1.3.10",
+        "@uvd/builder": "workspace:*",
+        "@uvd/compiler": "workspace:*",
+        "@uvd/conform": "workspace:*",
+        "@uvd/core": "workspace:*",
+        "@uvd/diagnose": "workspace:*",
+        "@uvd/inspect": "workspace:*",
+        "@uvd/schema": "workspace:*",
+        "@uvd/validate": "workspace:*",
         "ajv": "^8.18.0",
         "c8": "^11.0.0",
         "json-schema-typed": "^8.0.2",
@@ -107,6 +115,11 @@
       "version": "0.2.0",
       "dependencies": {
         "@uvd/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@uvd/builder": "workspace:*",
+        "@uvd/compiler": "workspace:*",
+        "@uvd/schema": "workspace:*",
       },
     },
   },

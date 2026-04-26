@@ -124,7 +124,7 @@ function createConform(cat) {
                     let length = slab[slabOffset];
                     let base = slabOffset + 1;
                     for (let i = 0; i < length; i++) {
-                        let key = KEY_INDEX.get(slab[base + (i * 2)]);
+                        let key = /** @type {*} */(KEY_INDEX).get(slab[base + (i * 2)]);
                         if (key === void 0) {
                             return false;
                         }
@@ -206,7 +206,7 @@ function createConform(cat) {
                     let slabOffset = kinds[kindsIdx + 1];
                     let length = slab[slabOffset];
                     /** slab[slabOffset+1] is the discriminator keyId; variants follow at slabOffset+2 */
-                    let discKey = KEY_INDEX.get(slab[slabOffset + 1]);
+                    let discKey = /** @type {*} */(KEY_INDEX).get(slab[slabOffset + 1]);
                     if (discKey === void 0) {
                         return false;
                     }

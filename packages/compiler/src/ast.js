@@ -794,7 +794,7 @@ export function compile(cat, ast) {
                         let regexCache = heap.REGEX_CACHE;
                         nodePayloads.push(patPayloads.length / 2);
                         for (let i = 0; i < patPayloads.length; i += 2) {
-                            let re = new RegExp(patPayloads[i], 'u');
+                            let re = new RegExp(/** @type {string} */(patPayloads[i]), 'u');
                             let reIdx = regexCache.length;
                             regexCache.push(re);
                             nodePayloads.push(reIdx);
@@ -883,14 +883,14 @@ export function compile(cat, ast) {
                         }
                         if (canInline && (vh & V_MIN_PROPERTIES) && finalPayloads !== null) {
                             let slot = popcnt16(vh & (V_MIN_PROPERTIES - 1));
-                            minProps = finalPayloads[slot] | 0;
+                            minProps = /** @type {number} */(finalPayloads[slot]) | 0;
                             if (minProps === 0 || minProps > MOD_RECORD_MIN_PROPS_LIMIT) {
                                 canInline = false;
                             }
                         }
                         if (canInline && (vh & V_MAX_PROPERTIES) && finalPayloads !== null) {
                             let slot = popcnt16(vh & (V_MAX_PROPERTIES - 1));
-                            maxProps = finalPayloads[slot] | 0;
+                            maxProps = /** @type {number} */(finalPayloads[slot]) | 0;
                             if (maxProps === 0 || maxProps > MOD_RECORD_MAX_PROPS_LIMIT) {
                                 canInline = false;
                             }

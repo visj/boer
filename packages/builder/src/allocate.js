@@ -1023,7 +1023,7 @@ function whenAllocator(cat) {
  */
 function allocators(cat) {
     let ctx = cat.__heap;
-    return /** @type {uvd.Allocators<any>} */({
+    return /** @type {*} */({
         object: (/** @type {*} */ def, /** @type {*} */ opts) => objectImpl(ctx, def, opts),
         array: (/** @type {*} */ type, /** @type {*} */ opts) => arrayImpl(ctx, type, opts),
         union: (/** @type {*} */ disc, /** @type {*} */ variants) => unionImpl(ctx, disc, variants),

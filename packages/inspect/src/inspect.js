@@ -159,10 +159,10 @@ function load(bin, cfg) {
      * Compute final capacities: max of binary data count and config value.
      * This lets users reserve extra room for dynamically added schemas.
      */
-    let useConfig = cfg !== void 0;
-    let cfgSlab = (useConfig && cfg.slab !== void 0) ? cfg.slab : 0;
-    let cfgKinds = (useConfig && cfg.kinds !== void 0) ? cfg.kinds : 0;
-    let cfgVals = (useConfig && cfg.validators !== void 0) ? cfg.validators : 0;
+    let c = cfg !== void 0 ? cfg : null;
+    let cfgSlab = (c !== null && c.slab !== void 0) ? c.slab : 0;
+    let cfgKinds = (c !== null && c.kinds !== void 0) ? c.kinds : 0;
+    let cfgVals = (c !== null && c.validators !== void 0) ? c.validators : 0;
 
     let slabLen = cfgSlab > slabCount ? cfgSlab : slabCount;
     let kindsLen = cfgKinds > kindsCount ? cfgKinds : kindsCount;

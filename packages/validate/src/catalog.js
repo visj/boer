@@ -67,7 +67,7 @@ function createHeap(cfg) {
 
 /**
  * @template {symbol} R
- * @param {uvd.Config=} cfg
+ * @param {*} [cfg]
  * @returns {uvd.Catalog<R>}
  */
 function catalog(cfg) {
@@ -83,7 +83,7 @@ function catalog(cfg) {
     let VALIDATORS = HEAP.VALIDATORS;
     /** @type {!Array<RegExp>} First slot reserved; index 0 is the no-match sentinel. */
     const REGEX_CACHE = isSeed ? cfg.REGEX_CACHE : [/(?:)/];
-    /** @type {!Array<function>} */
+    /** @type {!Array<(...args: any[]) => any>} */
     const CALLBACKS = [];
     /** @type {!Array<!Set<*>>} Inline enum arena for enum Sets (MOD_ENUM, isSet=1) */
     const ENUMS = isSeed ? cfg.ENUMS : [];

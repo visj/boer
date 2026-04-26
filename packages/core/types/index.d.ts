@@ -245,9 +245,9 @@ export interface Catalog<R extends symbol> {
         readonly KEY_INDEX: string[];
         readonly lookup: (key: string) => number;
         readonly _validate: (data: any, typedef: number, trackPtr: number, snapPtr: number) => boolean;
-        readonly resizeSlab: () => void;
-        readonly resizeKinds: () => void;
-        readonly resizeValidators: () => void;
+        readonly resizeSlab: (buf: Uint32Array) => void;
+        readonly resizeKinds: (buf: Uint32Array) => void;
+        readonly resizeValidators: (buf: Float64Array) => void;
     };
 }
 
@@ -449,8 +449,8 @@ export declare function sortByKeyId(buffer: number[]): void;
 export declare function parseValue(data: any, mask: number, reify: boolean): any;
 export declare function _isValue(data: any, primBits: number): boolean;
 export declare function describeType(typedef: number, kinds?: Uint32Array): string;
-export declare function binarySearch(arr: Uint32Array, key: number, lo: number, hi: number): number;
-export declare function binarySearchPair(arr: Uint32Array, key: number, lo: number, hi: number): number;
+export declare function binarySearch(arr: Uint32Array | Float64Array, key: number, lo: number, hi: number): number;
+export declare function binarySearchPair(arr: Uint32Array | Float64Array, key: number, lo: number, hi: number): number;
 export declare function popcnt16(x: number): number;
 export declare function codepointLen(s: string): number;
 

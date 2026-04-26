@@ -57,7 +57,7 @@ const FMT_NAMES = ['', 'email', 'ipv4', 'uuid', 'date', 'time', 'date-time'];
  *
  * @template {symbol} R
  * @param {uvd.Catalog<R>} cat
- * @returns {uvd.Catalog<R>['diagnose']}
+ * @returns {(data: any, typedef: number) => uvd.PathError[]}
  */
 function createDiagnose(cat) {
     let h = cat.__heap;

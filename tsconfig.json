@@ -4,5 +4,8 @@
     "packages/*/src/**/*.js",
     "packages/*/types/**/*.d.ts",
     "global.d.ts"
+  ],
+  "exclude": [
+    "packages/conform/**"
   ]
 }
