@@ -12,7 +12,7 @@ import { allocators } from '@uvd/builder';
 import { createConform } from '@uvd/conform';
 import { createDiagnose } from '@uvd/diagnose';
 
-/** @type {uvd.Catalog<uvd.UVD>} */
+/** @type {import('@uvd/core').Catalog<import('uvd').UVD>} */
 const uvd = catalog();
 
 const {

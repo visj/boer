@@ -1,8 +1,27 @@
-import { type JSONSchema as _JSONSchema } from "json-schema-typed";
+import type {
+    Value, Complex, Type, Infer,
+    Schema, StrictSchema, InferSchema, InferStrictSchema,
+    PathError, Catalog, Config, Heap,
+    Allocators, WhenConfig,
+    StringValidators, NumberValidators, ArrayValidators, ObjectValidators,
+} from '@uvd/core';
 
-export * from './types/core.d.ts';
+import type { FlatAst, CompoundSchema } from '@uvd/schema';
+import type { SchemaResource } from '@uvd/compiler';
+
+declare const _UVD: unique symbol;
 
 export as namespace uvd;
-export type JSONSchema = _JSONSchema;
 
-export { UVD } from './types/index.d.ts';
+export {
+    Value, Complex, Type, Infer,
+    Schema, StrictSchema, InferSchema, InferStrictSchema,
+    PathError, Catalog, Config, Heap,
+    Allocators, WhenConfig,
+    StringValidators, NumberValidators, ArrayValidators, ObjectValidators,
+    FlatAst, CompoundSchema,
+    SchemaResource,
+};
+
+export type UVD = typeof _UVD;
+export type WhenValidators = WhenConfig;

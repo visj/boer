@@ -258,9 +258,216 @@ export interface Config {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Bit-level constants
+// Bit-level constants (const.js)
 // ────────────────────────────────────────────────────────────────────────────
 
+/** Bit 0: complex typedef (pointer into KINDS vtable) */
 export declare const COMPLEX: number;
+/** Bit 1: typedef accepts null */
 export declare const NULLABLE: number;
+/** Bit 2: typedef accepts undefined */
 export declare const OPTIONAL: number;
+
+/** Primitive type bits (bits 3-7) */
+export declare const ANY: number;
+export declare const STRING: number;
+export declare const NUMBER: number;
+export declare const INTEGER: number;
+export declare const BOOLEAN: number;
+/** NEVER is 0 — a typedef with no type bits set matches nothing */
+export declare const NEVER: number;
+
+/** All primitive type bits combined */
+export declare const SIMPLE: number;
+/** Value types only (STRING | NUMBER | INTEGER | BOOLEAN) */
+export declare const VALUE: number;
+/** Mask for bits 0-7 (COMPLEX + NULLABLE + OPTIONAL + primitive bits) */
+export declare const PRIM_MASK: number;
+
+/** Backward-compatible aliases */
+export declare const NULL: number;
+export declare const UNDEFINED: number;
+
+/** Inline modifier bits (bits 8-10) */
+export declare const MODIFIER: number;
+export declare const MOD_ARRAY: number;
+export declare const MOD_RECORD: number;
+export declare const MOD_ENUM: number;
+export declare const MOD_MASK: number;
+
+/** Shift to encode/decode KINDS array index in a complex typedef */
+export declare const KINDS_SHIFT: number;
+
+/** Mask for payload-bearing validator flags (bits 0-13) */
+export declare const V_PAYLOAD_MASK: number;
+
+/** MOD_ENUM inline payload bits */
+export declare const MOD_ENUM_IS_SET: number;
+export declare const MOD_ENUM_IDX_SHIFT: number;
+export declare const MOD_ENUM_IDX_MASK: number;
+
+/** MOD_ARRAY inline payload bits */
+export declare const MOD_ARRAY_UNIQUE_BIT: number;
+export declare const MOD_ARRAY_MAX_ITEMS_SHIFT: number;
+export declare const MOD_ARRAY_MAX_ITEMS_MASK: number;
+export declare const MOD_ARRAY_MAX_ITEMS_LIMIT: number;
+export declare const MOD_ARRAY_MIN_ITEMS_SHIFT: number;
+export declare const MOD_ARRAY_MIN_ITEMS_MASK: number;
+export declare const MOD_ARRAY_MIN_ITEMS_LIMIT: number;
+
+/** MOD_RECORD inline payload bits */
+export declare const MOD_RECORD_MAX_PROPS_SHIFT: number;
+export declare const MOD_RECORD_MAX_PROPS_MASK: number;
+export declare const MOD_RECORD_MAX_PROPS_LIMIT: number;
+export declare const MOD_RECORD_MIN_PROPS_SHIFT: number;
+export declare const MOD_RECORD_MIN_PROPS_MASK: number;
+export declare const MOD_RECORD_MIN_PROPS_LIMIT: number;
+
+/** Inline STRING validator payload bits */
+export declare const STR_REGEX_IDX_SHIFT: number;
+export declare const STR_REGEX_IDX_MASK: number;
+export declare const STR_REGEX_IDX_LIMIT: number;
+export declare const STR_MAX_LEN_SHIFT: number;
+export declare const STR_MAX_LEN_MASK: number;
+export declare const STR_MAX_LEN_LIMIT: number;
+export declare const STR_MIN_LEN_SHIFT: number;
+export declare const STR_MIN_LEN_MASK: number;
+export declare const STR_MIN_LEN_LIMIT: number;
+
+/** Inline NUMBER/INTEGER validator payload bits */
+export declare const NUM_HAS_MIN_BIT: number;
+export declare const NUM_EXCL_MIN_BIT: number;
+export declare const NUM_EXCL_MAX_BIT: number;
+export declare const NUM_MIN_NEG_BIT: number;
+export declare const NUM_MAX_NEG_BIT: number;
+export declare const NUM_MIN_MAG_SHIFT: number;
+export declare const NUM_MIN_MAG_MASK: number;
+export declare const NUM_MIN_MAG_LIMIT: number;
+export declare const NUM_MAX_MAG_SHIFT: number;
+export declare const NUM_MAX_MAG_MASK: number;
+export declare const NUM_MAX_MAG_LIMIT: number;
+
+/** Evaluation tracking bit-packing */
+export declare const WORD_IDX_SHIFT: number;
+export declare const WORD_BIT_MASK: number;
+export declare const UNKNOWN_KEY_FLAG: number;
+
+/** KINDS header flags */
+export declare const K_VALIDATOR: number;
+export declare const K_ANY_INNER: number;
+export declare const K_STRICT: number;
+export declare const K_HAS_ITEMS: number;
+export declare const K_HAS_REST: number;
+export declare const K_ALL_REQUIRED: number;
+
+/** Complex KINDS enum (bits 0-3) */
+export declare const K_PRIMITIVE: number;
+export declare const K_OBJECT: number;
+export declare const K_ARRAY: number;
+export declare const K_RECORD: number;
+export declare const K_OR: number;
+export declare const K_EXCLUSIVE: number;
+export declare const K_INTERSECT: number;
+export declare const K_UNION: number;
+export declare const K_TUPLE: number;
+export declare const K_REFINE: number;
+export declare const K_NOT: number;
+export declare const K_CONDITIONAL: number;
+export declare const K_DYN_ANCHOR: number;
+export declare const K_DYN_REF: number;
+export declare const K_UNEVALUATED: number;
+export declare const KIND_ENUM_MASK: number;
+
+/** Validator bit flags — string */
+export declare const V_MIN_LENGTH: number;
+export declare const V_MAX_LENGTH: number;
+export declare const V_PATTERN: number;
+export declare const V_FORMAT: number;
+/** Validator bit flags — number */
+export declare const V_MINIMUM: number;
+export declare const V_MAXIMUM: number;
+export declare const V_MULTIPLE_OF: number;
+export declare const V_EXCLUSIVE_MINIMUM: number;
+export declare const V_EXCLUSIVE_MAXIMUM: number;
+/** Validator bit flags — array */
+export declare const V_MIN_ITEMS: number;
+export declare const V_MAX_ITEMS: number;
+export declare const V_CONTAINS: number;
+export declare const V_MIN_CONTAINS: number;
+export declare const V_MAX_CONTAINS: number;
+export declare const V_PRIMITIVE_ITEMS: number;
+export declare const V_UNIQUE_ITEMS: number;
+/** Validator bit flags — object */
+export declare const V_MIN_PROPERTIES: number;
+export declare const V_MAX_PROPERTIES: number;
+export declare const V_PATTERN_PROPERTIES: number;
+export declare const V_PROPERTY_NAMES: number;
+export declare const V_ADDITIONAL_PROPERTIES: number;
+export declare const V_DEPENDENT_REQUIRED: number;
+export declare const V_DEPENDENT_SCHEMAS: number;
+export declare const V_UNEVALUATED_ITEMS: number;
+export declare const V_UNEVALUATED_PROPERTIES: number;
+/** Validator bit flags — enum */
+export declare const V_ENUM: number;
+export declare const BOOL_ENUM_TRUE: number;
+export declare const BOOL_ENUM_FALSE: number;
+
+/** Format enum values */
+export declare const FMT_EMAIL: number;
+export declare const FMT_IPV4: number;
+export declare const FMT_UUID: number;
+export declare const FMT_DATE: number;
+export declare const FMT_TIME: number;
+export declare const FMT_DATETIME: number;
+export declare const FMT_MAP: Record<string, number>;
+
+/** Format validation regexes */
+export declare const FMT_RE_EMAIL: RegExp;
+export declare const FMT_RE_IPV4: RegExp;
+export declare const FMT_RE_UUID: RegExp;
+export declare const FMT_RE_DATETIME: RegExp;
+
+export declare const FAIL: symbol;
+export declare const toString: typeof Object.prototype.toString;
+export declare const hasOwnProperty: typeof Object.prototype.hasOwnProperty;
+
+// ────────────────────────────────────────────────────────────────────────────
+// Utility functions (util.js)
+// ────────────────────────────────────────────────────────────────────────────
+
+export declare function nullable<T>(typedef: T): number;
+export declare function optional<T>(typedef: T): number;
+export declare function isNumber(v: any): v is number;
+export declare function isString(v: any): v is string;
+export declare function isObject(v: any): boolean;
+export declare function isBoolean(v: any): v is boolean;
+export declare function isValidDate(s: string): boolean;
+export declare function isValidTime(s: string): boolean;
+export declare function isValidDateTime(s: string): boolean;
+export declare function deepEqual(a: any, b: any): boolean;
+export declare function sortByKeyId(pairs: Array<[number, number]>): Uint32Array;
+export declare function parseValue(data: any): number;
+export declare function _isValue(data: any, primBits: number): boolean;
+export declare function describeType(typedef: number): string;
+export declare function binarySearch(arr: Uint32Array, key: number, lo: number, hi: number): number;
+export declare function binarySearchPair(arr: Uint32Array, key: number, lo: number, hi: number): number;
+export declare function popcnt16(x: number): number;
+export declare function codepointLen(s: string): number;
+
+// ────────────────────────────────────────────────────────────────────────────
+// Validator packing (validator.js)
+// ────────────────────────────────────────────────────────────────────────────
+
+export declare const PAYLOAD_QUEUE: Record<string, number>;
+export declare function packValidators(opts: any, mask: number, lookup: (key: string) => number): { vHeader: number; vPayloads: number[] };
+
+// ────────────────────────────────────────────────────────────────────────────
+// Assertions (assert.js)
+// ────────────────────────────────────────────────────────────────────────────
+
+export declare const ERROR_MESSAGES: Record<string, string>;
+export declare const ERR_ARRAY_ELEMENT_MUST_BE_NUMBER: string;
+export declare const ERR_CONFIG_FIELD_MUST_BE_NUMBER: string;
+export declare function assert(condition: boolean, message: string): void;
+export declare function assertIsNumber(value: any, message: string): void;
+export declare function assertIsObject(value: any, message: string): void;
