@@ -1,9 +1,9 @@
 import { describe, test, expect } from 'bun:test';
 import {
     BOOLEAN, NUMBER, STRING
-} from '@uvd/core';
-import { catalog } from '@uvd/validate';
-import { allocators } from '@uvd/builder';
+} from '@luvd/core';
+import { catalog } from '@luvd/validate';
+import { allocators } from '@luvd/builder';
 
 const cat = catalog();
 const { object, array, string, number, boolean, nullable, optional, refine, union } = allocators(cat);

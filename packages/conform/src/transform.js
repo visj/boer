@@ -7,7 +7,7 @@ import {
     K_CONDITIONAL, K_ANY_INNER,
     KIND_ENUM_MASK, FAIL, K_HAS_REST,
     parseValue,
-} from '@uvd/core';
+} from '@luvd/core';
 
 /**
  * Creates a `conform` function bound to the given catalog's heap.

@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
-import { UNDEFINED, NULL, NUMBER, STRING } from '@uvd/core';
-import { catalog } from '@uvd/validate';
-import { allocators } from '@uvd/builder';
+import { UNDEFINED, NULL, NUMBER, STRING } from '@luvd/core';
+import { catalog } from '@luvd/validate';
+import { allocators } from '@luvd/builder';
 
 const cat = catalog();
 const { object, array, union } = allocators(cat);

@@ -1,10 +1,10 @@
 import { describe, test, expect } from 'bun:test';
-import { STRING, NUMBER, BOOLEAN } from '@uvd/core';
-import { catalog } from '@uvd/validate';
-import { allocators } from '@uvd/builder';
-import { print, dump, load } from '@uvd/inspect';
-import { compile } from '@uvd/compiler';
-import { CompoundSchema } from '@uvd/schema';
+import { STRING, NUMBER, BOOLEAN } from '@luvd/core';
+import { catalog } from '@luvd/validate';
+import { allocators } from '@luvd/builder';
+import { print, dump, load } from '@luvd/inspect';
+import { compile } from '@luvd/compiler';
+import { CompoundSchema } from '@luvd/schema';
 import fs from 'fs';
 import path from 'path';
 

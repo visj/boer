@@ -1,12 +1,12 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, BOOLEAN, NUMBER, STRING, ANY
-} from '@uvd/core';
-import { catalog } from '@uvd/validate';
-import { allocators } from '@uvd/builder';
-import { createDiagnose } from '@uvd/diagnose';
-import { compile } from '@uvd/compiler';
-import { CompoundSchema } from '@uvd/schema';
+} from '@luvd/core';
+import { catalog } from '@luvd/validate';
+import { allocators } from '@luvd/builder';
+import { createDiagnose } from '@luvd/diagnose';
+import { compile } from '@luvd/compiler';
+import { CompoundSchema } from '@luvd/schema';
 import fs from 'fs';
 import path from 'path';
 

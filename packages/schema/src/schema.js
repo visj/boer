@@ -10,7 +10,7 @@ import {
     hasOwnProperty,
     isBoolean, isObject, isString,
     packValidators, PAYLOAD_QUEUE,
-} from '@uvd/core';
+} from '@luvd/core';
 import { resolve } from "uri-js";
 
 /**

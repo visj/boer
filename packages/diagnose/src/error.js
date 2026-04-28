@@ -35,7 +35,7 @@ import {
     _isValue, describeType, deepEqual, codepointLen,
     binarySearch, binarySearchPair, popcnt16,
     isValidTime, isValidDate, isValidDateTime
-} from '@uvd/core';
+} from '@luvd/core';
 
 /** Format regex patterns (same as catalog.js) */
 const FMT_RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

@@ -2,17 +2,17 @@ import {
     VALUE, NULL, UNDEFINED, BOOLEAN,
     NUMBER, STRING,
     ANY, NEVER
-} from '@uvd/core';
+} from '@luvd/core';
 import {
     catalog,
     BARE_ARRAY as ARRAY,
     BARE_OBJECT as OBJECT,
-} from '@uvd/validate';
-import { allocators } from '@uvd/builder';
-import { createConform } from '@uvd/conform';
-import { createDiagnose } from '@uvd/diagnose';
+} from '@luvd/validate';
+import { allocators } from '@luvd/builder';
+import { createConform } from '@luvd/conform';
+import { createDiagnose } from '@luvd/diagnose';
 
-/** @type {import('@uvd/core').Catalog<import('uvd').UVD>} */
+/** @type {import('@luvd/core').Catalog<import('uvd').UVD>} */
 const uvd = catalog();
 
 const {

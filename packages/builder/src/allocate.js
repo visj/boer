@@ -33,7 +33,7 @@ import {
     nullable, optional, isNumber, isObject,
     sortByKeyId,
     packValidators, PAYLOAD_QUEUE,
-} from '@uvd/core';
+} from '@luvd/core';
 
 // --- Helper functions ---
 

@@ -1,4 +1,4 @@
-import type { Catalog, Config } from '@uvd/core';
+import type { Catalog, Config } from '@luvd/core';
 
 export declare function print(cat: Catalog<any>): {
     stats: Record<string, number>;

@@ -5,7 +5,7 @@ import type {
     ObjectFn, ArrayFn, UnionFn, RefineFn, TupleFn, RecordFn,
     OrFn, ExclusiveFn, IntersectFn, NotFn, WhenFn,
     StringFn, NumberFn, BooleanFn, NullableFn, OptionalFn,
-} from '@uvd/core';
+} from '@luvd/core';
 
 declare const UVD: unique symbol;
 export type UVD = typeof UVD;

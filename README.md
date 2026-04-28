@@ -80,9 +80,9 @@ import { STRING, NUMBER, NULL } from 'uvd';
 uvd can parse and validate against JSON Schema directly, supporting Draft 4, 6, 7, 2019-09 and 2020-12. This includes `$ref`, `$defs`, `$anchor`, `$dynamicRef`, `unevaluatedItems`, `unevaluatedProperties`, and the rest of the spec.
 
 ```ts
-import { catalog } from '@uvd/validate';
-import { parseJSONSchema } from '@uvd/schema';
-import { compile } from '@uvd/compiler';
+import { catalog } from '@luvd/validate';
+import { parseJSONSchema } from '@luvd/schema';
+import { compile } from '@luvd/compiler';
 
 const cat = catalog();
 const ast = parseJSONSchema(mySchema);
@@ -106,7 +106,7 @@ Validation walks these packed integers instead of traversing object graphs. The 
 uvd can serialize a compiled catalog to a binary format and load it back. This is the main mechanism for fast cold starts: parse and compile your schemas at build time, ship the binary, and load it at runtime without any schema processing.
 
 ```ts
-import { dump, load } from '@uvd/inspect';
+import { dump, load } from '@luvd/inspect';
 
 // At build time
 const buffer = dump(catalog);
@@ -122,14 +122,14 @@ uvd is a monorepo with these packages:
 | Package | What it does |
 |---------|-------------|
 | `uvd` | Main entry point, re-exports everything |
-| `@uvd/core` | Bit constants, type definitions, shared utilities |
-| `@uvd/builder` | DSL allocators (object, array, union, etc.) |
-| `@uvd/validate` | Catalog and validation engine |
-| `@uvd/schema` | JSON Schema parser (all drafts) |
-| `@uvd/compiler` | Compiles parsed JSON Schema AST into the catalog |
-| `@uvd/diagnose` | Error reporting with paths |
-| `@uvd/conform` | Data coercion and transformation |
-| `@uvd/inspect` | Debug printing and binary serialization |
+| `@luvd/core` | Bit constants, type definitions, shared utilities |
+| `@luvd/builder` | DSL allocators (object, array, union, etc.) |
+| `@luvd/validate` | Catalog and validation engine |
+| `@luvd/schema` | JSON Schema parser (all drafts) |
+| `@luvd/compiler` | Compiles parsed JSON Schema AST into the catalog |
+| `@luvd/diagnose` | Error reporting with paths |
+| `@luvd/conform` | Data coercion and transformation |
+| `@luvd/inspect` | Debug printing and binary serialization |
 
 ## License
 

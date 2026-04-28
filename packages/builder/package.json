@@ -1,5 +1,5 @@
 {
-  "name": "@uvd/builder",
+  "name": "@luvd/builder",
   "version": "0.2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,12 +18,12 @@
     "make": "node scripts/build.js"
   },
   "dependencies": {
-    "@uvd/core": "workspace:*"
+    "@luvd/core": "workspace:*"
   },
   "devDependencies": {
-    "@uvd/validate": "workspace:*",
-    "@uvd/conform": "workspace:*",
-    "@uvd/diagnose": "workspace:*"
+    "@luvd/validate": "workspace:*",
+    "@luvd/conform": "workspace:*",
+    "@luvd/diagnose": "workspace:*"
   },
   "license": "Apache-2.0"
 }

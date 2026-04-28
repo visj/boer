@@ -14,9 +14,9 @@
  * scratch and is independently governed by *its* metaschema's vocabulary.
  */
 import { describe, test, expect } from 'bun:test';
-import { CompoundSchema } from '@uvd/schema';
-import { compile } from '@uvd/compiler';
-import { catalog } from '@uvd/validate';
+import { CompoundSchema } from '@luvd/schema';
+import { compile } from '@luvd/compiler';
+import { catalog } from '@luvd/validate';
 
 const cat = catalog();
 const { validate } = cat;

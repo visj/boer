@@ -2,9 +2,9 @@ import { describe, test, expect } from "bun:test";
 import fs from "fs";
 import path from "path";
 
-import { CompoundSchema } from '@uvd/schema';
-import { compile } from '@uvd/compiler';
-import { catalog } from '@uvd/validate';
+import { CompoundSchema } from '@luvd/schema';
+import { compile } from '@luvd/compiler';
+import { catalog } from '@luvd/validate';
 
 const __dirname = import.meta.dir;
 const SPECS_DIR = path.resolve(__dirname, "specs");

@@ -34,7 +34,7 @@ import {
     sortByKeyId, _isValue, deepEqual, codepointLen,
     binarySearch, binarySearchPair, popcnt16,
     isValidTime, isValidDate, isValidDateTime,
-} from '@uvd/core';
+} from '@luvd/core';
 /**
  * Pre-allocated typedef pointers for common bare complex types.
  * KINDS[0] = K_ARRAY|K_ANY_INNER, KINDS[1] = K_OBJECT|K_ANY_INNER, KINDS[2] = K_RECORD|K_ANY_INNER.

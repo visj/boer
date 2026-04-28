@@ -1,10 +1,10 @@
 import { describe, test, expect } from 'bun:test';
 import {
     BOOLEAN, NUMBER, STRING
-} from '@uvd/core';
-import { catalog } from '@uvd/validate';
-import { allocators } from '@uvd/builder';
-import { createConform } from '@uvd/conform';
+} from '@luvd/core';
+import { catalog } from '@luvd/validate';
+import { allocators } from '@luvd/builder';
+import { createConform } from '@luvd/conform';
 
 const cat = catalog();
 const { object, array, union } = allocators(cat);

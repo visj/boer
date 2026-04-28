@@ -4,10 +4,10 @@ import type {
     PathError, Catalog, Config, Heap,
     Allocators, WhenConfig,
     StringValidators, NumberValidators, ArrayValidators, ObjectValidators,
-} from '@uvd/core';
+} from '@luvd/core';
 
-import type { FlatAst, CompoundSchema } from '@uvd/schema';
-import type { SchemaResource } from '@uvd/compiler';
+import type { FlatAst, CompoundSchema } from '@luvd/schema';
+import type { SchemaResource } from '@luvd/compiler';
 
 declare const _UVD: unique symbol;
 

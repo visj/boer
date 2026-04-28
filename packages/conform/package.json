@@ -1,5 +1,5 @@
 {
-  "name": "@uvd/conform",
+  "name": "@luvd/conform",
   "version": "0.2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,7 +18,7 @@
     "make": "node scripts/build.js"
   },
   "dependencies": {
-    "@uvd/core": "workspace:*"
+    "@luvd/core": "workspace:*"
   },
   "license": "Apache-2.0"
 }

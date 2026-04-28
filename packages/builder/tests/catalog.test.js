@@ -1,11 +1,11 @@
 import { describe, test, expect } from 'bun:test';
 import {
     STRING, NUMBER, NULL, UNDEFINED,
-} from '@uvd/core';
-import { catalog } from '@uvd/validate';
-import { allocators } from '@uvd/builder';
-import { createConform } from '@uvd/conform';
-import { createDiagnose } from '@uvd/diagnose';
+} from '@luvd/core';
+import { catalog } from '@luvd/validate';
+import { allocators } from '@luvd/builder';
+import { createConform } from '@luvd/conform';
+import { createDiagnose } from '@luvd/diagnose';
 
 describe('catalog: isolation', () => {
     test('catalog() returns an object with validate, etc.', () => {

@@ -1,4 +1,4 @@
-import type { Catalog, Type, PathError } from '@uvd/core';
+import type { Catalog, Type, PathError } from '@luvd/core';
 
 export declare function createDiagnose<R extends symbol>(
     cat: Catalog<R>

@@ -29,9 +29,9 @@ import {
     NUM_MIN_MAG_SHIFT, NUM_MIN_MAG_LIMIT,
     NUM_MAX_MAG_SHIFT, NUM_MAX_MAG_LIMIT,
     BOOL_ENUM_TRUE, BOOL_ENUM_FALSE,
-} from "@uvd/core";
+} from "@luvd/core";
 
-import { BARE_ARRAY, BARE_OBJECT, BARE_RECORD } from "@uvd/validate";
+import { BARE_ARRAY, BARE_OBJECT, BARE_RECORD } from "@luvd/validate";
 
 import {
     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,
@@ -40,9 +40,9 @@ import {
     AST_FLAG_HAS_REST, AST_FLAG_HAS_CONTAINS, AST_FLAG_HAS_ITEMS,
     AST_FLAG_HAS_ADDITIONAL_PROPS, AST_FLAG_HAS_PATTERN_PROPS,
     AST_FLAG_HAS_PROPERTY_NAMES, AST_FLAG_HAS_DEPENDENT_SCHEMAS,
-} from "@uvd/schema";
+} from "@luvd/schema";
 
-import { malloc, allocEnumSet } from "@uvd/builder";
+import { malloc, allocEnumSet } from "@luvd/builder";
 
 const KIND_MASK = 0x0FFFFFFF;
 const INITIAL_STACK_SIZE = 512;

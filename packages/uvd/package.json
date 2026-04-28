@@ -18,12 +18,12 @@
   "scripts": {
     "make": "node scripts/build.js"
   },
-  "dependencies": {
-    "@uvd/core": "workspace:*",
-    "@uvd/validate": "workspace:*",
-    "@uvd/builder": "workspace:*",
-    "@uvd/diagnose": "workspace:*",
-    "@uvd/conform": "workspace:*"
+  "devDependencies": {
+    "@luvd/core": "workspace:*",
+    "@luvd/validate": "workspace:*",
+    "@luvd/builder": "workspace:*",
+    "@luvd/diagnose": "workspace:*",
+    "@luvd/conform": "workspace:*"
   },
   "keywords": [
     "JSON",

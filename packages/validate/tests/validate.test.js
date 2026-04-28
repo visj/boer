@@ -2,11 +2,11 @@ import { describe, test, expect } from 'bun:test';
 import {
     COMPLEX, NULLABLE, OPTIONAL,
     ANY, STRING, NUMBER, INTEGER, BOOLEAN, NEVER, VALUE, NULL, UNDEFINED,
-} from '@uvd/core';
-import { catalog, BARE_ARRAY, BARE_OBJECT, BARE_RECORD } from '@uvd/validate';
-import { allocators } from '@uvd/builder';
-import { compile } from '@uvd/compiler';
-import { CompoundSchema } from '@uvd/schema';
+} from '@luvd/core';
+import { catalog, BARE_ARRAY, BARE_OBJECT, BARE_RECORD } from '@luvd/validate';
+import { allocators } from '@luvd/builder';
+import { compile } from '@luvd/compiler';
+import { CompoundSchema } from '@luvd/schema';
 
 // ── Helpers ──
 

@@ -1,5 +1,5 @@
 {
-  "name": "uvd-workspace",
+  "name": "luvd",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -14,14 +14,14 @@
   "devDependencies": {
     "@sinclair/typebox": "^0.34.48",
     "@types/bun": "^1.3.10",
-    "@uvd/core": "workspace:*",
-    "@uvd/validate": "workspace:*",
-    "@uvd/builder": "workspace:*",
-    "@uvd/schema": "workspace:*",
-    "@uvd/compiler": "workspace:*",
-    "@uvd/conform": "workspace:*",
-    "@uvd/diagnose": "workspace:*",
-    "@uvd/inspect": "workspace:*",
+    "@luvd/core": "workspace:*",
+    "@luvd/validate": "workspace:*",
+    "@luvd/builder": "workspace:*",
+    "@luvd/schema": "workspace:*",
+    "@luvd/compiler": "workspace:*",
+    "@luvd/conform": "workspace:*",
+    "@luvd/diagnose": "workspace:*",
+    "@luvd/inspect": "workspace:*",
     "ajv": "^8.18.0",
     "c8": "^11.0.0",
     "json-schema-typed": "^8.0.2",
@@ -29,7 +29,9 @@
     "rolldown": "^1.0.0-rc.9",
     "terser": "^5.46.0",
     "valibot": "^1.2.0",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "@mitata/counters": "^0.0.8",
+    "ajv-draft-04": "^1.0.0"
   },
   "keywords": [
     "JSON",
@@ -39,8 +41,6 @@
   "author": "Vilhelm Sjölund",
   "license": "Apache-2.0",
   "dependencies": {
-    "@mitata/counters": "^0.0.8",
-    "ajv-draft-04": "^1.0.0",
     "uri-js": "^4.4.1"
   }
 }

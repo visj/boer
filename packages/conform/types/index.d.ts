@@ -1,4 +1,4 @@
-import type { Catalog, Type } from '@uvd/core';
+import type { Catalog, Type } from '@luvd/core';
 
 export declare function createConform<R extends symbol>(
     cat: Catalog<R>
