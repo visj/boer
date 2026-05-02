@@ -4,7 +4,6 @@ import {
 } from '@luvd/core';
 import { catalog } from '@luvd/validate';
 import { allocators } from '@luvd/builder';
-import { createConform } from '@luvd/conform';
 import { createDiagnose } from '@luvd/diagnose';
 
 describe('catalog: isolation', () => {
@@ -15,7 +14,6 @@ describe('catalog: isolation', () => {
         expect(typeof array).toBe('function');
         expect(typeof union).toBe('function');
         expect(typeof r.validate).toBe('function');
-        expect(typeof createConform(r)).toBe('function');
         expect(typeof createDiagnose(r)).toBe('function');
     });
 
@@ -109,16 +107,6 @@ describe('catalog: isolation', () => {
         expect(r.validate({ data: 'wrong' }, schema)).toBe(false);
     });
 
-    test.skip('catalog conform works with rich types', () => {
-        let r = catalog();
-        let conform = createConform(r);
-        let { object } = allocators(r);
-        let schema = object({ created: STRING | NUMBER });
-        let obj = { created: 42 };
-        expect(conform(obj, schema)).toBe(true);
-        expect(obj.created).toBe(42);
-    });
-
     test('catalog additionalProperties false works', () => {
         let r = catalog();
         let { object } = allocators(r);
@@ -128,7 +116,7 @@ describe('catalog: isolation', () => {
         expect(r.validate({ name: 'Alice', extra: true }, schema)).toBe(false);
     });
 
-    test.skip('catalog diagnose works', () => {
+    test('catalog diagnose works', () => {
         let r = catalog();
         let diagnose = createDiagnose(r);
         let { object } = allocators(r);

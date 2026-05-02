@@ -24,7 +24,6 @@ export declare const OBJECT: Complex<Record<string, any>, any>;
 
 // Pre-bound catalog functions
 export declare function validate<T>(data: any, typedef: Type<T, UVD>): data is T;
-export declare function conform<T>(data: any, typedef: Type<T, UVD>, preserve?: boolean): data is T;
 export declare function diagnose(data: any, typedef: Type<any, UVD>): PathError[];
 
 // Pre-bound allocators

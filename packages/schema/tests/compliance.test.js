@@ -187,7 +187,7 @@ describe("Compliance: if/then/else", () => {
     });
 
     // According to ajv, this is by design, I need to understand better how the spec works, likely ajv is correct
-    describe.skip("ajv#913 - if/then with enum check on absent property", () => {
+    describe("ajv#913 - if/then with enum check on absent property", () => {
         const schema = {
             type: "object",
             properties: {

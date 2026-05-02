@@ -4,9 +4,7 @@ import Ajv from 'ajv';
 import * as z from "zod";
 
 import { catalog } from '../../packages/validate/dist/index.js';
-
 import { compile } from "../../packages/compiler/dist/index.js";
-
 import { CompoundSchema } from "../../packages/schema/dist/index.js";
 
 // ────────────────────────────────────────────────────────────────────────────

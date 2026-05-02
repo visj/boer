@@ -4,12 +4,10 @@ import {
 } from '@luvd/core';
 import { catalog } from '@luvd/validate';
 import { allocators } from '@luvd/builder';
-import { createConform } from '@luvd/conform';
 
 const cat = catalog();
 const { object } = allocators(cat);
 const { validate } = cat;
-const conform = createConform(cat);
 
 describe('validate: primitives', () => {
     test('STRING accepts strings only', () => {
@@ -46,25 +44,6 @@ describe('validate: primitives', () => {
         expect(validate(undefined, BOOLEAN)).toBe(false);
     });
 
-});
-
-describe.skip('parse: primitives', () => {
-    test('STRING accepts strings strictly', () => {
-        expect(conform('hello', STRING)).toBe(true);
-        expect(conform(42, STRING)).toBe(false);
-        expect(conform(true, STRING)).toBe(false);
-    });
-
-    test('NUMBER accepts numbers strictly', () => {
-        expect(conform(42, NUMBER)).toBe(true);
-        expect(conform('42', NUMBER)).toBe(false);
-    });
-
-    test('BOOLEAN accepts booleans strictly', () => {
-        expect(conform(true, BOOLEAN)).toBe(true);
-        expect(conform(1, BOOLEAN)).toBe(false);
-        expect(conform('true', BOOLEAN)).toBe(false);
-    });
 });
 
 describe('validate: null and undefined', () => {
@@ -132,21 +111,6 @@ describe('validate: null and undefined', () => {
 
 });
 
-describe.skip('parse: null and undefined', () => {
-    test('STRING | NULL parses null correctly', () => {
-        expect(conform(null, STRING | NULL)).toBe(true);
-        expect(conform(undefined, STRING | NULL)).toBe(false);
-        expect(conform('hello', STRING | NULL)).toBe(true);
-    });
-
-    test('NUMBER | NULL | UNDEFINED', () => {
-        expect(conform(null, NUMBER | NULL | UNDEFINED)).toBe(true);
-        expect(conform(undefined, NUMBER | NULL | UNDEFINED)).toBe(true);
-        expect(conform(42, NUMBER | NULL | UNDEFINED)).toBe(true);
-        expect(conform('42', NUMBER | NULL | UNDEFINED)).toBe(false);
-    });
-});
-
 describe('validate: primitive type unions', () => {
     test('STRING | NUMBER', () => {
         let type = STRING | NUMBER;
@@ -198,23 +162,5 @@ describe('validate: primitive type unions', () => {
         expect(validate(undefined, type)).toBe(true);
         expect(validate(BigInt(1), type)).toBe(false);
         expect(validate(new Date(), type)).toBe(false);
-    });
-
-});
-
-describe.skip('parse: primitive type unions', () => {
-
-    test('NUMBER | STRING: number stays number', () => {
-        let obj = { v: 42 };
-        let schema = object({ v: NUMBER | STRING });
-        expect(conform(obj, schema)).toBe(true);
-        expect(obj.v).toBe(42);
-    });
-
-    test('NUMBER | STRING: string stays string', () => {
-        let obj = { v: 'hello' };
-        let schema = object({ v: NUMBER | STRING });
-        expect(conform(obj, schema)).toBe(true);
-        expect(obj.v).toBe('hello');
     });
 });

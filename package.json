@@ -19,7 +19,6 @@
     "@luvd/builder": "workspace:*",
     "@luvd/schema": "workspace:*",
     "@luvd/compiler": "workspace:*",
-    "@luvd/conform": "workspace:*",
     "@luvd/diagnose": "workspace:*",
     "@luvd/inspect": "workspace:*",
     "ajv": "^8.18.0",

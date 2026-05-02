@@ -4,12 +4,10 @@ import {
 } from '@luvd/core';
 import { catalog } from '@luvd/validate';
 import { allocators } from '@luvd/builder';
-import { createConform } from '@luvd/conform';
 
 const cat = catalog();
 const { object, array, union } = allocators(cat);
 const { validate } = cat;
-const conform = createConform(cat);
 
 describe('arrays.test.js', () => {
 

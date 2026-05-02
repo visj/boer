@@ -124,7 +124,6 @@ Boolean flags (bits 27-30): no payload
 | `src/internal/ast.js` | AST compiler → SLAB/KINDS/VALIDATORS allocation |
 | `src/internal/validator.js` | `packValidators` — converts DSL options to validator headers + payloads |
 | `src/internal/error.js` | `diagnose` — error message generation (mirrors validate logic) |
-| `src/internal/transform.js` | `conform` — parse + transform (mirrors validate logic) |
 | `src/internal/util.js` | Shared helpers: `_isValue`, `sortByKeyId`, `deepEqual`, `parseValue` |
 
 ## Key Validation Dispatch
@@ -180,10 +179,6 @@ After the failed Float64Array/53-bit refactor was reverted, these arenas were lo
 - **No Float64Array SLAB** — must stay Uint32Array
 - **No bit 30 or 31 on typedef pointers** — must stay within V8 Smi range (bits 0-29)
 - **No MOD_ARRAY inlining in the AST compiler** — breaks unevaluated items/properties tracking
-
-### Features Marked as Deferred (see CLAUDE.md)
-- conform, diagnose, transform functionality — focus is on validator/compiler/parser
-- These have commented-out tests
 
 ### Backup Files
 - `backup/` and `stash_backup/` contain implementation files from the reverted Float64Array era

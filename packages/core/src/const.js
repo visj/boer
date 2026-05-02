@@ -184,6 +184,15 @@ const K_UNEVALUATED = 14;
 
 const KIND_ENUM_MASK = 0xF;
 
+/**
+ * Pre-allocated typedef pointers for common bare complex types.
+ * KINDS[0] = K_ARRAY|K_ANY_INNER, KINDS[1] = K_OBJECT|K_ANY_INNER, KINDS[2] = K_RECORD|K_ANY_INNER.
+ * Encoding: (1 | (ptr << 3)) where ptr is the raw KINDS array index.
+ */
+export const BARE_ARRAY = (COMPLEX | (0 << KINDS_SHIFT)) >>> 0;   // KINDS[0]
+export const BARE_OBJECT = (COMPLEX | (1 << KINDS_SHIFT)) >>> 0;  // KINDS[1]
+export const BARE_RECORD = (COMPLEX | (2 << KINDS_SHIFT)) >>> 0;  // KINDS[2]
+
 // --- Validator bit flags (globally unique, unified layout) ---
 //
 // Payload flags (bits 0–13): each set bit pushes exactly 1 Float64 to the payload slab.
@@ -259,6 +268,52 @@ const FMT_RE_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]
 
 /** @type {Record<string, number>} */
 const FMT_MAP = { email: FMT_EMAIL, ipv4: FMT_IPV4, uuid: FMT_UUID, 'date-time': FMT_DATETIME };
+
+// ────────────────────────────────────────────────────────────────────────────
+// AST Node Kinds
+// ────────────────────────────────────────────────────────────────────────────
+// Each node in the flat AST has a "kind" stored in astKinds[nodeId].
+// These constants identify what the node represents.
+//
+//   N_PRIM        Leaf node. astFlags holds a primitive bitmask (STRING, NUMBER, etc.)
+//   N_OBJECT      Object with named properties. astChild0 → edge offset, astChild1 → prop count.
+//   N_ARRAY       Homogeneous array. astChild0 → element node id.
+//   N_REFINE      Wraps an inner type + callback. astChild0 → inner node, astChild1 → callback index.
+//   N_OR          anyOf. astChild0 → edge offset, astChild1 → branch count.
+//   N_EXCLUSIVE   oneOf. Same layout as N_OR.
+//   N_INTERSECT   allOf. Same layout as N_OR.
+//   N_NOT         Negation. astChild0 → inner node.
+//   N_CONDITIONAL if/then/else. astChild0 → edge offset (3 slots: [if, then, else]).
+//   N_REF         Reference to a definition. astChild0 → target node id.
+// ────────────────────────────────────────────────────────────────────────────
+
+export const N_PRIM = 0;
+export const N_OBJECT = 1;
+export const N_ARRAY = 2;
+export const N_REFINE = 4;
+export const N_BARE_ARRAY = 5;
+export const N_BARE_OBJECT = 6;
+export const N_OR = 7;
+export const N_EXCLUSIVE = 8;
+export const N_INTERSECT = 9;
+export const N_NOT = 10;
+export const N_CONDITIONAL = 11;
+export const N_TUPLE = 12;
+export const N_DYN_ANCHOR = 13;
+export const N_DYN_REF = 14;
+export const N_UNEVALUATED = 15;
+export const N_REF = 255;
+
+export const AST_FLAG_HAS_ADDITIONAL_PROPS = 1 << 0; // bit 0: has additionalProperties child (N_OBJECT)
+export const AST_FLAG_HAS_PATTERN_PROPS = 1 << 1; // bit 1: has patternProperties children (N_OBJECT)
+export const AST_FLAG_HAS_PROPERTY_NAMES = 1 << 3; // bit 3: has propertyNames child (N_OBJECT)
+export const AST_FLAG_HAS_DEPENDENT_SCHEMAS = 1 << 4; // bit 4: has dependentSchemas children (N_OBJECT)
+
+export const AST_FLAG_HAS_REST = 1 << 0; // bit 0: has items (rest type) child (N_TUPLE)
+export const AST_FLAG_HAS_CONTAINS = 1 << 1; // bit 1: has contains child (N_ARRAY)
+export const AST_FLAG_HAS_ITEMS = 1 << 2; // bit 2: has explicit items keyword (N_ARRAY)
+
+export const AST_FLAG_UNEVAL_MODE_ITEMS = 1 << 0; // bit 0: mode 1 = items (N_UNEVALUATED)
 
 const FAIL = Symbol('FAIL');
 

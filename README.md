@@ -4,10 +4,6 @@ A JSON Schema compliant type validation library for JavaScript. Define schemas w
 
 Still early alpha, but it passes 100% of the JSON Schema Test Suite.
 
-```
-npm install uvd
-```
-
 ## Why
 
 Libraries like Ajv get great throughput by compiling schemas into JavaScript functions, but that compilation step has a cost. For a single large schema it can take milliseconds. If you have many schemas, or you're in a cloud/edge environment where containers and isolates are constantly starting and stopping, that startup tax adds up. Shipping pre-compiled Ajv output avoids the compile step, but the generated JavaScript files can get large.
@@ -128,7 +124,6 @@ uvd is a monorepo with these packages:
 | `@luvd/schema` | JSON Schema parser (all drafts) |
 | `@luvd/compiler` | Compiles parsed JSON Schema AST into the catalog |
 | `@luvd/diagnose` | Error reporting with paths |
-| `@luvd/conform` | Data coercion and transformation |
 | `@luvd/inspect` | Debug printing and binary serialization |
 
 ## License

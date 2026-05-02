@@ -34,11 +34,6 @@ Always write meaningful comments about how the code works. Do not insert meaning
 If you can, add correct JSDoc type definitions. Because we "fake" a lot of typescript features, this project is built on javascript and uses jsdoc for type safety, instead of Typescript. That way, we can fully create a virtual API through typescript that fakes the number as a Complex/Type etc.
 ## Architecture of `uvd`
 `uvd` is a type validation library similar to Zod, Valibot or Ajv, but takes a different architectural approach. It maintains two internal managed heaps of Uint32Arrays, where every incoming type definition is converted to blocks of raw memory onto a SLAB structure, and gives back a user a pointer to that region of memory. The goal of `uvd` is to be a truly zero-allocation type validator, faster than ajv, but with the ergonomics of Zod for DSL-like builders, and a small bundle size. It will support instant startup by both supporting a slim AST format, but more importantly in the future maintain its own binary format, that allows you to instantly place the entire memory into the catalog from a binary file. It shall also be 100% compliant with JSON Schema standard.
-### Files to ignore
-!!IMPORTANT!!
-Right now, we are working only to get the validator part working correctly. Any functionality related to:
-- conform, diagnose, transform, etc
-Just leave this for now. We have commented out tests for these as well. Right now, we focus on the JSON Schema parser, the compiler and the validator, and get their structure correct. Once all of this is in place, we will revisit the diagnose/conform functions.
 
 ### The `typedef` pointer in uvd
 Every `typedef` in `uvd` is a javascript number, specifically a 32 bit unsigned integer, but is *shimmed* in Typescript as Type<T,R>, which can either be a Value<T,R> or a Complex<T,R>. Both are actually just raw javascript numbers, but are in reality a raw pointer into managed heap inside the Catalog registry. The lowest bits are reserved for **header bits**, like so:

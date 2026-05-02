@@ -1,14 +1,12 @@
 import { describe, test, expect } from 'bun:test';
 import {
-    COMPLEX, NULLABLE, OPTIONAL,
+    COMPLEX, NULLABLE, OPTIONAL, BARE_ARRAY, BARE_OBJECT, BARE_RECORD,
     ANY, STRING, NUMBER, INTEGER, BOOLEAN, NEVER, VALUE, NULL, UNDEFINED,
 } from '@luvd/core';
-import { catalog, BARE_ARRAY, BARE_OBJECT, BARE_RECORD } from '@luvd/validate';
+import { catalog } from '@luvd/validate';
 import { allocators } from '@luvd/builder';
 import { compile } from '@luvd/compiler';
 import { CompoundSchema } from '@luvd/schema';
-
-// ── Helpers ──
 
 function setup() {
     const cat = catalog();
@@ -24,10 +22,6 @@ function schemaType(schema) {
     const resources = compile(cat, flat);
     return { validate: cat.validate, type: resources[0].schema };
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// 1. Bare primitives (typedef < 256, COMPLEX=0)
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('bare primitives', () => {
     const { validate } = setup();
@@ -128,10 +122,6 @@ describe('bare primitives', () => {
     });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// 2. Bare complex types (BARE_ARRAY, BARE_OBJECT, BARE_RECORD)
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('bare complex types', () => {
     const { validate } = setup();
 
@@ -162,10 +152,6 @@ describe('bare complex types', () => {
         expect(validate(null, BARE_RECORD)).toBe(false);
     });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// 3. Inline primitive validators (typedef > 0xFF, COMPLEX=0, MODIFIER=0)
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('inline string validators', () => {
     const { validate, string } = setup();
@@ -285,10 +271,6 @@ describe('inline number validators', () => {
     });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// 4. Objects (K_OBJECT)
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('objects', () => {
     const { validate, object, string, number, optional, nullable } = setup();
 
@@ -387,10 +369,6 @@ describe('objects', () => {
     });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// 5. Arrays (K_ARRAY)
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('arrays', () => {
     const { validate, array, string, number, nullable, optional } = setup();
 
@@ -457,10 +435,6 @@ describe('arrays', () => {
     });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// 6. Records (K_RECORD)
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('records', () => {
     const { validate, record } = setup();
 
@@ -483,10 +457,6 @@ describe('records', () => {
     });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// 7. Tuples (K_TUPLE)
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('tuples', () => {
     const { validate, tuple } = setup();
 
@@ -504,10 +474,6 @@ describe('tuples', () => {
         expect(validate(['a'], t)).toBe(false);
     });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// 8. Unions / OR / Exclusive (K_UNION, K_OR, K_EXCLUSIVE)
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('unions (anyOf)', () => {
     const { validate, or, object, literal } = setup();
@@ -571,10 +537,6 @@ describe('discriminated union', () => {
     });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// 9. Intersect (K_INTERSECT)
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('intersect (allOf)', () => {
     const { validate, intersect, object } = setup();
 
@@ -588,10 +550,6 @@ describe('intersect (allOf)', () => {
         expect(validate({ y: 'a' }, t)).toBe(false);
     });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// 10. Not (K_NOT)
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('not', () => {
     const { validate, not } = setup();
@@ -607,10 +565,6 @@ describe('not', () => {
         expect(validate(42, t)).toBe(false);
     });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// 11. Refine (K_REFINE)
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('refine', () => {
     const { validate, refine } = setup();
@@ -628,10 +582,6 @@ describe('refine', () => {
         expect(validate(42, t)).toBe(false); // inner type fails, fn never called
     });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// 12. Conditional (K_CONDITIONAL — if/then/else)
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('conditional (when)', () => {
     const { validate, when } = setup();
@@ -654,10 +604,6 @@ describe('conditional (when)', () => {
         expect(v('hello', t)).toBe(true); // else branch: ANY
     });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// 13. Literal / Enum (MOD_ENUM)
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('literal and enum', () => {
     const s = setup();
@@ -697,10 +643,6 @@ describe('literal and enum', () => {
     });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// 14. NULLABLE/OPTIONAL on complex types
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('nullable/optional on complex types', () => {
     const { validate, object, array, nullable, optional } = setup();
 
@@ -723,10 +665,6 @@ describe('nullable/optional on complex types', () => {
         expect(validate(undefined, t)).toBe(false);
     });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// 15. JSON Schema compiled paths — format validators
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('format validators (via DSL)', () => {
     // JSON Schema treats format as annotation-only by default.
@@ -755,10 +693,6 @@ describe('format validators (via DSL)', () => {
     });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// 16. JSON Schema compiled — V_ENUM on K_PRIMITIVE
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('JSON Schema enum on primitives', () => {
     test('string enum', () => {
         let { validate, type } = schemaType({ type: 'string', enum: ['a', 'b', 'c'] });
@@ -786,10 +720,6 @@ describe('JSON Schema enum on primitives', () => {
     });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// 17. JSON Schema compiled — uniqueItems with complex items (deepEqual path)
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('uniqueItems with objects (deepEqual)', () => {
     test('rejects duplicate objects', () => {
         let { validate, type } = schemaType({
@@ -809,10 +739,6 @@ describe('uniqueItems with objects (deepEqual)', () => {
         expect(validate([{ a: { b: 1 } }, { a: { b: 2 } }], type)).toBe(true);
     });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// 18. JSON Schema compiled — dependentSchemas
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('dependentSchemas', () => {
     test('applies schema when trigger property present', () => {
@@ -836,10 +762,6 @@ describe('dependentSchemas', () => {
         expect(validate({ name: 'Alice', credit_card: '1234' }, type)).toBe(false);
     });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// 19. JSON Schema compiled — dynamic ref / anchor
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('dynamic ref/anchor', () => {
     test('$dynamicRef resolves to innermost $dynamicAnchor', () => {
@@ -865,10 +787,6 @@ describe('dynamic ref/anchor', () => {
         expect(validate({ baz: 'not int' }, type)).toBe(false);
     });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// 20. JSON Schema compiled — unevaluatedProperties
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('unevaluatedProperties', () => {
     test('rejects properties not evaluated by any keyword', () => {
@@ -920,10 +838,6 @@ describe('unevaluatedProperties', () => {
     });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// 21. JSON Schema compiled — unevaluatedItems
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('unevaluatedItems', () => {
     test('rejects items not evaluated by prefixItems', () => {
         let { validate, type } = schemaType({
@@ -954,10 +868,6 @@ describe('unevaluatedItems', () => {
         expect(validate([1, 'a', true], type)).toBe(false);
     });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// 22. Edge cases and adversarial inputs
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('edge cases', () => {
     const { validate, object, array, record, string, number, or } = setup();
@@ -1047,10 +957,6 @@ describe('edge cases', () => {
     });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// 23. JSON Schema — oneOf tracking
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('oneOf with unevaluatedProperties', () => {
     test('winning branch properties are evaluated', () => {
         let { validate, type } = schemaType({
@@ -1066,10 +972,6 @@ describe('oneOf with unevaluatedProperties', () => {
         expect(validate({ foo: 'a', extra: 1 }, type)).toBe(false);
     });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// 24. JSON Schema — tuple (prefixItems) with strict items: false
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('JSON Schema tuples', () => {
     test('prefixItems validates positional types', () => {
@@ -1104,10 +1006,6 @@ describe('JSON Schema tuples', () => {
         expect(validate(['a', 1], type)).toBe(false);
     });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// 25. JSON Schema — $ref
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('JSON Schema $ref', () => {
     test('basic $ref to $defs', () => {
@@ -1146,10 +1044,6 @@ describe('JSON Schema $ref', () => {
     });
 });
 
-// ────────────────────────────────────────────────────────────────────────────
-// 26. JSON Schema — const
-// ────────────────────────────────────────────────────────────────────────────
-
 describe('JSON Schema const', () => {
     test('const with string', () => {
         let { validate, type } = schemaType({ const: 'hello' });
@@ -1174,10 +1068,6 @@ describe('JSON Schema const', () => {
         expect(validate(0, type)).toBe(false);
     });
 });
-
-// ────────────────────────────────────────────────────────────────────────────
-// 27. Combined validators — string + pattern + length
-// ────────────────────────────────────────────────────────────────────────────
 
 describe('combined validators', () => {
     test('string with multiple constraints via JSON Schema', () => {

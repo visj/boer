@@ -4,13 +4,11 @@ import {
 } from '@luvd/core';
 import { catalog } from '@luvd/validate';
 import { allocators } from '@luvd/builder';
-import { createConform } from '@luvd/conform';
 import { createDiagnose } from '@luvd/diagnose';
 
 const cat = catalog();
 const { object, array, union } = allocators(cat);
 const { validate } = cat;
-const conform = createConform(cat);
 const diagnose = createDiagnose(cat);
 
 describe('object: inline nesting', () => {
@@ -143,57 +141,6 @@ describe('real-world: config schema', () => {
             cache: { enabled: false }
         };
         expect(validate(cfg, ConfigSchema)).toBe(true);
-    });
-
-    test.skip('parse config with optional fields missing', () => {
-        let cfg = {
-            database: {
-                host: 'localhost',
-                port: 5432,
-                name: 'mydb',
-                credentials: null
-            },
-            cache: { enabled: false }
-        };
-        expect(conform(cfg, ConfigSchema)).toBe(true);
-    });
-});
-
-describe.skip('cross-function: validate vs parse vs cast consistency', () => {
-    test('all three agree on valid data', () => {
-        let schema = object({ name: STRING, age: NUMBER });
-        let data = { name: 'Alice', age: 30 };
-        expect(validate(data, schema)).toBe(true);
-        expect(conform({ ...data }, schema)).toBe(true);
-    });
-
-    test('validate and parse reject what cast accepts (native types)', () => {
-        let schema = object({ n: NUMBER });
-        let data = { n: '42' };
-        expect(validate(data, schema)).toBe(false);
-        expect(conform({ n: '42' }, schema)).toBe(false);
-    });
-
-    test('all three agree on nullability', () => {
-        let schema = object({ val: NUMBER | NULL });
-        expect(validate({ val: null }, schema)).toBe(true);
-        expect(conform({ val: null }, schema)).toBe(true);
-
-        let schema2 = object({ val: NUMBER });
-        expect(validate({ val: null }, schema2)).toBe(false);
-        expect(conform({ val: null }, schema2)).toBe(false);
-    });
-
-    test('explain returns no errors iff validate returns true', () => {
-        let schema = object({ a: STRING, b: NUMBER | NULL, c: BOOLEAN | UNDEFINED });
-
-        let valid = { a: 'x', b: null };
-        expect(validate(valid, schema)).toBe(true);
-        expect(diagnose(valid, schema)).toEqual([]);
-
-        let invalid = { a: 42, b: 'wrong' };
-        expect(validate(invalid, schema)).toBe(false);
-        expect(diagnose(invalid, schema).length).toBeGreaterThan(0);
     });
 });
 

@@ -10,6 +10,14 @@ import {
     hasOwnProperty,
     isBoolean, isObject, isString,
     packValidators, PAYLOAD_QUEUE,
+    N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_BARE_ARRAY,
+    N_BARE_OBJECT, N_OR, N_EXCLUSIVE, N_INTERSECT,
+    N_NOT, N_CONDITIONAL, N_TUPLE, N_DYN_ANCHOR,
+    N_DYN_REF, N_UNEVALUATED, N_REF,
+    AST_FLAG_HAS_ADDITIONAL_PROPS, AST_FLAG_HAS_PATTERN_PROPS,
+    AST_FLAG_HAS_PROPERTY_NAMES, AST_FLAG_HAS_DEPENDENT_SCHEMAS,
+    AST_FLAG_HAS_REST, AST_FLAG_HAS_CONTAINS, AST_FLAG_HAS_ITEMS,
+    AST_FLAG_UNEVAL_MODE_ITEMS
 } from '@luvd/core';
 import { resolve } from "uri-js";
 
@@ -46,52 +54,6 @@ const SCHEMA_PURE_MASK = V_MIN_LENGTH | V_MAX_LENGTH | V_PATTERN
 const PRIM_ONLY_V = V_MIN_LENGTH | V_MAX_LENGTH | V_PATTERN
     | V_MINIMUM | V_MAXIMUM | V_MULTIPLE_OF | V_EXCLUSIVE_MINIMUM | V_EXCLUSIVE_MAXIMUM
     | V_MIN_ITEMS | V_MAX_ITEMS | V_MIN_CONTAINS | V_MAX_CONTAINS | V_UNIQUE_ITEMS;
-
-// ────────────────────────────────────────────────────────────────────────────
-// AST Node Kinds
-// ────────────────────────────────────────────────────────────────────────────
-// Each node in the flat AST has a "kind" stored in astKinds[nodeId].
-// These constants identify what the node represents.
-//
-//   N_PRIM        Leaf node. astFlags holds a primitive bitmask (STRING, NUMBER, etc.)
-//   N_OBJECT      Object with named properties. astChild0 → edge offset, astChild1 → prop count.
-//   N_ARRAY       Homogeneous array. astChild0 → element node id.
-//   N_REFINE      Wraps an inner type + callback. astChild0 → inner node, astChild1 → callback index.
-//   N_OR          anyOf. astChild0 → edge offset, astChild1 → branch count.
-//   N_EXCLUSIVE   oneOf. Same layout as N_OR.
-//   N_INTERSECT   allOf. Same layout as N_OR.
-//   N_NOT         Negation. astChild0 → inner node.
-//   N_CONDITIONAL if/then/else. astChild0 → edge offset (3 slots: [if, then, else]).
-//   N_REF         Reference to a definition. astChild0 → target node id.
-// ────────────────────────────────────────────────────────────────────────────
-
-export const N_PRIM = 0;
-export const N_OBJECT = 1;
-export const N_ARRAY = 2;
-export const N_REFINE = 4;
-export const N_BARE_ARRAY = 5;
-export const N_BARE_OBJECT = 6;
-export const N_OR = 7;
-export const N_EXCLUSIVE = 8;
-export const N_INTERSECT = 9;
-export const N_NOT = 10;
-export const N_CONDITIONAL = 11;
-export const N_TUPLE = 12;
-export const N_DYN_ANCHOR = 13;
-export const N_DYN_REF = 14;
-export const N_UNEVALUATED = 15;
-export const N_REF = 255;
-
-export const AST_FLAG_HAS_ADDITIONAL_PROPS = 1 << 0; // bit 0: has additionalProperties child (N_OBJECT)
-export const AST_FLAG_HAS_PATTERN_PROPS = 1 << 1; // bit 1: has patternProperties children (N_OBJECT)
-export const AST_FLAG_HAS_PROPERTY_NAMES = 1 << 3; // bit 3: has propertyNames child (N_OBJECT)
-export const AST_FLAG_HAS_DEPENDENT_SCHEMAS = 1 << 4; // bit 4: has dependentSchemas children (N_OBJECT)
-
-export const AST_FLAG_HAS_REST = 1 << 0; // bit 0: has items (rest type) child (N_TUPLE)
-export const AST_FLAG_HAS_CONTAINS = 1 << 1; // bit 1: has contains child (N_ARRAY)
-export const AST_FLAG_HAS_ITEMS = 1 << 2; // bit 2: has explicit items keyword (N_ARRAY)
-
-export const AST_FLAG_UNEVAL_MODE_ITEMS = 1 << 0; // bit 0: mode 1 = items (N_UNEVALUATED)
 
 // ────────────────────────────────────────────────────────────────────────────
 // Stack Link Types
@@ -284,7 +246,7 @@ const VOCAB_GROUPS = [
  * @param {Schema} schema - The schema object to mutate.
  * @param {number} dialect - The dialect constant (e.g., DRAFT_7).
  */
-export function transpile(schema, dialect) {
+function transpile(schema, dialect) {
     // 1. Draft 2019-09 and older (DRAFT_2019, 7, 6, 4)
     // Desugar array tuples: `items` (array) + `additionalItems` -> `prefixItems` + `items`
     // When additionalItems is absent, we omit `items` entirely so that extra items
@@ -422,17 +384,25 @@ export function transpile(schema, dialect) {
 /**
  * Maps a JSON Schema `$schema` URI to a dialect enum constant.
  * Defaults to DRAFT_2020 for unknown or absent URIs.
- * @param {string|null|undefined} uri
+ * @param {string | null | undefined} uri
  * @returns {number}
  */
 function getDialect(uri) {
     if (!isString(uri) || uri.length === 0) {
         return DRAFT_2020;
     }
-    if (uri.includes('draft7') || uri.includes('draft-07')) return DRAFT_7;
-    if (uri.includes('draft6') || uri.includes('draft-06')) return DRAFT_6;
-    if (uri.includes('draft4') || uri.includes('draft-04')) return DRAFT_4;
-    if (uri.includes('2019-09')) return DRAFT_2019;
+    if (uri.includes('draft7') || uri.includes('draft-07')) {
+        return DRAFT_7;
+    }
+    if (uri.includes('draft6') || uri.includes('draft-06')) {
+        return DRAFT_6;
+    }
+    if (uri.includes('draft4') || uri.includes('draft-04')) {
+        return DRAFT_4;
+    }
+    if (uri.includes('2019-09')) {
+        return DRAFT_2019;
+    }
     return DRAFT_2020;
 }
 
@@ -2235,10 +2205,10 @@ CompoundSchema.prototype.bundle = function (schemas) {
  * @param {string=} dialect
  * @returns {uvd.FlatAst}
  */
-export function parseJSONSchema(schema, dialect) {
+function parseJSONSchema(schema, dialect) {
     const compound = new CompoundSchema(dialect);
     const idx = compound.add(/** @type {JSONSchema} */(schema));
     return compound.bundle(idx);
 }
 
-export { CompoundSchema };
+export { CompoundSchema, parseJSONSchema, transpile };

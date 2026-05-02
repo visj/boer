@@ -4,12 +4,10 @@ import {
 } from '@luvd/core';
 import { catalog } from '@luvd/validate';
 import { allocators } from '@luvd/builder';
-import { createConform } from '@luvd/conform';
 
 const cat = catalog();
 const { object } = allocators(cat);
 const { validate } = cat;
-const conform = createConform(cat);
 
 describe('object: schema builder', () => {
     test('returns a number', () => {
@@ -157,28 +155,6 @@ describe('validate: objects', () => {
         expect(validate({ id: 123, label: null, active: undefined }, schema)).toBe(true);
         expect(validate({ id: 123, label: null }, schema)).toBe(true);
         expect(validate({ id: true, label: 'hello', active: true }, schema)).toBe(false); // id wrong
-    });
-});
-
-describe.skip('parse: objects', () => {
-    test('basic parse leaves native types alone', () => {
-        let schema = object({ s: STRING, n: NUMBER, b: BOOLEAN });
-        let obj = { s: 'hello', n: 42, b: true };
-        expect(conform(obj, schema)).toBe(true);
-        expect(obj).toEqual({ s: 'hello', n: 42, b: true });
-    });
-
-    test('parse rejects wrong native types', () => {
-        let schema = object({ s: STRING, n: NUMBER });
-        expect(conform({ s: 42, n: 42 }, schema)).toBe(false);
-        expect(conform({ s: 'ok', n: '42' }, schema)).toBe(false);
-    });
-
-    test('parse handles nullable fields', () => {
-        let schema = object({ a: STRING, b: NUMBER | NULL });
-        expect(conform({ a: 'hello', b: null }, schema)).toBe(true);
-        expect(conform({ a: 'hello', b: 42 }, schema)).toBe(true);
-        expect(conform({ a: 'hello', b: 'nope' }, schema)).toBe(false);
     });
 });
 

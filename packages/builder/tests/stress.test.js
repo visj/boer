@@ -4,12 +4,10 @@ import {
 } from '@luvd/core';
 import { catalog } from '@luvd/validate';
 import { allocators } from '@luvd/builder';
-import { createConform } from '@luvd/conform';
 
 const cat = catalog();
 const { object, array, union } = allocators(cat);
 const { validate } = cat;
-const conform = createConform(cat);
 
 describe('stress: SLAB growth beyond initial 4096', () => {
     test('register 300 objects with 8 fields each (4800 slab entries)', () => {
@@ -252,7 +250,7 @@ describe('stress: combined registries at scale', () => {
     });
 });
 
-describe.skip('stress: parse and strict on large objects', () => {
+describe('stress: parse and strict on large objects', () => {
 
     test('additionalProperties false rejects 30-field object with 20 extras', () => {
         let def = {};

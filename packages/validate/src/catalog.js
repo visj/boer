@@ -16,8 +16,7 @@ import {
     FMT_EMAIL, FMT_IPV4, FMT_UUID, FMT_DATE, FMT_TIME, FMT_DATETIME,
     FMT_RE_EMAIL, FMT_RE_IPV4, FMT_RE_UUID, FMT_RE_DATETIME, hasOwnProperty,
     K_HAS_ITEMS, K_HAS_REST, MODIFIER, MOD_MASK, MOD_ARRAY, MOD_RECORD, MOD_ENUM,
-    NUMBER, INTEGER, BOOLEAN,
-    KINDS_SHIFT, V_PAYLOAD_MASK,
+    NUMBER, INTEGER, BOOLEAN, V_PAYLOAD_MASK,
     MOD_ENUM_IS_SET, MOD_ENUM_IDX_SHIFT, MOD_ENUM_IDX_MASK,
     MOD_ARRAY_UNIQUE_BIT, MOD_ARRAY_MAX_ITEMS_SHIFT, MOD_ARRAY_MAX_ITEMS_MASK,
     MOD_ARRAY_MIN_ITEMS_SHIFT, MOD_ARRAY_MIN_ITEMS_MASK,
@@ -35,14 +34,6 @@ import {
     binarySearch, binarySearchPair, popcnt16,
     isValidTime, isValidDate, isValidDateTime,
 } from '@luvd/core';
-/**
- * Pre-allocated typedef pointers for common bare complex types.
- * KINDS[0] = K_ARRAY|K_ANY_INNER, KINDS[1] = K_OBJECT|K_ANY_INNER, KINDS[2] = K_RECORD|K_ANY_INNER.
- * Encoding: (1 | (ptr << 3)) where ptr is the raw KINDS array index.
- */
-export const BARE_ARRAY = (COMPLEX | (0 << KINDS_SHIFT)) >>> 0;   // KINDS[0]
-export const BARE_OBJECT = (COMPLEX | (1 << KINDS_SHIFT)) >>> 0;  // KINDS[1]
-export const BARE_RECORD = (COMPLEX | (2 << KINDS_SHIFT)) >>> 0;  // KINDS[2]
 
 /**
  * @param {uvd.Config=} cfg
@@ -120,9 +111,9 @@ function catalog(cfg) {
     }
 
 
+    let DYN_PTR = 0;
     /** Global stack tracking active dynamic scope boundaries during validation. */
     const DYN_ANCHORS = new Uint32Array(4);
-    let DYN_PTR = 0;
 
     /**
      * Evaluation tracking arena for unevaluatedProperties.
@@ -147,7 +138,7 @@ function catalog(cfg) {
      * during K_UNEVALUATED frame allocation with MSB set as the id.
      * Returns undefined if the key is not in the current tracking frame.
      * @param {string} key
-     * @returns {number|undefined}
+     * @returns {number | undefined}
      */
     function resolveTrackingKey(key) {
         let kid = KEY_DICT.get(key);
@@ -169,6 +160,7 @@ function catalog(cfg) {
      * @param {number} trackPtr - frame start in TRACK_KEYS/TRACK_BITS
      * @param {number} snapPtr - 0 = commit direct, >0 = write to TRACK_SNAP[snapPtr]
      * @param {number} keyId - the keyId to mark (may have MSB set for unknown keys)
+     * @returns {void}
      */
     function markEvaluated(trackPtr, snapPtr, keyId) {
         let len = TRACK_KEYS[trackPtr];

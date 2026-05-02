@@ -4,12 +4,10 @@ import {
 } from '@luvd/core';
 import { catalog } from '@luvd/validate';
 import { allocators } from '@luvd/builder';
-import { createConform } from '@luvd/conform';
 
 const cat = catalog();
 const { object, array, union } = allocators(cat);
 const { validate } = cat;
-const conform = createConform(cat);
 
 describe('discriminated: schema builder', () => {
     test('returns a complex typedef (bit 0 set)', () => {

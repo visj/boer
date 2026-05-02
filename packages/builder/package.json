@@ -22,7 +22,6 @@
   },
   "devDependencies": {
     "@luvd/validate": "workspace:*",
-    "@luvd/conform": "workspace:*",
     "@luvd/diagnose": "workspace:*"
   },
   "license": "Apache-2.0"

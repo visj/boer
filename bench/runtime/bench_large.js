@@ -3,7 +3,9 @@ import { run, bench, group } from 'mitata';
 import Ajv from 'ajv';
 import * as z from "zod";
 
-import { catalog, CompoundSchema, compile } from '../../dist/core.js';
+import { catalog } from '../../packages/validate/dist/index.js';
+import { compile } from "../../packages/compiler/dist/index.js";
+import { CompoundSchema } from "../../packages/schema/dist/index.js";
 
 // ────────────────────────────────────────────────────────────────────────────
 // 1. THE SCHEMA (Real-World E-Commerce Checkout)

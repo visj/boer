@@ -22,8 +22,7 @@
     "@luvd/core": "workspace:*",
     "@luvd/validate": "workspace:*",
     "@luvd/builder": "workspace:*",
-    "@luvd/diagnose": "workspace:*",
-    "@luvd/conform": "workspace:*"
+    "@luvd/diagnose": "workspace:*"
   },
   "keywords": [
     "JSON",

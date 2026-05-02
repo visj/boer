@@ -378,6 +378,10 @@ export declare const K_DYN_REF: number;
 export declare const K_UNEVALUATED: number;
 export declare const KIND_ENUM_MASK: number;
 
+export declare const BARE_ARRAY: number;
+export declare const BARE_OBJECT: number;
+export declare const BARE_RECORD: number;
+
 /** Validator bit flags — string */
 export declare const V_MIN_LENGTH: number;
 export declare const V_MAX_LENGTH: number;
@@ -426,6 +430,35 @@ export declare const FMT_RE_EMAIL: RegExp;
 export declare const FMT_RE_IPV4: RegExp;
 export declare const FMT_RE_UUID: RegExp;
 export declare const FMT_RE_DATETIME: RegExp;
+
+
+// AST node kind constants
+export declare const N_PRIM: number;
+export declare const N_OBJECT: number;
+export declare const N_ARRAY: number;
+export declare const N_REFINE: number;
+export declare const N_BARE_ARRAY: number;
+export declare const N_BARE_OBJECT: number;
+export declare const N_OR: number;
+export declare const N_EXCLUSIVE: number;
+export declare const N_INTERSECT: number;
+export declare const N_NOT: number;
+export declare const N_CONDITIONAL: number;
+export declare const N_TUPLE: number;
+export declare const N_DYN_ANCHOR: number;
+export declare const N_DYN_REF: number;
+export declare const N_UNEVALUATED: number;
+export declare const N_REF: number;
+
+// AST flag constants
+export declare const AST_FLAG_HAS_ADDITIONAL_PROPS: number;
+export declare const AST_FLAG_HAS_PATTERN_PROPS: number;
+export declare const AST_FLAG_HAS_PROPERTY_NAMES: number;
+export declare const AST_FLAG_HAS_DEPENDENT_SCHEMAS: number;
+export declare const AST_FLAG_HAS_REST: number;
+export declare const AST_FLAG_HAS_CONTAINS: number;
+export declare const AST_FLAG_HAS_ITEMS: number;
+export declare const AST_FLAG_UNEVAL_MODE_ITEMS: number;
 
 export declare const FAIL: symbol;
 export declare const toString: typeof Object.prototype.toString;

@@ -4,13 +4,11 @@ import {
 } from '@luvd/core';
 import { catalog } from '@luvd/validate';
 import { allocators } from '@luvd/builder';
-import { createConform } from '@luvd/conform';
 import { createDiagnose } from '@luvd/diagnose';
 
 const cat = catalog();
 const { object, array, tuple, record, or, exclusive, intersect, not, when, string, nullable, optional } = allocators(cat);
 const { validate } = cat;
-const conform = createConform(cat);
 const diagnose = createDiagnose(cat);
 
 describe('K_TUPLE', () => {
@@ -322,7 +320,7 @@ describe('K_INTERSECT (allOf)', () => {
         expect(validate({ a: 'hi', b: 42 }, inter)).toBe(false);
     });
 
-    test.skip('diagnose shows failing branch', () => {
+    test('diagnose shows failing branch', () => {
         let obj1 = object({ a: STRING });
         let obj2 = object({ b: NUMBER });
         let inter = intersect(obj1, obj2);
@@ -464,7 +462,7 @@ describe('K_CONDITIONAL (when)', () => {
         expect(validate({ type: 'test' }, schema)).toBe(false);
     });
 
-    test.skip('diagnose works with conditional', () => {
+    test('diagnose works with conditional', () => {
         let schema = when({
             if: object({ country: STRING }),
             then: object({ zip: STRING }),

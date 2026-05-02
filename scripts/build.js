@@ -10,7 +10,7 @@ const root = process.cwd();
  */
 const stages = [
     ['core', 'inspect'],
-    ['validate', 'builder', 'diagnose', 'conform'],
+    ['validate', 'builder', 'diagnose'],
     ['schema'],
     ['compiler'],
     ['uvd'],
