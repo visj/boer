@@ -270,7 +270,7 @@ function migrateRegex(result, ctx) {
  *   Bits 25-29 (5 bits): minLength (0 = no min, 1-31)
  *
  * @param {*} ctx
- * @param {!Record<string, number | string>} opts
+ * @param {!Record<string, number | string | RegExp>} opts
  * @returns {number} inline typedef or 0
  */
 function tryInlineString(ctx, opts) {
@@ -280,7 +280,7 @@ function tryInlineString(ctx, opts) {
     }
     let minLen = opts.minLength;
     let maxLen = opts.maxLength;
-    let pattern = opts.pattern;
+    let pattern = /** @type {string | RegExp} */(opts.pattern);
 
     let minVal = minLen !== void 0 ? +minLen : 0;
     let maxVal = maxLen !== void 0 ? +maxLen : 0;
@@ -509,7 +509,7 @@ function literalImpl(ctx, value) {
         return refineImpl(ctx, BOOLEAN, value === true ? v => v === true : v => v === false);
     }
     if (typeof value === 'string') {
-        let idx = allocConstant(ctx, value);
+        let idx = ctx.lookup(value);
         if (idx <= MOD_ENUM_IDX_MASK) {
             return STRING | MODIFIER | MOD_ENUM | (idx << MOD_ENUM_IDX_SHIFT);
         }

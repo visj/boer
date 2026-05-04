@@ -362,25 +362,16 @@ if (!ZodOrder.safeParse(rawData).success) {
 
 group('Massive B2B Logistics Payload (~15KB)', () => {
 
-    // bench('boer (In-Place Bitwise VM)', function* () {
-    //     yield {
-    //         [0]() { return JSON.parse(jsonStr); },
-    //         bench(data) {
-    //             return validate(data, boerRootPtr);
-    //         }
-    //     };
-    // });
-
     for (let i = 0; i < 3; i++) {
 
-        // bench('boer (In-Place Bitwise VM)', function* () {
-        //     yield {
-        //         [0]() { return JSON.parse(jsonStr); },
-        //         bench(data) {
-        //             return validate(data, boerRootPtr);
-        //         }
-        //     };
-        // });
+        bench('boer', function* () {
+            yield {
+                [0]() { return JSON.parse(jsonStr); },
+                bench(data) {
+                    return validate(data, boerRootPtr);
+                }
+            };
+        });
 
         // bench('Ajv (v8) - Draft 7', function* () {
         //     yield {
@@ -389,12 +380,12 @@ group('Massive B2B Logistics Payload (~15KB)', () => {
         //     };
         // });
 
-        bench('Zod (AST Interpreter)', function* () {
-            yield {
-                [0]() { return JSON.parse(jsonStr); },
-                bench(data) { return ZodOrder.safeParse(data).success; }
-            };
-        });
+        // bench('Zod (AST Interpreter)', function* () {
+        //     yield {
+        //         [0]() { return JSON.parse(jsonStr); },
+        //         bench(data) { return ZodOrder.safeParse(data).success; }
+        //     };
+        // });
     }
 
 });

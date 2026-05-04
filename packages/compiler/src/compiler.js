@@ -4,7 +4,7 @@ import {
     K_OR, K_EXCLUSIVE, K_INTERSECT,
     K_UNION, K_TUPLE, K_REFINE, K_NOT,
     K_CONDITIONAL, K_DYN_ANCHOR, K_DYN_REF, K_UNEVALUATED,
-    K_VALIDATOR, sortByKeyId, popcnt16,
+    K_VALIDATOR, K_STRICT, sortByKeyId, popcnt16,
     ANY, STRING, NUMBER, INTEGER, BOOLEAN, VALUE, PRIM_MASK, SIMPLE,
     K_ANY_INNER, V_PATTERN, V_PATTERN_PROPERTIES, V_ADDITIONAL_PROPERTIES,
     V_DEPENDENT_REQUIRED, V_DEPENDENT_SCHEMAS, V_ENUM, V_CONTAINS,
@@ -330,9 +330,9 @@ export function compile(cat, ast) {
                     if (valueBits === STRING) {
                         let strCount = vPayloads[p++] | 0;
                         if (strCount === 1) {
-                            /** Single string enum: use allocConstant for O(1) === match. */
+                            /** Single string enum: store keyId directly, reuses KEY_INDEX. */
                             let value = propNames[vPayloads[p++] | 0];
-                            let idx = allocConstant(heap, value);
+                            let idx = lookup(value);
                             if (idx <= MOD_ENUM_IDX_MASK) {
                                 let result = STRING | MODIFIER | MOD_ENUM | (idx << MOD_ENUM_IDX_SHIFT);
                                 if (hasNull) {
@@ -932,8 +932,23 @@ export function compile(cat, ast) {
                     }
                 }
 
+                /**
+                 * K_STRICT fast path: when the only validator is
+                 * additionalProperties: false (addType === 0), we can encode
+                 * this as the K_STRICT bit on the KINDS header instead of
+                 * allocating a 4-slot KINDS entry with a VALIDATORS payload.
+                 * The validation loop just checks key count === declared count.
+                 */
+                let isStrictOnly = finalVHeader === V_ADDITIONAL_PROPERTIES && additionalType === 0;
+                if (isStrictOnly) {
+                    finalVHeader = 0;
+                    finalPayloads = null;
+                }
                 let hasVal = finalPayloads !== null;
                 let kindHeader = hasVal ? (K_OBJECT | K_VALIDATOR) : K_OBJECT;
+                if (isStrictOnly) {
+                    kindHeader = kindHeader | K_STRICT;
+                }
                 /** Check if all properties are required for K_ALL_REQUIRED fast path */
                 let allRequired = true;
                 for (let i = 1; i < resolved.length; i += 2) {

@@ -667,6 +667,14 @@ function catalog(cfg) {
             if (isSet) {
                 return ENUMS[idx].has(data);
             }
+            /**
+             * Single-value const match. String constants store a keyId into
+             * KEY_INDEX (reusing the global string dictionary), while non-string
+             * constants (numbers, booleans) use the CONSTANTS arena.
+             */
+            if ((primBits & VALUE) === STRING) {
+                return KEY_INDEX[idx] === data;
+            }
             return CONSTANTS[idx] === data;
         }
 
@@ -1551,6 +1559,22 @@ function catalog(cfg) {
                 }
                 if (header & K_VALIDATOR) {
                     return runObjectValidator(data, kinds[kindsIdx + 2], kinds[kindsIdx + 3], slabOffset, trackPtr, snapPtr);
+                }
+                /**
+                 * K_STRICT: additionalProperties false without any other
+                 * object validators. Reject if any key is not in the
+                 * declared property list (binary search on sorted SLAB).
+                 */
+                if (header & K_STRICT) {
+                    let slab = SLAB;
+                    for (let k in data) {
+                        if (hasOwnProperty.call(data, k)) {
+                            let keyId = KEY_DICT.get(k);
+                            if (keyId === void 0 || binarySearchPair(slab, slabOffset + 1, length, keyId) < 0) {
+                                return false;
+                            }
+                        }
+                    }
                 }
                 return true;
             } else if (ct === K_ARRAY) {
