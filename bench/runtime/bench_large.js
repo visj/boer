@@ -7,9 +7,6 @@ import { catalog } from '../../packages/validate/dist/index.js';
 import { compile } from "../../packages/compiler/dist/index.js";
 import { CompoundSchema } from "../../packages/schema/dist/index.js";
 
-// ────────────────────────────────────────────────────────────────────────────
-// 1. THE SCHEMA (Real-World E-Commerce Checkout)
-// ────────────────────────────────────────────────────────────────────────────
 const complexSchema = {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",
@@ -112,11 +109,6 @@ const complexSchema = {
     }
 };
 
-const ZodOrder = z.fromJSONSchema(complexSchema);
-
-// ────────────────────────────────────────────────────────────────────────────
-// 2. THE PAYLOAD (~4KB of Realistic Order Data)
-// ────────────────────────────────────────────────────────────────────────────
 const rawData = {
     orderId: "ORD-2026-9982347-XYZ",
     createdAt: "2026-03-27T10:15:30Z",
@@ -230,17 +222,13 @@ const rawData = {
 
 const jsonStr = JSON.stringify(rawData);
 
-// ────────────────────────────────────────────────────────────────────────────
-// 3. COMPILE AJV
-// ────────────────────────────────────────────────────────────────────────────
+const ZodOrder = z.fromJSONSchema(complexSchema);
+
 const ajv = new Ajv({
     coerceTypes: false,
 });
 const ajvValidate = ajv.compile(complexSchema);
 
-// ────────────────────────────────────────────────────────────────────────────
-// 4. COMPILE boer
-// ────────────────────────────────────────────────────────────────────────────
 const cat = catalog();
 const { validate } = cat;
 
@@ -249,10 +237,6 @@ const refIdx = compound.add(complexSchema);
 const ast = compound.bundle(refIdx);
 const compiled = compile(cat, ast);
 const boerRootPtr = compiled[0].schema;
-
-// ────────────────────────────────────────────────────────────────────────────
-// 5. THE BENCHMARK
-// ────────────────────────────────────────────────────────────────────────────
 
 // Sanity Check
 if (!ajvValidate(rawData)) {

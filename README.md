@@ -1,25 +1,35 @@
 # boer
 
-A JSON Schema compliant type validation library for JavaScript. Define schemas with a Zod-like DSL or parse JSON Schema directly. Every type definition compiles down to raw integers on a managed heap, keeping allocation pressure low during validation.
-
-Still early alpha, but it passes 100% of the JSON Schema Test Suite.
+boer is a JSON Schema compliant type validation library for JavaScript.
 
 ## Why
 
-Libraries like Ajv get great throughput by compiling schemas into JavaScript functions, but that compilation step has a cost. For a single large schema it can take milliseconds. If you have many schemas, or you're in a cloud/edge environment where containers and isolates are constantly starting and stopping, that startup tax adds up. Shipping pre-compiled Ajv output avoids the compile step, but the generated JavaScript files can get large.
+So, first of all, ajv is an amazing library. For many cases, just use ajv; it's widely supported, and much faster than boer in raw throughput. However, ajv has some drawbacks, notably:
 
-boer takes a different approach. Instead of generating code, it compiles schemas into compact binary data on a managed heap (typed arrays). Validation interprets that data directly. It won't match Ajv on raw CPU throughput, but it starts up fast, keeps a small memory footprint, and the compiled schemas can be serialized to a binary format that loads with near-zero overhead.
+1. It relies on `eval / new Function`, which in many environments is disallowed for security reasons. It offers standalone code, but compiling many schemas become tedious, and they swell in size.
+2. ajv compiler is very slow. For long lived applications, this doesn't matter, but parsing large schemas means cold-boot starts take a hit. For short-lived applications, it's even worse. If you're spinning up small lambda functions that just live a few minutes, the overhead of parsing schemas at boot, or shipping large standalone javascript files, starts adding up.
+3. Re-compiling ajv schemas make CI tools quite slow.
+4. ajv supports draft 2020, but the default is still draft 7.
 
-The intended sweet spot is environments where memory is constrained and cold starts matter: serverless functions, edge workers, short-lived containers.
+boer is basically a mix between Zod and Ajv. Some of it's main features are:
+
+1. Full support for drafts 4 through 2020 of JSON Schema, including the more advanced concepts like $dynanchor, $dynref and unevaluated items/properties.
+2. Fast performance and low memory allocation. boer is a runtime, not a compiler, so it will never be as fast as libraries like ajv, but it aims to narrow the gap.
+3. A generic AST allowing boer to be extended to Open API spec etc.
+4. A convenient, Typescript friendly DSL like Zod, with support for `Infer`.
+5. It compiles schemas to binaries. For instance, the CloudFormation Schema generates 35.6 MB minified JavaScript with ajv standalone, taking 8.6 seconds to compile. boer parses it to a binary in 166 ms, and outputs a 390 kb binary file that you can instantly load into memory.
 
 ## Quick example
 
 ```ts
-import { object, string, number, array, union, literal, optional, validate, diagnose } from 'boer';
+import { 
+  object, string, number, array, union,
+  literal, or, optional, validate, diagnose
+} from 'boer';
 
 const Payment = object({
   id: string(),
-  userId: string() | number(),
+  userId: or(string(), number()),
   paymentMethod: union('type', {
     card: object({
       type: literal('card'),
@@ -50,26 +60,17 @@ if (!validate(data, Payment)) {
 }
 ```
 
-Every type is a plain JavaScript number. Primitives are bitsets, complex types are pointers into internal memory. You can compose them with bitwise OR:
-
-```ts
-import { STRING, NUMBER, NULL } from 'boer';
-
-// STRING | NUMBER gives you a union of string and number
-// STRING | NULL gives you a nullable string
-```
-
 ## What it supports
 
 **Primitives:** `string`, `number`, `boolean`, `null`, `undefined`, `any`, `never`
 
 **Structural types:** `object`, `array`, `tuple`, `record`
 
-**Composition:** `union` (anyOf), `exclusive` (oneOf), `intersect` (allOf), `not`, `when` (if/then/else)
+**Composition:** `union` (discriminated), `or`, `exclusive` (oneOf), `intersect` (allOf), `not`, `when` (if/then/else)
 
 **Validators:** `minLength`, `maxLength`, `pattern`, `format`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `minItems`, `maxItems`, `uniqueItems`, `contains`, `minProperties`, `maxProperties`, `patternProperties`, `additionalProperties`, `dependentRequired`
 
-**Other:** `literal`, `refine` (custom validator functions), discriminated unions, `nullable`, `optional`
+**Other:** `literal`, `refine` (custom validator functions), `nullable`, `optional`
 
 ## JSON Schema
 
@@ -87,16 +88,6 @@ const typedef = compile(cat, ast);
 cat.validate(data, typedef);
 ```
 
-## How it works
-
-Every schema you define gets compiled into blocks of memory on an internal heap. The heap is a set of `Uint32Array` and `Float64Array` buffers. A "type" is just a 32-bit unsigned integer:
-
-- Bits 0-2 are flags: complex, nullable, optional
-- For simple types, bits 3-7 encode the primitive kind directly
-- For complex types, the upper bits are an index into a vtable that points to the type's storage on the slab
-
-Validation walks these packed integers instead of traversing object graphs. The tradeoff is that schema definition does allocate (onto the internal heap), but that's a one-time cost.
-
 ## Binary serialization
 
 boer can serialize a compiled catalog to a binary format and load it back. This is the main mechanism for fast cold starts: parse and compile your schemas at build time, ship the binary, and load it at runtime without any schema processing.
@@ -110,6 +101,20 @@ const buffer = dump(catalog);
 // At runtime, no parsing or compilation needed
 const restored = load(buffer);
 ```
+
+## How it works
+
+boer is built on bitwise operators and an internal heap of an `Uint32Array` slab storage. To shave memory, it encodes primitives including validators into a single 32 bit number. Complex types are stored on the heap, and for those, the allocators return a raw pointer into the heap.
+
+Similar to how V8 distinguishes between primitives/objects by using one bit toggle, boer uses the lowest bits to represent complex types, null and undefined. Complex types use the upper bitspace as a pointer into the heap, primitive types use that space to inline validators, such as minLength, maxLength for common use cases.
+
+Internally, every string is converted to a number through an auto-increment ID. Objects are stored on the slab heap, like this:
+
+`[keyId, typeId, keyId, typeId`
+
+The typeId can either be a raw primitive, or a complex pointer to somewhere else on the heap.
+
+Implementing the full JSON Schema was not trivial, especially figuring out how unevaluated items and $dynref/$dynanchor should work, without bloating performance. The purpose for writing this library was to understand better how to leverage AI tools efficiently, so I needed some appropriately difficult thing to implement.
 
 ## Packages
 
@@ -125,6 +130,22 @@ boer is a monorepo with these packages:
 | `@boer/compiler` | Compiles parsed JSON Schema AST into the catalog |
 | `@boer/diagnose` | Error reporting with paths |
 | `@boer/inspect` | Debug printing and binary serialization |
+
+## Notes
+Every type is a plain JavaScript number. Primitives are bitsets, complex types are pointers into internal memory. The original reason/idea for building this library was basically: could I just encode types in JavaScript, and use bitwise or `|` to represent types? It felt like a cool thing, and then I just kept building features on top of that idea. Now, I wouldn't really recommend anyone using that, because it only works for primitives. If you try to or a complex type, that will break... So I didn't ship it as part of public API, it's more a toy feature...
+
+```ts
+import { object, STRING, NUMBER, NULL } from 'boer';
+
+const Person = object({
+  firstName: STRING | NULL,
+  age: NUMBER | NULL,
+  id: STRING | NUMBER
+});
+
+// STRING | NUMBER gives you a union of string and number
+// STRING | NULL gives you a nullable string
+```
 
 ## License
 

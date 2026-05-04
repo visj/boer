@@ -2,14 +2,12 @@ import fs from 'fs';
 import { run, bench, group } from 'mitata';
 import Ajv from 'ajv';
 import * as z from "zod";
+import { jsonSchemaToType } from "@ark/json-schema"
 
 import { catalog } from '../../packages/validate/dist/index.js';
 import { compile } from "../../packages/compiler/dist/index.js";
 import { CompoundSchema } from "../../packages/schema/dist/index.js";
 
-// ────────────────────────────────────────────────────────────────────────────
-// 1. THE SCHEMA (Massive B2B Logistics & Fraud Telemetry)
-// ────────────────────────────────────────────────────────────────────────────
 const complexSchema = {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "type": "object",
@@ -194,11 +192,6 @@ const complexSchema = {
     }
 };
 
-const ZodOrder = z.fromJSONSchema(complexSchema);
-
-// ────────────────────────────────────────────────────────────────────────────
-// 2. THE PAYLOAD (~15KB of Deeply Nested Enterprise Data)
-// ────────────────────────────────────────────────────────────────────────────
 const rawData = {
     orderId: "ORD-2026-9982347-XYZ-B2B",
     orderType: "B2B",
@@ -336,17 +329,13 @@ const rawData = {
 
 const jsonStr = JSON.stringify(rawData);
 
-// ────────────────────────────────────────────────────────────────────────────
-// 3. COMPILE AJV
-// ────────────────────────────────────────────────────────────────────────────
+const ZodOrder = z.fromJSONSchema(complexSchema);
+
 const ajv = new Ajv({
     coerceTypes: false,
 });
 const ajvValidate = ajv.compile(complexSchema);
 
-// ────────────────────────────────────────────────────────────────────────────
-// 4. COMPILE boer
-// ────────────────────────────────────────────────────────────────────────────
 const cat = catalog();
 const { validate } = cat;
 
@@ -355,10 +344,6 @@ const refIdx = compound.add(complexSchema);
 const ast = compound.bundle(refIdx);
 const compiled = compile(cat, ast);
 const boerRootPtr = compiled[0].schema;
-
-// ────────────────────────────────────────────────────────────────────────────
-// 5. THE BENCHMARK
-// ────────────────────────────────────────────────────────────────────────────
 
 // Sanity Check
 if (!ajvValidate(rawData)) {
@@ -426,36 +411,6 @@ group('Massive B2B Logistics Payload (~15KB) - Reversed', () => {
             }
         };
     });
-
-});
-
-group('Massive B2B Logistics Payload (~15KB) - Reversed', () => {
-
-    bench('boer (In-Place Bitwise VM)', function* () {
-        yield {
-            [0]() { return JSON.parse(jsonStr); },
-            bench(data) {
-                return validate(data, boerRootPtr);
-            }
-        };
-    });
-
-    bench('Zod (AST Interpreter)', function* () {
-        yield {
-            [0]() { return JSON.parse(jsonStr); },
-            bench(data) { return ZodOrder.safeParse(data).success; }
-        };
-    });
-
-    bench('Ajv (v8) - Draft 7', function* () {
-        yield {
-            [0]() { return JSON.parse(jsonStr); },
-            bench(data) { return ajvValidate(data); }
-        };
-    });
-
-
-
 });
 
 await run({ colors: true });
