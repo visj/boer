@@ -17,6 +17,9 @@
   "scripts": {
     "make": "node scripts/build.js"
   },
+  "dependencies": {
+      "@boer/core": "0.2.0"
+  },
   "devDependencies": {
     "@boer/core": "workspace:*",
     "@boer/builder": "workspace:*",

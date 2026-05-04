@@ -53,6 +53,9 @@
     "packages/compiler": {
       "name": "@boer/compiler",
       "version": "0.2.0",
+      "dependencies": {
+        "@boer/core": "0.2.0",
+      },
       "devDependencies": {
         "@boer/core": "workspace:*",
       },

@@ -18,6 +18,12 @@
   "scripts": {
     "make": "node scripts/build.js"
   },
+  "dependencies": {
+      "@boer/core": "0.2.0",
+      "@boer/builder": "0.2.0",
+      "@boer/validate": "0.2.0",
+      "@boer/diagnose": "0.2.0"
+  },
   "devDependencies": {
     "@boer/core": "workspace:*",
     "@boer/validate": "workspace:*",

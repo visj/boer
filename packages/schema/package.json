@@ -18,7 +18,8 @@
     "make": "node scripts/build.js"
   },
   "dependencies": {
-    "uri-js": "^4.4.1"
+    "uri-js": "^4.4.1",
+    "@boer/core": "0.2.0"
   },
   "devDependencies": {
     "@boer/core": "workspace:*",
