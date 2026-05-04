@@ -2,7 +2,6 @@ declare const TYPE_ID: unique symbol;
 declare const COMPLEX_ID: unique symbol;
 declare const CATALOG_ID: unique symbol;
 
-
 export type Value<T, R extends symbol = any> = number & {
     readonly [TYPE_ID]: T;
     readonly [CATALOG_ID]?: (tag: R) => R;
@@ -50,10 +49,6 @@ export type InferStrictSchema<T extends StrictSchema<any, any>, R extends symbol
     never;
 };
 
-// ────────────────────────────────────────────────────────────────────────────
-// Validator option interfaces
-// ────────────────────────────────────────────────────────────────────────────
-
 export interface StringValidators {
     minLength?: number;
     maxLength?: number;
@@ -93,18 +88,10 @@ export interface WhenConfig {
     else?: number;
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// PathError
-// ────────────────────────────────────────────────────────────────────────────
-
 export interface PathError {
     path: string;
     message: string;
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// Allocator function signatures
-// ────────────────────────────────────────────────────────────────────────────
 
 export interface ObjectFn<R extends symbol> {
     <T extends StrictSchema<any, R>>(
@@ -216,10 +203,6 @@ export interface Allocators<R extends symbol> {
     optional: OptionalFn<R>;
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Catalog and Heap
-// ────────────────────────────────────────────────────────────────────────────
-
 export interface Heap {
     PTR: number;
     SLAB_LEN: number;
@@ -256,10 +239,6 @@ export interface Config {
     kinds?: number;
     validators?: number;
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// Bit-level constants (const.js)
-// ────────────────────────────────────────────────────────────────────────────
 
 /** Bit 0: complex typedef (pointer into KINDS vtable) */
 export declare const COMPLEX: number;
@@ -464,10 +443,6 @@ export declare const FAIL: symbol;
 export declare const toString: typeof Object.prototype.toString;
 export declare const hasOwnProperty: typeof Object.prototype.hasOwnProperty;
 
-// ────────────────────────────────────────────────────────────────────────────
-// Utility functions (util.js)
-// ────────────────────────────────────────────────────────────────────────────
-
 export declare function nullable<T>(typedef: T): number;
 export declare function optional<T>(typedef: T): number;
 export declare function isNumber(v: any): v is number;
@@ -487,16 +462,8 @@ export declare function binarySearchPair(arr: Uint32Array | Float64Array, key: n
 export declare function popcnt16(x: number): number;
 export declare function codepointLen(s: string): number;
 
-// ────────────────────────────────────────────────────────────────────────────
-// Validator packing (validator.js)
-// ────────────────────────────────────────────────────────────────────────────
-
 export declare const PAYLOAD_QUEUE: { REGEX: Array<RegExp | null>; REGEX_LEN: number };
 export declare function packValidators(opts: any, mask: number, lookup: ((key: string) => number) | null): number[];
-
-// ────────────────────────────────────────────────────────────────────────────
-// Assertions (assert.js)
-// ────────────────────────────────────────────────────────────────────────────
 
 export declare const ERROR_MESSAGES: string[];
 export declare const ERR_ARRAY_ELEMENT_MUST_BE_NUMBER: number;
