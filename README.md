@@ -17,7 +17,7 @@ boer is basically a mix between Zod and Ajv. Some of it's main features are:
 2. Fast performance and low memory allocation. boer is a runtime, not a compiler, so it will never be as fast as libraries like ajv, but it aims to narrow the gap.
 3. A generic AST allowing boer to be extended to Open API spec etc.
 4. A convenient, Typescript friendly DSL like Zod, with support for `Infer`.
-5. It compiles schemas to binaries. For instance, the CloudFormation Schema generates 35.6 MB minified JavaScript with ajv standalone, taking 8.6 seconds to compile. boer parses it to a binary in 166 ms, and outputs a 390 kb binary file that you can instantly load into memory.
+5. It compiles schemas to binaries. For instance, the CloudFormation Schema generates 35.6 MB minified JavaScript with ajv standalone, taking 6.4 seconds to compile. boer parses the same schema to a binary file in 103 ms, and outputs a 259 kb binary file that you can instantly load into memory.
 
 ## Quick example
 
@@ -110,13 +110,11 @@ Similar to how V8 distinguishes between primitives/objects by using one bit togg
 
 Internally, every string is converted to a number through an auto-increment ID. Objects are stored on the slab heap, like this:
 
-`[keyId, typeId, keyId, typeId`
+`[keyId, typeId, keyId, typeId]`
 
 The typeId can either be a raw primitive, or a complex pointer to somewhere else on the heap.
 
 Implementing the full JSON Schema was not trivial, especially figuring out how unevaluated items and $dynref/$dynanchor should work, without bloating performance. The purpose for writing this library was to understand better how to leverage AI tools efficiently, so I needed some appropriately difficult thing to implement.
-
-## Benchmarks
 
 ## Benchmarks
 
@@ -131,7 +129,8 @@ Run with `node --expose-gc` on an Intel i7-14700 @ ~5.15 GHz, Node 25.9.0.
 | **boer** | **~6.1** | **~161** |
 | zod | ~19 | ~8,500–63,000 |
 
-boer is ~3× slower than pre-compiled Ajv and ~3× faster than Zod. I've ran several types of benchmarks, and the results are quite consistent. Boer is somewhere between 3-4 times slower than ajv in terms of raw throughput and generally allocates equal to or less memory than ajv.
+boer is ~3× slower than Ajv and ~3× faster than Zod. I've ran several types of benchmarks, and the results are pretty consistent. Boer is somewhere between 3-4 times slower than ajv in terms of raw throughput and generally allocates equal to or less memory than ajv.
+
 ---
 
 ### Schema compilation (build time)
@@ -140,10 +139,10 @@ The real win for boer is at compile time and cold-start time.
 
 | Schema | Ajv compile | Ajv output | boer compile | boer output |
 |--------|:-----------:|:----------:|:------------:|:-----------:|
-| [AWS CloudFormation](https://raw.githubusercontent.com/awslabs/goformation/master/schema/cloudformation.schema.json) | 6,419 ms | 35,596 KB JS | 102 ms | 259 KB binary |
+| [AWS CloudFormation](https://raw.githubusercontent.com/awslabs/goformation/master/schema/cloudformation.schema.json) | 6,389 ms | 36,452 KB JS | 103 ms | 259 KB binary |
 | [Gitlab CI](https://gitlab.com/gitlab-org/gitlab/-/blob/master/app/assets/javascripts/editor/schema/ci.json) | 113 ms | 753 KB JS | 20 ms | 12 KB binary |
 
-I'd say the biggest win/achievement is compressing the CloudFormation schema down from 35 MB minified JavaScript code, to a 259 kb binary file that can be instantly loaded on cold boot. 
+This basically illustrates the "trade-off" idea of building boer: we trade slower validation performance for better schema compression, faster boots, and smaller memory footprint.
 
 ---
 

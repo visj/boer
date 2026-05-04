@@ -1,6 +1,6 @@
 {
   "name": "boer",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A javascript type validation runtime",
   "type": "module",
   "main": "./dist/index.js",
@@ -19,10 +19,10 @@
     "make": "node scripts/build.js"
   },
   "dependencies": {
-      "@boer/core": "0.2.0",
-      "@boer/builder": "0.2.0",
-      "@boer/validate": "0.2.0",
-      "@boer/diagnose": "0.2.0"
+      "@boer/core": "0.2.1",
+      "@boer/builder": "0.2.1",
+      "@boer/validate": "0.2.1",
+      "@boer/diagnose": "0.2.1"
   },
   "devDependencies": {
     "@boer/core": "workspace:*",
@@ -31,9 +31,14 @@
     "@boer/diagnose": "workspace:*"
   },
   "keywords": [
-    "JSON",
+    "json-schema",
+    "json",
     "schema",
-    "guard"
+    "type",
+    "validation",
+    "validator",
+    "typescript",
+    "infer"
   ],
   "author": "Vilhelm Sjölund",
   "license": "Apache-2.0"
