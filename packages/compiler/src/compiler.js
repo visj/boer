@@ -38,7 +38,7 @@ import {
     AST_FLAG_HAS_PROPERTY_NAMES, AST_FLAG_HAS_DEPENDENT_SCHEMAS,
 } from "@boer/core";
 
-import { malloc, allocEnumSet } from "@boer/builder";
+import { malloc, allocConstant, allocEnumSet, allocRegex } from "@boer/builder";
 
 // Compiler states — tracks each node's progress through the two-visit pattern.
 const UNVISITED = 0;
@@ -185,7 +185,6 @@ export function compile(cat, ast) {
         /** Grow the stack if we're running low on capacity. */
         if (sp + nodeCount > stackLen) {
             stackLen = stackLen << 1;
-            console.log("resize");
             let bigger = new Uint32Array(stackLen);
             bigger.set(stack);
             stack = bigger;
@@ -219,7 +218,7 @@ export function compile(cat, ast) {
                     if (canInline && (vHeader & V_PATTERN)) {
                         let slot = popcnt16(vHeader & (V_PATTERN - 1));
                         let raw = vPayloads[off + slot];
-                        regexIdx = heap.REGEX_CACHE.push(regexes[raw]) - 1;
+                        regexIdx = allocRegex(heap, regexes[raw]);
                         if (regexIdx > STR_REGEX_IDX_LIMIT) {
                             canInline = false;
                         }
@@ -327,29 +326,47 @@ export function compile(cat, ast) {
                     let hasNull = (primBits & NULLABLE) !== 0;
                     let hasUndef = (primBits & OPTIONAL) !== 0;
 
-                    /** String-only enum: build a Set of the raw string values. */
+                    /** String-only enum: single value → const, multi → Set. */
                     if (valueBits === STRING) {
                         let strCount = vPayloads[p++] | 0;
-                        let set = new Set();
-                        for (let i = 0; i < strCount; i++) {
-                            set.add(propNames[vPayloads[p++] | 0]);
-                        }
-                        let idx = allocEnumSet(heap, set);
-                        if (idx <= MOD_ENUM_IDX_MASK) {
-                            let result = STRING | MODIFIER | MOD_ENUM | MOD_ENUM_IS_SET | (idx << MOD_ENUM_IDX_SHIFT);
-                            if (hasNull) {
-                                result = result | NULLABLE;
+                        if (strCount === 1) {
+                            /** Single string enum: use allocConstant for O(1) === match. */
+                            let value = propNames[vPayloads[p++] | 0];
+                            let idx = allocConstant(heap, value);
+                            if (idx <= MOD_ENUM_IDX_MASK) {
+                                let result = STRING | MODIFIER | MOD_ENUM | (idx << MOD_ENUM_IDX_SHIFT);
+                                if (hasNull) {
+                                    result = result | NULLABLE;
+                                }
+                                if (hasUndef) {
+                                    result = result | OPTIONAL;
+                                }
+                                astCompiled[nodeId] = result;
+                                astState[nodeId] = COMPILED;
+                                continue;
                             }
-                            if (hasUndef) {
-                                result = result | OPTIONAL;
+                        } else {
+                            let set = new Set();
+                            for (let i = 0; i < strCount; i++) {
+                                set.add(propNames[vPayloads[p++] | 0]);
                             }
-                            astCompiled[nodeId] = result;
-                            astState[nodeId] = COMPILED;
-                            continue;
+                            let idx = allocEnumSet(heap, set);
+                            if (idx <= MOD_ENUM_IDX_MASK) {
+                                let result = STRING | MODIFIER | MOD_ENUM | MOD_ENUM_IS_SET | (idx << MOD_ENUM_IDX_SHIFT);
+                                if (hasNull) {
+                                    result = result | NULLABLE;
+                                }
+                                if (hasUndef) {
+                                    result = result | OPTIONAL;
+                                }
+                                astCompiled[nodeId] = result;
+                                astState[nodeId] = COMPILED;
+                                continue;
+                            }
                         }
                     }
 
-                    /** Number-only enum: build a Set of the raw number values. */
+                    /** Number-only enum: single value → const, multi → Set. */
                     if (valueBits === NUMBER || valueBits === INTEGER || valueBits === (NUMBER | INTEGER)) {
                         /** Skip string segment if present (shouldn't be for number-only) */
                         if (primBits & STRING) {
@@ -357,23 +374,42 @@ export function compile(cat, ast) {
                             p += strCount;
                         }
                         let numCount = vPayloads[p++] | 0;
-                        let set = new Set();
-                        for (let i = 0; i < numCount; i++) {
-                            set.add(vPayloads[p++]);
-                        }
-                        let idx = allocEnumSet(heap, set);
-                        if (idx <= MOD_ENUM_IDX_MASK) {
-                            let innerBits = (valueBits & INTEGER) ? INTEGER : NUMBER;
-                            let result = innerBits | MODIFIER | MOD_ENUM | MOD_ENUM_IS_SET | (idx << MOD_ENUM_IDX_SHIFT);
-                            if (hasNull) {
-                                result = result | NULLABLE;
+                        if (numCount === 1) {
+                            /** Single number enum: use allocConstant for O(1) === match. */
+                            let value = vPayloads[p++];
+                            let idx = allocConstant(heap, value);
+                            if (idx <= MOD_ENUM_IDX_MASK) {
+                                let innerBits = (valueBits & INTEGER) ? INTEGER : NUMBER;
+                                let result = innerBits | MODIFIER | MOD_ENUM | (idx << MOD_ENUM_IDX_SHIFT);
+                                if (hasNull) {
+                                    result = result | NULLABLE;
+                                }
+                                if (hasUndef) {
+                                    result = result | OPTIONAL;
+                                }
+                                astCompiled[nodeId] = result;
+                                astState[nodeId] = COMPILED;
+                                continue;
                             }
-                            if (hasUndef) {
-                                result = result | OPTIONAL;
+                        } else {
+                            let set = new Set();
+                            for (let i = 0; i < numCount; i++) {
+                                set.add(vPayloads[p++]);
                             }
-                            astCompiled[nodeId] = result;
-                            astState[nodeId] = COMPILED;
-                            continue;
+                            let idx = allocEnumSet(heap, set);
+                            if (idx <= MOD_ENUM_IDX_MASK) {
+                                let innerBits = (valueBits & INTEGER) ? INTEGER : NUMBER;
+                                let result = innerBits | MODIFIER | MOD_ENUM | MOD_ENUM_IS_SET | (idx << MOD_ENUM_IDX_SHIFT);
+                                if (hasNull) {
+                                    result = result | NULLABLE;
+                                }
+                                if (hasUndef) {
+                                    result = result | OPTIONAL;
+                                }
+                                astCompiled[nodeId] = result;
+                                astState[nodeId] = COMPILED;
+                                continue;
+                            }
                         }
                     }
                 }
@@ -384,7 +420,7 @@ export function compile(cat, ast) {
                 for (let i = 0; i < fixedCount; i++) {
                     let raw = vPayloads[off + i];
                     if (i === patternSlot) {
-                        nodePayloads.push(heap.REGEX_CACHE.push(regexes[raw]) - 1);
+                        nodePayloads.push(allocRegex(heap, regexes[raw]));
                     } else {
                         nodePayloads.push(raw);
                     }
@@ -784,12 +820,10 @@ export function compile(cat, ast) {
                     // 2. V_PATTERN_PROPERTIES (variable-length, sequential)
                     if (patPayloads !== null) {
                         // payload: [count, reIdx0, type0, reIdx1, type1, ...]
-                        let regexCache = heap.REGEX_CACHE;
                         nodePayloads.push(patPayloads.length / 2);
                         for (let i = 0; i < patPayloads.length; i += 2) {
                             let re = new RegExp(/** @type {string} */(patPayloads[i]), 'u');
-                            let reIdx = regexCache.length;
-                            regexCache.push(re);
+                            let reIdx = allocRegex(heap, re);
                             nodePayloads.push(reIdx);
                             nodePayloads.push(patPayloads[i + 1]);
                         }

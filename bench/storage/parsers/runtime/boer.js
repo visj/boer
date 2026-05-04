@@ -7,7 +7,9 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { catalog, CompoundSchema, compile } from '../../../../src/core.js';
+import { catalog } from '@boer/validate';
+import { CompoundSchema } from '@boer/schema';
+import { compile } from '@boer/compiler';
 
 const schemaPath = process.argv[2];
 if (!schemaPath) {

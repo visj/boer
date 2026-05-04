@@ -159,25 +159,80 @@ function malloc(ctx, header, inline, slabData, shapeLen, vHeader, vPayloads) {
 }
 
 /**
- * Stores a constant value in the CONSTANTS arena. Returns its index.
+ * Stores a constant value in the CONSTANTS arena, deduplicating identical values.
+ * Uses a lazily-created Map on ctx (_constDedup) keyed by the value itself.
  * Used for MOD_ENUM with isSet=0 (single-value const match).
  * @param {*} ctx
  * @param {*} value
  * @returns {number}
  */
 function allocConstant(ctx, value) {
-    return ctx.CONSTANTS.push(value) - 1;
+    /** @type {Map<*, number>} */
+    let dedup = ctx._constDedup;
+    if (dedup === void 0) {
+        dedup = new Map();
+        ctx._constDedup = dedup;
+    }
+    let cached = dedup.get(value);
+    if (cached !== void 0) {
+        return cached;
+    }
+    let idx = ctx.CONSTANTS.push(value) - 1;
+    dedup.set(value, idx);
+    return idx;
 }
 
 /**
- * Stores a Set in the ENUMS arena. Returns its index.
+ * Stores a Set in the ENUMS arena, deduplicating identical Sets.
+ * Builds a canonical key from sorted Set contents and caches the
+ * index in a lazily-created Map on ctx (_enumDedup).
  * Used for MOD_ENUM with isSet=1 (multi-value enum Set.has() match).
  * @param {*} ctx
  * @param {!Set<*>} set
  * @returns {number}
  */
 function allocEnumSet(ctx, set) {
-    return ctx.ENUMS.push(set) - 1;
+    /** @type {Map<string,number>} */
+    let dedup = ctx._enumDedup;
+    if (dedup === void 0) {
+        dedup = new Map();
+        ctx._enumDedup = dedup;
+    }
+    /** Build canonical key: type prefix + sorted values joined by \x00 */
+    let vals = Array.from(set);
+    vals.sort();
+    let key = vals.join('\x00');
+    let cached = dedup.get(key);
+    if (cached !== void 0) {
+        return cached;
+    }
+    let idx = ctx.ENUMS.push(set) - 1;
+    dedup.set(key, idx);
+    return idx;
+}
+
+/**
+ * Pushes a RegExp into the REGEX_CACHE, deduplicating identical patterns.
+ * Uses a lazily-created Map on ctx (_regexDedup) keyed by source+flags.
+ * @param {*} ctx
+ * @param {!RegExp} re
+ * @returns {number}
+ */
+function allocRegex(ctx, re) {
+    /** @type {Map<string,number>} */
+    let dedup = ctx._regexDedup;
+    if (dedup === void 0) {
+        dedup = new Map();
+        ctx._regexDedup = dedup;
+    }
+    let key = re.source + '\x00' + re.flags;
+    let cached = dedup.get(key);
+    if (cached !== void 0) {
+        return cached;
+    }
+    let idx = ctx.REGEX_CACHE.push(re) - 1;
+    dedup.set(key, idx);
+    return idx;
 }
 
 const STR_MASK = V_MIN_LENGTH | V_MAX_LENGTH | V_PATTERN | V_FORMAT;
@@ -187,17 +242,18 @@ const OBJ_MASK = V_MIN_PROPERTIES | V_MAX_PROPERTIES | V_PATTERN_PROPERTIES
     | V_PROPERTY_NAMES | V_DEPENDENT_REQUIRED | V_ADDITIONAL_PROPERTIES;
 
 /**
- * Migrates RegExp objects from PAYLOAD_QUEUE.REGEX into a cache array and
- * replaces the -1 placeholders in `result` with the resulting cache indices.
+ * Migrates RegExp objects from PAYLOAD_QUEUE.REGEX into the REGEX_CACHE
+ * and replaces the -1 placeholders in `result` with the resulting cache indices.
+ * Deduplicates via allocRegex so identical patterns share one slot.
  * Consumes PAYLOAD_QUEUE.REGEX entries in order.
  * @param {!Array<number>} result — [vHeader, ...payloads] from packValidators
- * @param {!Array<RegExp>} cache — the regex cache to push into (REGEX_CACHE)
+ * @param {*} ctx — heap context with REGEX_CACHE and _regexDedup
  */
-function migrateRegex(result, cache) {
+function migrateRegex(result, ctx) {
     let ri = 0;
     for (let i = 1; i < result.length; i++) {
         if (result[i] === -1) {
-            result[i] = cache.push(/** @type {RegExp} */(PAYLOAD_QUEUE.REGEX[ri++])) - 1;
+            result[i] = allocRegex(ctx, /** @type {RegExp} */(PAYLOAD_QUEUE.REGEX[ri++]));
         }
     }
 }
@@ -248,7 +304,7 @@ function tryInlineString(ctx, opts) {
             return 0;
         }
         let re = typeof pattern === 'string' ? new RegExp(pattern, 'u') : pattern;
-        regexIdx = ctx.REGEX_CACHE.push(re) - 1;
+        regexIdx = allocRegex(ctx, re);
     }
 
     /** No payload bits set → not worth inlining (bare STRING is already bits 0-7) */
@@ -392,7 +448,7 @@ function valueImpl(ctx, primConst, opts) {
     }
     let mask = (primConst & STRING) ? STR_MASK : NUM_MASK;
     let result = packValidators(opts, mask, null);
-    migrateRegex(result, ctx.REGEX_CACHE);
+    migrateRegex(result, ctx);
     let vHeader = result[0];
     let payloads = result.slice(1);
     return malloc(ctx, K_PRIMITIVE | K_VALIDATOR | primConst, 0, null, 0, vHeader, payloads);
@@ -737,7 +793,7 @@ function objectImpl(ctx, definition, opts) {
     let payloads = null;
     if (hasValidator) {
         let result = packValidators(opts, OBJ_MASK, ctx.lookup);
-        migrateRegex(result, ctx.REGEX_CACHE);
+        migrateRegex(result, ctx);
         vHeader = result[0];
         payloads = result.slice(1);
     }
@@ -1049,6 +1105,7 @@ export {
     malloc,
     allocConstant,
     allocEnumSet,
+    allocRegex,
     allocators,
     objectAllocator,
     arrayAllocator,

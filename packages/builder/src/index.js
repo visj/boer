@@ -2,6 +2,7 @@ export {
     malloc,
     allocConstant,
     allocEnumSet,
+    allocRegex,
     allocators,
     objectAllocator,
     arrayAllocator,
