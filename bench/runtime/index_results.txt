@@ -10,7 +10,7 @@ Zod                             207.29 µs/iter 172.50 µs  █
                          (120.10 µs … 8.48 ms) 415.80 µs  █
                        (  3.77 kb …   1.08 mb) 379.97 kb ██▇▅█▃▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 
-uvd (In-Place Bitwise)          662.60 ns/iter 616.41 ns █
+boer (In-Place Bitwise)          662.60 ns/iter 616.41 ns █
                          (561.67 ns … 3.41 µs)   2.03 µs █▅
                        ( 49.33  b …   2.81 kb)   2.38 kb ██▂▁▂▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
 
@@ -28,7 +28,7 @@ Zod                             930.96 ns/iter 900.00 ns    █
                        (800.00 ns … 375.60 µs)   1.40 µs ▅  █
                        (  2.51 kb …   1.05 mb)   2.57 kb █▁▁█▁▁▁▅▁▁▂▁▁▁▁▁▁▁▁▁▁
 
-uvd (In-Place Bitwise)          354.92 ns/iter 357.45 ns   ▃█▄
+boer (In-Place Bitwise)          354.92 ns/iter 357.45 ns   ▃█▄
                        (332.98 ns … 444.63 ns) 428.96 ns   ███▂
                        (  0.11  b … 242.43  b)   1.57  b ▃█████▇▄▃▃▂▂▂▂▂▁▂▂▁▁▂
 
@@ -54,6 +54,6 @@ AJV + TypeBox (Theoretical Max)  51.43 ns/iter  54.88 ns ▃██
                         (32.47 ns … 315.41 ns) 205.83 ns ███▇
                        (296.11  b … 351.00  b) 296.17  b ████▅▃▂▂▁▁▁▁▁▁▁▁▁▁▁▁▁
 
-uvd (In-Place Bitwise)          355.00 ns/iter 357.13 ns   █▅
+boer (In-Place Bitwise)          355.00 ns/iter 357.13 ns   █▅
                        (331.79 ns … 519.41 ns) 443.70 ns  ▂██▅
                        (  0.11  b … 274.64  b)   1.19  b ▂████▇▄▃▃▃▃▂▂▁▂▂▁▂▁▁▁

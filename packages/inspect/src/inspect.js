@@ -59,6 +59,12 @@ const FLAG_D = 128;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+const CHAR_b = 0x62;
+const CHAR_o = 0x6F;
+const CHAR_e = 0x65;
+const CHAR_r = 0x72;
+const CHAR_0 = 0x00;
+
 /**
  * Decode a regex flag byte back into a flags string.
  * @param {number} bits
@@ -119,14 +125,19 @@ function readTaggedValue(buf, view, off) {
  * of the two is used for each typed array capacity.
  *
  * @param {!Uint8Array} bin
- * @param {uvd.Config=} cfg
+ * @param {boer.Config=} cfg
  * @returns {Object} A seed object accepted by catalog()
  */
 function load(bin, cfg) {
     /* Validate magic bytes */
     if (bin.length < HEADER_SIZE ||
-        bin[0] !== 0x55 || bin[1] !== 0x56 || bin[2] !== 0x44 || bin[3] !== 0x00) {
-        throw new Error('Invalid UVD binary: bad magic bytes');
+        bin[0] !== CHAR_b ||
+        bin[1] !== CHAR_o ||
+        bin[2] !== CHAR_e ||
+        bin[3] !== CHAR_r ||
+        bin[4] !== CHAR_0
+    ) {
+        throw new Error('Invalid boer binary: bad magic bytes');
     }
 
     let view = new DataView(bin.buffer, bin.byteOffset, bin.byteLength);
@@ -135,7 +146,7 @@ function load(bin, cfg) {
     let storedChecksum = view.getUint32(16, true);
     let computedChecksum = crc32(bin, HEADER_SIZE, bin.byteLength - HEADER_SIZE);
     if (storedChecksum !== computedChecksum) {
-        throw new Error('Invalid UVD binary: checksum mismatch');
+        throw new Error('Invalid boer binary: checksum mismatch');
     }
 
     /* Read header fields */
@@ -255,10 +266,12 @@ function load(bin, cfg) {
             VAL_PTR: valsCount,
             SLAB, KINDS, VALIDATORS,
         },
-        KEY_INDEX, KEY_DICT,
+        KEY_INDEX,
+        KEY_DICT,
         keyseq: strtabCount,
         REGEX_CACHE,
-        CONSTANTS, ENUMS,
+        CONSTANTS,
+        ENUMS,
         callbackCount,
     };
 }
@@ -267,7 +280,7 @@ function load(bin, cfg) {
  * Inspect a catalog and return allocation statistics and an optimized config.
  * The optimized config contains exact sizes needed to hold the current schemas
  * without wasting any memory.
- * @param {uvd.Catalog<any>} cat
+ * @param {boer.Catalog<any>} cat
  * @returns {{ stats: Object, config: Object }}
  */
 function print(cat) {
@@ -396,7 +409,7 @@ function writeTaggedValue(view, buf, off, val) {
  * Float64 (VALIDATORS), Uint32 (SLAB, KINDS), then variable-length blobs
  * (string table, regex, constants, enums).
  *
- * @param {uvd.Catalog<any>} cat
+ * @param {boer.Catalog<any>} cat
  * @returns {!Uint8Array}
  */
 function dump(cat) {
@@ -432,6 +445,7 @@ function dump(cat) {
      * Format per entry: [u32 patternByteLength][UTF-8 pattern][u8 flags]
      */
     let regexCount = REGEX_CACHE.length - 1;
+
     let regexEncodedPatterns = new Array(regexCount);
     let regexFlagBytes = new Uint8Array(regexCount);
     let regexBytes = 0;
@@ -478,14 +492,14 @@ function dump(cat) {
 
     // --- Write header (96 bytes, all little-endian) ---
 
-    /* [0] Magic "UVD\0" */
-    out[0] = 0x55; // U
-    out[1] = 0x56; // V
-    out[2] = 0x44; // D
-    out[3] = 0x00; // \0
+    view.setUint8(0, CHAR_b);
+    view.setUint8(1, CHAR_o);
+    view.setUint8(2, CHAR_e);
+    view.setUint8(3, CHAR_r);
+    view.setUint8(4, CHAR_0);
 
-    /* [4] Format version */
-    view.setUint16(4, FMT_VERSION, true);
+    /* [5] Format version */
+    view.setUint8(5, FMT_VERSION);
 
     /* [6-11] Library version */
     view.setUint16(6, LIB_MAJOR, true);

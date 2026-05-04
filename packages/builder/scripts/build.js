@@ -12,7 +12,7 @@ async function build() {
 
     const bundle = await rolldown({
         input: { index: 'src/index.js' },
-        external: [/^@luvd\//, 'uri-js'],
+        external: [/^@boer\//, 'uri-js'],
     });
 
     const { output } = await bundle.generate({

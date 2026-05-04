@@ -11,8 +11,8 @@ async function build() {
     fs.mkdirSync(outputDir);
 
     const bundle = await rolldown({
-        input: { index: 'src/ast.js' },
-        external: [/^@luvd\//, 'uri-js'],
+        input: { index: 'src/compiler.js' },
+        external: [/^@boer\//, 'uri-js'],
     });
 
     const { output } = await bundle.generate({

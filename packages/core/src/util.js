@@ -19,7 +19,7 @@ import {
 
 /**
  * @template T
- * @template {uvd.Type<T>} D
+ * @template {boer.Type<T>} D
  * @param {D} typedef
  * @returns {D}
  */
@@ -30,7 +30,7 @@ function nullable(typedef) {
 
 /**
  * @template T
- * @template {uvd.Type<T>} D
+ * @template {boer.Type<T>} D
  * @param {D} typedef
  * @returns {D}
  */

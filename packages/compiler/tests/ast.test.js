@@ -2,8 +2,8 @@
 // import {
 //     BOOLEAN, NUMBER, STRING, BIGINT, DATE, URI, VALUE,
 //     NULL, UNDEFINED
-// } from 'uvd';
-// import { catalog } from 'uvd/core';
+// } from 'boer';
+// import { catalog } from 'boer/core';
 // import { compile } from '../src/internal/ast.js';
 // import {
 //     N_PRIM, N_OBJECT, N_ARRAY, N_REFINE, N_OR,

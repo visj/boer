@@ -1,5 +1,5 @@
 {
-  "name": "uvd",
+  "name": "boer",
   "version": "0.2.0",
   "description": "A javascript type validation runtime",
   "type": "module",
@@ -19,10 +19,10 @@
     "make": "node scripts/build.js"
   },
   "devDependencies": {
-    "@luvd/core": "workspace:*",
-    "@luvd/validate": "workspace:*",
-    "@luvd/builder": "workspace:*",
-    "@luvd/diagnose": "workspace:*"
+    "@boer/core": "workspace:*",
+    "@boer/validate": "workspace:*",
+    "@boer/builder": "workspace:*",
+    "@boer/diagnose": "workspace:*"
   },
   "keywords": [
     "JSON",

@@ -4,7 +4,7 @@ import Ajv from 'ajv';
 import standaloneCode from 'ajv/dist/standalone/index.js';
 import * as z from "zod";
 
-import { catalog, CompoundSchema, compile } from 'uvd/core';
+import { catalog, CompoundSchema, compile } from 'boer/core';
 
 // Note: Adjust these imports to match exactly where your new schema compiler lives!
 // import { CompoundSchema } from '../src/internal/schema.js';
@@ -150,18 +150,18 @@ const jsonStr = JSON.stringify(rawData);
 // 3. COMPILE AJV
 // ────────────────────────────────────────────────────────────────────────────
 // const ajv = new Ajv({ coerceTypes: false, allErrors: false });
-const ajv = new Ajv({ 
-    coerceTypes: false, 
+const ajv = new Ajv({
+    coerceTypes: false,
     // You must enable source code generation for the standalone feature
-    // code: { source: true }, 
-    // If you are using formats, Ajv usually requires 'ajv-formats' plugin, 
+    // code: { source: true },
+    // If you are using formats, Ajv usually requires 'ajv-formats' plugin,
     // but doing formats: { ... } as simple booleans works for bypassing them.
-    formats: { uri: true, 'date-time': true } 
+    formats: { uri: true, 'date-time': true }
 });
 const ajvValidate = ajv.compile(complexSchema);
 
 // ────────────────────────────────────────────────────────────────────────────
-// 4. COMPILE UVD
+// 4. COMPILE boer
 // ────────────────────────────────────────────────────────────────────────────
 const cat = catalog();
 const { validate } = cat;
@@ -170,7 +170,7 @@ const compound = new CompoundSchema("draft-07");
 const refIdx = compound.add(complexSchema);
 const ast = compound.bundle(refIdx);
 const compiled = compile(cat, ast);
-const uvdRootPtr = compiled[0].schema;
+const boerRootPtr = compiled[0].schema;
 
 // ────────────────────────────────────────────────────────────────────────────
 // 5. THE BENCHMARK
@@ -181,8 +181,8 @@ if (!ajvValidate(rawData)) {
     console.error("AJV failed validation!", ajvValidate.errors);
     process.exit(1);
 }
-if (!validate(rawData, uvdRootPtr)) {
-    console.error("UVD failed validation!");
+if (!validate(rawData, boerRootPtr)) {
+    console.error("boer failed validation!");
     process.exit(1);
 }
 
@@ -216,11 +216,11 @@ function theoreticalBaseline(data) {
 
 group('Enterprise JSON Schema Validation (1.5KB Payload)', () => {
 
-    bench('uvd (In-Place Bitwise VM)', function* () {
+    bench('boer (In-Place Bitwise VM)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { 
-                return validate(data, uvdRootPtr);
+            bench(data) {
+                return validate(data, boerRootPtr);
             }
         };
     });
@@ -242,7 +242,7 @@ group('Enterprise JSON Schema Validation (1.5KB Payload)', () => {
     bench('Zod (AST Interpreter)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            // safeParse is equivalent here, avoiding try/catch deopts 
+            // safeParse is equivalent here, avoiding try/catch deopts
             // and returning a pure boolean indicator (success).
             bench(data) { return ZodOrder.safeParse(data).success; }
         };
@@ -262,7 +262,7 @@ group('Enterprise JSON Schema Validation (1.5KB Payload)', () => {
     bench('Zod (AST Interpreter)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            // safeParse is equivalent here, avoiding try/catch deopts 
+            // safeParse is equivalent here, avoiding try/catch deopts
             // and returning a pure boolean indicator (success).
             bench(data) { return ZodOrder.safeParse(data).success; }
         };
@@ -275,11 +275,11 @@ group('Enterprise JSON Schema Validation (1.5KB Payload)', () => {
         };
     });
 
-    bench('uvd (In-Place Bitwise VM)', function* () {
+    bench('boer (In-Place Bitwise VM)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { 
-                return validate(data, uvdRootPtr);
+            bench(data) {
+                return validate(data, boerRootPtr);
             }
         };
     });

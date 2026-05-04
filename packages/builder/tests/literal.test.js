@@ -1,6 +1,6 @@
 import { describe, test, expect } from 'bun:test';
-import { catalog } from '@luvd/validate';
-import { allocators } from '@luvd/builder';
+import { catalog } from '@boer/validate';
+import { allocators } from '@boer/builder';
 
 const cat = catalog();
 const t = allocators(cat);

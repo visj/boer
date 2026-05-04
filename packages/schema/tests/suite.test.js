@@ -2,9 +2,9 @@ import { describe, test, expect } from "bun:test";
 import fs from "fs";
 import path from "path";
 
-import { CompoundSchema } from '@luvd/schema';
-import { compile } from '@luvd/compiler';
-import { catalog } from '@luvd/validate';
+import { CompoundSchema } from '@boer/schema';
+import { compile } from '@boer/compiler';
+import { catalog } from '@boer/validate';
 
 const cat = catalog();
 const { validate } = cat;
@@ -19,8 +19,8 @@ const REMOTE_DIR = path.resolve(__dirname, "suite/remotes");
 const SPECS_DIR = path.resolve(__dirname, "specs");
 
 /**
- * 
- * @param {string} draft 
+ *
+ * @param {string} draft
  */
 function getTestFolder(draft) {
     switch (draft) {
@@ -40,7 +40,7 @@ function getTestFolder(draft) {
 
 /**
  * Recursively reads all JSON files in a directory.
- * @param {string} rootDir 
+ * @param {string} rootDir
  * @returns {Array<{path: string, schema: any}>}
  */
 function readDirRecursive(rootDir) {

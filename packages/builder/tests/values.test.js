@@ -1,9 +1,9 @@
 import { describe, test, expect } from 'bun:test';
 import {
     UNDEFINED, NULL, BOOLEAN, NUMBER, STRING,
-} from '@luvd/core';
-import { catalog } from '@luvd/validate';
-import { allocators } from '@luvd/builder';
+} from '@boer/core';
+import { catalog } from '@boer/validate';
+import { allocators } from '@boer/builder';
 
 const cat = catalog();
 const { object } = allocators(cat);

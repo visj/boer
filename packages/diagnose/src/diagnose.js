@@ -35,7 +35,7 @@ import {
     _isValue, describeType, deepEqual, codepointLen,
     binarySearch, binarySearchPair, popcnt16,
     isValidTime, isValidDate, isValidDateTime
-} from '@luvd/core';
+} from '@boer/core';
 
 /** Format regex patterns (same as catalog.js) */
 const FMT_RE_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -56,8 +56,8 @@ const FMT_NAMES = ['', 'email', 'ipv4', 'uuid', 'date', 'time', 'date-time'];
  * `_diagnose` with a temporary errors array and checks `tempErrors.length === 0`.
  *
  * @template {symbol} R
- * @param {uvd.Catalog<R>} cat
- * @returns {(data: any, typedef: number) => uvd.PathError[]}
+ * @param {boer.Catalog<R>} cat
+ * @returns {(data: any, typedef: number) => boer.PathError[]}
  */
 function createDiagnose(cat) {
     let h = cat.__heap;
@@ -90,7 +90,7 @@ function createDiagnose(cat) {
      * @returns {boolean}
      */
     function _passes(data, typedef, path) {
-        /** @type {!Array<uvd.PathError>} */
+        /** @type {!Array<boer.PathError>} */
         let tempErrors = [];
         _diagnose(data, typedef, path, tempErrors);
         return tempErrors.length === 0;
@@ -105,7 +105,7 @@ function createDiagnose(cat) {
      * @param {number} vHeader - validator bitmask
      * @param {number} valPtr - offset into VALIDATORS (first payload)
      * @param {string} path
-     * @param {!Array<uvd.PathError>} errors
+     * @param {!Array<boer.PathError>} errors
      */
     function _diagnosePrimValidator(value, primBits, vHeader, valPtr, path, errors) {
         let vals = HEAP.VALIDATORS;
@@ -236,7 +236,7 @@ function createDiagnose(cat) {
      * @param {number} vHeader - validator bitmask
      * @param {number} valPtr - offset into VALIDATORS
      * @param {string} path
-     * @param {!Array<uvd.PathError>} errors
+     * @param {!Array<boer.PathError>} errors
      */
     function _diagnoseArrayValidator(data, vHeader, valPtr, path, errors) {
         let vals = HEAP.VALIDATORS;
@@ -315,7 +315,7 @@ function createDiagnose(cat) {
      * @param {number} valPtr - offset into VALIDATORS
      * @param {number} slabOffset - SLAB offset for this object's properties
      * @param {string} path
-     * @param {!Array<uvd.PathError>} errors
+     * @param {!Array<boer.PathError>} errors
      */
     function _diagnoseObjectValidator(data, vHeader, valPtr, slabOffset, path, errors) {
         let vals = HEAP.VALIDATORS;
@@ -492,7 +492,7 @@ function createDiagnose(cat) {
      * @param {*} data
      * @param {number} typedef
      * @param {string} path
-     * @param {!Array<uvd.PathError>} errors
+     * @param {!Array<boer.PathError>} errors
      */
     function _diagnoseInlineMod(data, typedef, path, errors) {
         let primBits = typedef & PRIM_MASK;
@@ -602,7 +602,7 @@ function createDiagnose(cat) {
      * @param {*} data
      * @param {number} typedef
      * @param {string} path
-     * @param {!Array<uvd.PathError>} errors
+     * @param {!Array<boer.PathError>} errors
      */
     function _diagnoseInlinePrim(data, typedef, path, errors) {
         let primBits = typedef & PRIM_MASK;
@@ -690,7 +690,7 @@ function createDiagnose(cat) {
      * @param {*} raw
      * @param {number} type
      * @param {string} path
-     * @param {!Array<uvd.PathError>} errors
+     * @param {!Array<boer.PathError>} errors
      */
     function _diagnoseSlot(raw, type, path, errors) {
         if (raw === void 0) {
@@ -1258,7 +1258,7 @@ function createDiagnose(cat) {
      * @param {number} unevalType - the schema that unevaluated properties/items must match
      * @param {number} unevalMode - 0 = property tracking (objects), 1 = item tracking (arrays)
      * @param {string} path
-     * @param {!Array<uvd.PathError>} errors
+     * @param {!Array<boer.PathError>} errors
      */
     function _diagnoseUnevaluated(data, innerType, unevalType, unevalMode, path, errors) {
         if (unevalMode === 1) {
@@ -1321,7 +1321,7 @@ function createDiagnose(cat) {
      * @param {*} data
      * @param {number} typedef
      * @param {string} path
-     * @param {!Array<uvd.PathError>} errors
+     * @param {!Array<boer.PathError>} errors
      */
     function _diagnose(data, typedef, path, errors) {
         /**
@@ -1551,7 +1551,7 @@ function createDiagnose(cat) {
      * @param {number} kindsIdx - raw KINDS array index
      * @param {number} header - KINDS[kindsIdx] header word
      * @param {string} path
-     * @param {!Array<uvd.PathError>} errors
+     * @param {!Array<boer.PathError>} errors
      */
     function _diagnoseRareKind(data, ct, kinds, kindsIdx, header, path, errors) {
         let slab = HEAP.SLAB;
@@ -1591,7 +1591,7 @@ function createDiagnose(cat) {
                 let slabOffset = kinds[kindsIdx + 1];
                 let count = slab[slabOffset];
                 for (let i = 0; i < count; i++) {
-                    /** @type {!Array<uvd.PathError>} */
+                    /** @type {!Array<boer.PathError>} */
                     let tempErrors = [];
                     _diagnose(data, slab[slabOffset + 1 + i], path, tempErrors);
                     if (tempErrors.length === 0) {
@@ -1611,7 +1611,7 @@ function createDiagnose(cat) {
                 let count = slab[slabOffset];
                 let matchCount = 0;
                 for (let i = 0; i < count; i++) {
-                    /** @type {!Array<uvd.PathError>} */
+                    /** @type {!Array<boer.PathError>} */
                     let tempErrors = [];
                     _diagnose(data, slab[slabOffset + 1 + i], path, tempErrors);
                     if (tempErrors.length === 0) {
@@ -1718,7 +1718,7 @@ function createDiagnose(cat) {
                  * (value matched the inner type), push "should NOT match".
                  * If temp has errors (value didn't match), that's correct.
                  */
-                /** @type {!Array<uvd.PathError>} */
+                /** @type {!Array<boer.PathError>} */
                 let tempErrors = [];
                 _diagnose(data, kinds[kindsIdx + 1], path, tempErrors);
                 if (tempErrors.length === 0) {
@@ -1736,7 +1736,7 @@ function createDiagnose(cat) {
                 let ifType = slab[slabOffset + 1];
                 let thenType = slab[slabOffset + 2];
                 let elseType = slab[slabOffset + 3];
-                /** @type {!Array<uvd.PathError>} */
+                /** @type {!Array<boer.PathError>} */
                 let tempErrors = [];
                 _diagnose(data, ifType, path, tempErrors);
                 if (tempErrors.length === 0) {
@@ -1802,10 +1802,10 @@ function createDiagnose(cat) {
      *
      * @param {*} data
      * @param {number} typedef
-     * @returns {!Array<uvd.PathError>}
+     * @returns {!Array<boer.PathError>}
      */
     function diagnose(data, typedef) {
-        /** @type {!Array<uvd.PathError>} */
+        /** @type {!Array<boer.PathError>} */
         let errors = [];
         DYN_PTR = 0;
         _diagnose(data, typedef, '', errors);

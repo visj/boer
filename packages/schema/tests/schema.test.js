@@ -1,7 +1,7 @@
 import { describe, test, expect } from 'bun:test';
-import { catalog } from '@luvd/validate';
-import { compile } from '@luvd/compiler';
-import { CompoundSchema } from '@luvd/schema';
+import { catalog } from '@boer/validate';
+import { compile } from '@boer/compiler';
+import { CompoundSchema } from '@boer/schema';
 
 const cat = catalog();
 const { validate } = cat;

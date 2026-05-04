@@ -18,7 +18,7 @@ Ajv (v8) - Draft 7                       2.08 µs/iter   2.17 µs █▃
                              3.68 ipc ( 48.62% cache)    3.84 branch misses
                    11.24k cycles  41.40k instructions  217.66 c-refs  111.83 c-misses
 
-uvd (In-Place Bitwise VM)                6.44 µs/iter   6.46 µs        █ ▂▂
+boer (In-Place Bitwise VM)                6.44 µs/iter   6.46 µs        █ ▂▂
                                   (6.34 µs … 6.54 µs)   6.54 µs      ▅ █ ██▅        ▅
                               (160.10  b … 167.65  b) 160.43  b ▇▁▁▁▁█▁█▇███▇▁▁▇▁▇▇▁█
                              4.44 ipc ( 54.73% cache)   28.67 branch misses
@@ -32,7 +32,7 @@ Recursive Baseline (Theoretical Floor)   1.99 µs/iter   2.01 µs  ▆▄ █ �
                              3.52 ipc ( 53.45% cache)   10.28 branch misses
                    10.45k cycles  36.73k instructions  188.88 c-refs   87.92 c-misses
 
-uvd (In-Place Bitwise VM)                6.42 µs/iter   6.44 µs  ▂            █
+boer (In-Place Bitwise VM)                6.42 µs/iter   6.44 µs  ▂            █
                                   (6.35 µs … 6.58 µs)   6.49 µs  █     ▅      █▅
                               (160.10  b … 167.65  b) 160.43  b ▇█▁▇▇▇▇█▁▇▇▇▁▇██▇▁▁▁▇
                              4.45 ipc ( 54.70% cache)   29.04 branch misses

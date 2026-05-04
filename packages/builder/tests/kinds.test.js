@@ -1,10 +1,10 @@
 import { describe, test, expect } from 'bun:test';
 import {
     BOOLEAN, NUMBER, STRING
-} from '@luvd/core';
-import { catalog } from '@luvd/validate';
-import { allocators } from '@luvd/builder';
-import { createDiagnose } from '@luvd/diagnose';
+} from '@boer/core';
+import { catalog } from '@boer/validate';
+import { allocators } from '@boer/builder';
+import { createDiagnose } from '@boer/diagnose';
 
 const cat = catalog();
 const { object, array, tuple, record, or, exclusive, intersect, not, when, string, nullable, optional } = allocators(cat);

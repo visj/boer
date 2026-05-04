@@ -1,10 +1,10 @@
 /**
- * UVD binary generator — compiles a JSON Schema and dumps the catalog
+ * boer binary generator — compiles a JSON Schema and dumps the catalog
  * to a binary file that can be loaded instantly without re-parsing.
  *
- * Usage: node bench/storage/parsers/precompiled/uvd_binary.js <schema-path> [output-path]
+ * Usage: node bench/storage/parsers/precompiled/boer_binary.js <schema-path> [output-path]
  *
- * If output-path is omitted, writes to <schema-basename>.uvd
+ * If output-path is omitted, writes to <schema-basename>.boer
  * in the same directory as this script.
  *
  * Prints: compile time, dump time, binary size, output path.
@@ -15,7 +15,7 @@ import { catalog, CompoundSchema, compile, dump, print } from '../../../../src/c
 
 const schemaPath = process.argv[2];
 if (!schemaPath) {
-    console.error('Usage: node uvd_binary.js <schema-path> [output-path]');
+    console.error('Usage: node boer_binary.js <schema-path> [output-path]');
     process.exit(1);
 }
 
@@ -23,7 +23,7 @@ const raw = fs.readFileSync(path.resolve(schemaPath), 'utf8');
 const schema = JSON.parse(raw);
 
 let baseName = path.basename(schemaPath, path.extname(schemaPath));
-let outputPath = process.argv[3] || path.join(import.meta.dirname, `${baseName}.uvd`);
+let outputPath = process.argv[3] || path.join(import.meta.dirname, `${baseName}.boer`);
 
 /**
  * Detect draft from the schema's $schema or $id field.
@@ -85,7 +85,7 @@ if (fs.existsSync(metaSchemaPath)) {
 
 let cat = catalog();
 
-console.log('Step 1: Compiling with UVD...');
+console.log('Step 1: Compiling with boer...');
 let t0 = performance.now();
 let rootType;
 try {

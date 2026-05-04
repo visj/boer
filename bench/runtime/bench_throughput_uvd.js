@@ -330,10 +330,10 @@ const rawData = {
 
 const baseline = getHeapStatistics();
 
-fs.writeFileSync('heap_baseline_uvd.json', JSON.stringify(baseline, null, 2));
+fs.writeFileSync('heap_baseline_boer.json', JSON.stringify(baseline, null, 2));
 
 // ────────────────────────────────────────────────────────────────────────────
-// 4. COMPILE UVD
+// 4. COMPILE boer
 // ────────────────────────────────────────────────────────────────────────────
 const cat = catalog();
 const { validate } = cat;
@@ -342,18 +342,18 @@ const compound = new CompoundSchema("draft-07");
 const refIdx = compound.add(complexSchema);
 const ast = compound.bundle(refIdx);
 const compiled = compile(cat, ast);
-const uvdRootPtr = compiled[0].schema;
+const boerRootPtr = compiled[0].schema;
 
 
 const compiledHeap = getHeapStatistics();
 
-fs.writeFileSync('heap_compile_uvd.json', JSON.stringify(compiledHeap, null, 2));
+fs.writeFileSync('heap_compile_boer.json', JSON.stringify(compiledHeap, null, 2));
 
 const start = performance.now();
 let counter = 0;
 
 while (true) {
-    if (validate(rawData, uvdRootPtr)) {
+    if (validate(rawData, boerRootPtr)) {
         counter++;
     }
     let now = performance.now();
@@ -362,7 +362,7 @@ while (true) {
     }
 }
 
-console.log("uvd count: ", counter);
+console.log("boer count: ", counter);
 
 const val = getHeapStatistics();
-fs.writeFileSync('heap_validate_uvd.json', JSON.stringify(val, null, 2));
+fs.writeFileSync('heap_validate_boer.json', JSON.stringify(val, null, 2));

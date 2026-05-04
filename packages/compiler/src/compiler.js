@@ -36,12 +36,9 @@ import {
     AST_FLAG_HAS_REST, AST_FLAG_HAS_CONTAINS, AST_FLAG_HAS_ITEMS,
     AST_FLAG_HAS_ADDITIONAL_PROPS, AST_FLAG_HAS_PATTERN_PROPS,
     AST_FLAG_HAS_PROPERTY_NAMES, AST_FLAG_HAS_DEPENDENT_SCHEMAS,
-} from "@luvd/core";
+} from "@boer/core";
 
-import { malloc, allocEnumSet } from "@luvd/builder";
-
-const KIND_MASK = 0x0FFFFFFF;
-const INITIAL_STACK_SIZE = 512;
+import { malloc, allocEnumSet } from "@boer/builder";
 
 // Compiler states — tracks each node's progress through the two-visit pattern.
 const UNVISITED = 0;
@@ -94,9 +91,9 @@ const SENTINEL = 0xFFFFFFFF;
  * Compiles a FlatAst into the catalog's heap storage.
  * @template T
  * @template {symbol} R
- * @param {uvd.Catalog<R>} cat — a catalog instance returned by catalog()
- * @param {uvd.FlatAst} ast
- * @returns {uvd.SchemaResource<T, R>[]}
+ * @param {boer.Catalog<R>} cat — a catalog instance returned by catalog()
+ * @param {boer.FlatAst} ast
+ * @returns {boer.SchemaResource<T, R>[]}
  */
 export function compile(cat, ast) {
     let heap = cat.__heap;
@@ -1257,7 +1254,7 @@ export function compile(cat, ast) {
         HEAP.SLAB[slabOffset + 2] = compiled;
     }
 
-    /** @type {uvd.SchemaResource<T,R>[]} */
+    /** @type {boer.SchemaResource<T,R>[]} */
     let resources = [];
 
     for (let i = 0; i < rootIds.length; i++) {
@@ -1268,7 +1265,7 @@ export function compile(cat, ast) {
             uri: rootUris[i] || `urn:uuid:schema-${i}`,
             id: rootUris[i] || null,
             anchor: null,
-            schema: /** @type {uvd.Type<T,R>} */(heapOffset),
+            schema: /** @type {boer.Type<T,R>} */(heapOffset),
             name: rootNames[i] || null
         });
     }

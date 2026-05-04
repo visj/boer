@@ -4,33 +4,33 @@ import {
     ANY, NEVER,
     BARE_ARRAY as ARRAY,
     BARE_OBJECT as OBJECT,
-} from '@luvd/core';
+} from '@boer/core';
 import {
     catalog,
-} from '@luvd/validate';
-import { allocators } from '@luvd/builder';
-import { createDiagnose } from '@luvd/diagnose';
+} from '@boer/validate';
+import { allocators } from '@boer/builder';
+import { createDiagnose } from '@boer/diagnose';
 
-/** @type {import('@luvd/core').Catalog<import('uvd').UVD>} */
-const uvd = catalog();
+/** @type {import('@boer/core').Catalog<import('boer').boer>} */
+const boer = catalog();
 
 const {
     object, array, union,
     string, number, boolean,
     refine, tuple, record,
     or, exclusive, intersect, not, when,
-    optional, nullable,
-} = allocators(uvd);
+    optional, nullable, literal,
+} = allocators(boer);
 
-export const validate = uvd.validate;
-export const diagnose = createDiagnose(uvd);
+export const validate = boer.validate;
+export const diagnose = createDiagnose(boer);
 
 export {
     object, array, union,
     string, number, boolean,
     refine, tuple, record,
     or, exclusive, intersect, not, when,
-    optional, nullable,
+    optional, nullable, literal,
 }
 
 export {

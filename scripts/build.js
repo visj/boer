@@ -13,15 +13,17 @@ const stages = [
     ['validate', 'builder', 'diagnose'],
     ['schema'],
     ['compiler'],
-    ['uvd'],
+    ['boer'],
 ];
+
+const totalStages = stages.flat().length;
 
 let total = 0;
 for (const stage of stages) {
     for (const pkg of stage) {
         total++;
         const pkgDir = path.resolve(root, 'packages', pkg);
-        console.log(`[${total}/${9}] Building ${pkg}...`);
+        console.log(`[${total}/${totalStages}] Building ${pkg}...`);
         execSync('bun scripts/build.js', { cwd: pkgDir, stdio: 'inherit' });
     }
 }

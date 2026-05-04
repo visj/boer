@@ -33,7 +33,7 @@ import {
     nullable, optional, isNumber, isObject,
     sortByKeyId,
     packValidators, PAYLOAD_QUEUE,
-} from '@luvd/core';
+} from '@boer/core';
 
 // --- Helper functions ---
 
@@ -682,7 +682,7 @@ function notImpl(ctx, typedef) {
 
 /**
  * @param {*} ctx
- * @param {!uvd.WhenValidators} config
+ * @param {!boer.WhenValidators} config
  * @returns {number}
  */
 function whenImpl(ctx, config) {
@@ -701,8 +701,8 @@ function whenImpl(ctx, config) {
 /**
  * @template {symbol} R
  * @param {*} ctx
- * @param {uvd.Schema<R>} definition
- * @param {uvd.ObjectValidators=} opts
+ * @param {boer.Schema<R>} definition
+ * @param {boer.ObjectValidators=} opts
  * @returns {number}
  */
 function objectImpl(ctx, definition, opts) {
@@ -724,7 +724,7 @@ function objectImpl(ctx, definition, opts) {
                 }
             }
         } else if (isObject(type)) {
-            type = objectImpl(ctx, /** @type {uvd.Schema<R>} */(type));
+            type = objectImpl(ctx, /** @type {boer.Schema<R>} */(type));
         } else {
             throw new Error('Invalid type for key ' + key);
         }
@@ -771,7 +771,7 @@ function objectImpl(ctx, definition, opts) {
  *   Bits 24-31 (8b):  minItems (0 = no min, 1-255)
  *
  * @param {number} elemType
- * @param {!uvd.ArrayValidators=} opts
+ * @param {!boer.ArrayValidators=} opts
  * @returns {number} inline typedef or 0
  */
 function tryInlineArray(elemType, opts) {
@@ -825,7 +825,7 @@ function tryInlineArray(elemType, opts) {
 /**
  * @param {*} ctx
  * @param {number} elemType
- * @param {uvd.ArrayValidators=} opts
+ * @param {boer.ArrayValidators=} opts
  * @returns {number}
  */
 function arrayImpl(ctx, elemType, opts) {
@@ -907,7 +907,7 @@ function unionImpl(ctx, discriminator, variants) {
 // --- Allocator factories ---
 
 /**
- * @param {uvd.Catalog<any>} cat
+ * @param {boer.Catalog<any>} cat
  * @returns {(def: *, opts?: *) => number}
  */
 function objectAllocator(cat) {
@@ -916,7 +916,7 @@ function objectAllocator(cat) {
 }
 
 /**
- * @param {uvd.Catalog<any>} cat
+ * @param {boer.Catalog<any>} cat
  * @returns {(type: number, opts?: *) => number}
  */
 function arrayAllocator(cat) {
@@ -925,7 +925,7 @@ function arrayAllocator(cat) {
 }
 
 /**
- * @param {uvd.Catalog<any>} cat
+ * @param {boer.Catalog<any>} cat
  * @returns {(disc: string, variants: *) => number}
  */
 function unionAllocator(cat) {
@@ -934,7 +934,7 @@ function unionAllocator(cat) {
 }
 
 /**
- * @param {uvd.Catalog<any>} cat
+ * @param {boer.Catalog<any>} cat
  * @param {number} primConst
  * @returns {(opts?: *) => number}
  */
@@ -944,7 +944,7 @@ function valueAllocator(cat, primConst) {
 }
 
 /**
- * @param {uvd.Catalog<any>} cat
+ * @param {boer.Catalog<any>} cat
  * @returns {(typedef: number, fn: function(*): boolean) => number}
  */
 function refineAllocator(cat) {
@@ -953,7 +953,7 @@ function refineAllocator(cat) {
 }
 
 /**
- * @param {uvd.Catalog<any>} cat
+ * @param {boer.Catalog<any>} cat
  * @returns {(first: *, second?: *, third?: *) => number}
  */
 function tupleAllocator(cat) {
@@ -962,7 +962,7 @@ function tupleAllocator(cat) {
 }
 
 /**
- * @param {uvd.Catalog<any>} cat
+ * @param {boer.Catalog<any>} cat
  * @returns {(valueType: number) => number}
  */
 function recordAllocator(cat) {
@@ -971,7 +971,7 @@ function recordAllocator(cat) {
 }
 
 /**
- * @param {uvd.Catalog<any>} cat
+ * @param {boer.Catalog<any>} cat
  * @returns {(first: *, second?: *, third?: *) => number}
  */
 function orAllocator(cat) {
@@ -980,7 +980,7 @@ function orAllocator(cat) {
 }
 
 /**
- * @param {uvd.Catalog<any>} cat
+ * @param {boer.Catalog<any>} cat
  * @returns {(first: *, second?: *, third?: *) => number}
  */
 function exclusiveAllocator(cat) {
@@ -989,7 +989,7 @@ function exclusiveAllocator(cat) {
 }
 
 /**
- * @param {uvd.Catalog<any>} cat
+ * @param {boer.Catalog<any>} cat
  * @returns {(first: *, second?: *, third?: *) => number}
  */
 function intersectAllocator(cat) {
@@ -998,7 +998,7 @@ function intersectAllocator(cat) {
 }
 
 /**
- * @param {uvd.Catalog<any>} cat
+ * @param {boer.Catalog<any>} cat
  * @returns {(typedef: number) => number}
  */
 function notAllocator(cat) {
@@ -1007,7 +1007,7 @@ function notAllocator(cat) {
 }
 
 /**
- * @param {uvd.Catalog<any>} cat
+ * @param {boer.Catalog<any>} cat
  * @returns {(config: *) => number}
  */
 function whenAllocator(cat) {
@@ -1018,8 +1018,8 @@ function whenAllocator(cat) {
 // --- Convenience bundle ---
 
 /**
- * @param {uvd.Catalog<any>} cat
- * @returns {uvd.Allocators<any>}
+ * @param {boer.Catalog<any>} cat
+ * @returns {boer.Allocators<any>}
  */
 function allocators(cat) {
     let ctx = cat.__heap;

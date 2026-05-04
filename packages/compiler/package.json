@@ -1,5 +1,5 @@
 {
-  "name": "@luvd/compiler",
+  "name": "@boer/compiler",
   "version": "0.2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -18,10 +18,7 @@
     "make": "node scripts/build.js"
   },
   "devDependencies": {
-    "@luvd/core": "workspace:*",
-    "@luvd/validate": "workspace:*",
-    "@luvd/schema": "workspace:*",
-    "@luvd/builder": "workspace:*"
+    "@boer/core": "workspace:*"
   },
   "license": "Apache-2.0"
 }

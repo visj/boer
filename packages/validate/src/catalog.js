@@ -33,10 +33,10 @@ import {
     sortByKeyId, _isValue, deepEqual, codepointLen,
     binarySearch, binarySearchPair, popcnt16,
     isValidTime, isValidDate, isValidDateTime,
-} from '@luvd/core';
+} from '@boer/core';
 
 /**
- * @param {uvd.Config=} cfg
+ * @param {boer.Config=} cfg
  */
 function createHeap(cfg) {
     const useConfig = cfg !== void 0;
@@ -59,7 +59,7 @@ function createHeap(cfg) {
 /**
  * @template {symbol} R
  * @param {*} [cfg]
- * @returns {uvd.Catalog<R>}
+ * @returns {boer.Catalog<R>}
  */
 function catalog(cfg) {
     /**
@@ -1721,7 +1721,7 @@ function catalog(cfg) {
     /**
      * @template T
      * @param {*} data
-     * @param {uvd.Type<T,R>} typedef
+     * @param {boer.Type<T,R>} typedef
      * @returns {data is T}
      */
     function validate(data, typedef) {

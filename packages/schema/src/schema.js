@@ -18,7 +18,7 @@ import {
     AST_FLAG_HAS_PROPERTY_NAMES, AST_FLAG_HAS_DEPENDENT_SCHEMAS,
     AST_FLAG_HAS_REST, AST_FLAG_HAS_CONTAINS, AST_FLAG_HAS_ITEMS,
     AST_FLAG_UNEVAL_MODE_ITEMS
-} from '@luvd/core';
+} from '@boer/core';
 import { resolve } from "uri-js";
 
 /**
@@ -470,7 +470,7 @@ CompoundSchema.prototype.add = function (schema, id, name) {
 //
 // Parses a JSON Schema (draft 2020-12) into a FlatAst — a compact,
 // structure-of-arrays representation designed for fast compilation into
-// the uvd validation engine's heap.
+// the boer validation engine's heap.
 //
 // ## Algorithm
 //
@@ -789,7 +789,7 @@ function runPreScan(compound) {
  * (providing $defs and $ref targets) but are not exposed as roots.
  *
  * @param {number | number[]} schemas — entry-point schema index or indices
- * @returns {uvd.FlatAst}
+ * @returns {boer.FlatAst}
  */
 CompoundSchema.prototype.bundle = function (schemas) {
     /** @type {number[]} */
@@ -2203,7 +2203,7 @@ CompoundSchema.prototype.bundle = function (schemas) {
  * Internally creates a CompoundSchema, adds the schema, and calls bundle().
  * @param {JSONSchema|boolean} schema — a JSON Schema document (object or boolean)
  * @param {string=} dialect
- * @returns {uvd.FlatAst}
+ * @returns {boer.FlatAst}
  */
 function parseJSONSchema(schema, dialect) {
     const compound = new CompoundSchema(dialect);

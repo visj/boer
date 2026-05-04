@@ -18,7 +18,7 @@ const complexSchema = {
         "orderId": { "type": "string", "maxLength": 64 },
         "createdAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T" },
         "status": { "type": "string", "enum": ["draft", "processing", "shipped", "delivered", "cancelled"] },
-        
+
         "customer": {
             "type": "object",
             "required": ["id", "email"],
@@ -30,10 +30,10 @@ const complexSchema = {
                 "phone": { "type": "string", "maxLength": 30 },
                 "loyaltyTier": { "type": "string", "enum": ["none", "silver", "gold", "platinum"] },
                 "marketingOptIn": { "type": "boolean" },
-                "tags": { 
-                    "type": "array", 
+                "tags": {
+                    "type": "array",
                     "maxItems": 20,
-                    "items": { "type": "string", "maxLength": 50 } 
+                    "items": { "type": "string", "maxLength": 50 }
                 }
             }
         },
@@ -233,13 +233,13 @@ const jsonStr = JSON.stringify(rawData);
 // ────────────────────────────────────────────────────────────────────────────
 // 3. COMPILE AJV
 // ────────────────────────────────────────────────────────────────────────────
-const ajv = new Ajv({ 
-    coerceTypes: false, 
+const ajv = new Ajv({
+    coerceTypes: false,
 });
 const ajvValidate = ajv.compile(complexSchema);
 
 // ────────────────────────────────────────────────────────────────────────────
-// 4. COMPILE UVD
+// 4. COMPILE boer
 // ────────────────────────────────────────────────────────────────────────────
 const cat = catalog();
 const { validate } = cat;
@@ -248,7 +248,7 @@ const compound = new CompoundSchema("draft-07");
 const refIdx = compound.add(complexSchema);
 const ast = compound.bundle(refIdx);
 const compiled = compile(cat, ast);
-const uvdRootPtr = compiled[0].schema;
+const boerRootPtr = compiled[0].schema;
 
 // ────────────────────────────────────────────────────────────────────────────
 // 5. THE BENCHMARK
@@ -259,14 +259,14 @@ if (!ajvValidate(rawData)) {
     console.error("AJV failed validation!", ajvValidate.errors);
     process.exit(1);
 }
-if (!validate(rawData, uvdRootPtr)) {
-    console.error("UVD failed validation!");
+if (!validate(rawData, boerRootPtr)) {
+    console.error("boer failed validation!");
     process.exit(1);
 }
 
-if (!ZodOrder.safeParse(rawData).success) { 
-    console.error("ZOD failed!"); 
-    process.exit(1); 
+if (!ZodOrder.safeParse(rawData).success) {
+    console.error("ZOD failed!");
+    process.exit(1);
 }
 
 function theoreticalBaseline(data) {
@@ -296,11 +296,11 @@ function theoreticalBaseline(data) {
 
 group('Large E-Commerce Payload Validation (~4KB)', () => {
 
-    bench('uvd (In-Place Bitwise VM)', function* () {
+    bench('boer (In-Place Bitwise VM)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { 
-                return validate(data, uvdRootPtr);
+            bench(data) {
+                return validate(data, boerRootPtr);
             }
         };
     });
@@ -351,11 +351,11 @@ group('Large E-Commerce Payload Validation (~4KB)', () => {
         };
     });
 
-    bench('uvd (In-Place Bitwise VM)', function* () {
+    bench('boer (In-Place Bitwise VM)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { 
-                return validate(data, uvdRootPtr);
+            bench(data) {
+                return validate(data, boerRootPtr);
             }
         };
     });

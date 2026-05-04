@@ -4,14 +4,14 @@ import type {
     PathError, Catalog, Config, Heap,
     Allocators, WhenConfig,
     StringValidators, NumberValidators, ArrayValidators, ObjectValidators,
-} from '@luvd/core';
+} from '@boer/core';
 
-import type { FlatAst, CompoundSchema } from '@luvd/schema';
-import type { SchemaResource } from '@luvd/compiler';
+import type { FlatAst, CompoundSchema } from '@boer/schema';
+import type { SchemaResource } from '@boer/compiler';
 
-declare const _UVD: unique symbol;
+declare const _boer: unique symbol;
 
-export as namespace uvd;
+export as namespace boer;
 
 export {
     Value, Complex, Type, Infer,
@@ -23,5 +23,5 @@ export {
     SchemaResource,
 };
 
-export type UVD = typeof _UVD;
+export type boer = typeof _boer;
 export type WhenValidators = WhenConfig;

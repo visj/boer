@@ -1,5 +1,5 @@
-import type { Catalog, Type } from '@luvd/core';
-import type { FlatAst } from '@luvd/schema';
+import type { Catalog, Type } from '@boer/core';
+import type { FlatAst } from '@boer/schema';
 
 export interface SchemaResource<T = any, R extends symbol = any> {
     uri: string;

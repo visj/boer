@@ -2,11 +2,11 @@ import { describe, test, expect } from 'bun:test';
 import {
     COMPLEX, NULLABLE, OPTIONAL, BARE_ARRAY, BARE_OBJECT, BARE_RECORD,
     ANY, STRING, NUMBER, INTEGER, BOOLEAN, NEVER, VALUE, NULL, UNDEFINED,
-} from '@luvd/core';
-import { catalog } from '@luvd/validate';
-import { allocators } from '@luvd/builder';
-import { compile } from '@luvd/compiler';
-import { CompoundSchema } from '@luvd/schema';
+} from '@boer/core';
+import { catalog } from '@boer/validate';
+import { allocators } from '@boer/builder';
+import { compile } from '@boer/compiler';
+import { CompoundSchema } from '@boer/schema';
 
 function setup() {
     const cat = catalog();

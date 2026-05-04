@@ -1,4 +1,4 @@
-import type { Catalog, Config } from '@luvd/core';
+import type { Catalog, Config } from '@boer/core';
 
 export declare function print(cat: Catalog<any>): {
     stats: Record<string, number>;

@@ -3,8 +3,8 @@ import { z } from 'zod';
 import * as v from 'valibot';
 import { Type } from '@sinclair/typebox';
 import Ajv from 'ajv';
-import { object, union, array, validate, NUMBER, STRING, BOOLEAN, UNDEFINED } from 'uvd';
-import { catalog, allocators } from 'uvd/core';
+import { object, union, array, validate, NUMBER, STRING, BOOLEAN, UNDEFINED } from 'boer';
+import { catalog, allocators } from 'boer/core';
 
 const rawData = {
     id: 123456,
@@ -26,12 +26,12 @@ const jsonStr = JSON.stringify(rawData);
 
 // --- SCHEMAS ---
 
-const UvdItem = union("type", {
+const boerItem = union("type", {
     physical: object({ type: STRING, sku: STRING, weight: NUMBER }),
     digital: object({ type: STRING, sku: STRING, downloadUrl: STRING })
 });
 
-const UvdOrder = object({
+const boerOrder = object({
     id: NUMBER,
     createdAt: STRING,
     status: STRING,
@@ -44,7 +44,7 @@ const UvdOrder = object({
             sms: BOOLEAN | UNDEFINED
         })
     }),
-    items: array(UvdItem)
+    items: array(boerItem)
 });
 
 const ZodItem = z.discriminatedUnion("type", [
@@ -144,13 +144,13 @@ group('Building schema (Setup time)', () => {
         return ZodOrder;
     });
 
-    bench('uvd (In-Place Bitwise)', function () {
-        const UvdItem = s_union("type", {
+    bench('boer (In-Place Bitwise)', function () {
+        const boerItem = s_union("type", {
             physical: s_object({ type: STRING, sku: STRING, weight: NUMBER }),
             digital: s_object({ type: STRING, sku: STRING, downloadUrl: STRING })
         });
 
-        const UvdOrder = s_object({
+        const boerOrder = s_object({
             id: NUMBER,
             createdAt: STRING,
             status: STRING,
@@ -163,9 +163,9 @@ group('Building schema (Setup time)', () => {
                     sms: BOOLEAN | UNDEFINED
                 })
             }),
-            items: s_array(UvdItem)
+            items: s_array(boerItem)
         });
-        return UvdOrder;
+        return boerOrder;
     });
 
     bench('Valibot', function () {
@@ -249,16 +249,16 @@ group('Pure Parsing (Setup Time Excluded)', () => {
         };
     });
 
-    bench('uvd (In-Place Bitwise)', function* () {
+    bench('boer (In-Place Bitwise)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
             bench(data) {
-                validate(data, UvdOrder);
+                validate(data, boerOrder);
             }
         };
     });
 
- 
+
 });
 
 group('Pure Parsing (Second time after JIT is warmed up)', () => {
@@ -284,11 +284,11 @@ group('Pure Parsing (Second time after JIT is warmed up)', () => {
         };
     });
 
-    bench('uvd (In-Place Bitwise)', function* () {
+    bench('boer (In-Place Bitwise)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { 
-                return validate(data, UvdOrder);
+            bench(data) {
+                return validate(data, boerOrder);
             }
         };
     });
@@ -317,11 +317,11 @@ group('Pure Parsing (Second time after JIT is warmed up)', () => {
         };
     });
 
-    bench('uvd (In-Place Bitwise)', function* () {
+    bench('boer (In-Place Bitwise)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { 
-                return validate(data, UvdOrder);
+            bench(data) {
+                return validate(data, boerOrder);
             }
         };
     });

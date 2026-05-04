@@ -3,7 +3,7 @@ import type {
     ObjectFn, ArrayFn, UnionFn, RefineFn, TupleFn, RecordFn,
     OrFn, ExclusiveFn, IntersectFn, NotFn, WhenFn,
     StringValidators, NumberValidators, Value,
-} from '@luvd/core';
+} from '@boer/core';
 
 export declare function allocators<R extends symbol>(cat: Catalog<R>): Allocators<R>;
 

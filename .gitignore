@@ -2,4 +2,4 @@ dist/
 node_modules/
 .claude
 bench/storage/parsers/precompiled/*.validate.mjs
-bench/storage/parsers/precompiled/*.uvd
+bench/storage/parsers/precompiled/*.boer

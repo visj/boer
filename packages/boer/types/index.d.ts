@@ -5,10 +5,10 @@ import type {
     ObjectFn, ArrayFn, UnionFn, RefineFn, TupleFn, RecordFn,
     OrFn, ExclusiveFn, IntersectFn, NotFn, WhenFn,
     StringFn, NumberFn, BooleanFn, NullableFn, OptionalFn,
-} from '@luvd/core';
+} from '@boer/core';
 
-declare const UVD: unique symbol;
-export type UVD = typeof UVD;
+declare const boer: unique symbol;
+export type boer = typeof boer;
 
 // Primitive type constants
 export declare const NULL: Value<null, any>;
@@ -23,26 +23,26 @@ export declare const ARRAY: Complex<any[], any>;
 export declare const OBJECT: Complex<Record<string, any>, any>;
 
 // Pre-bound catalog functions
-export declare function validate<T>(data: any, typedef: Type<T, UVD>): data is T;
-export declare function diagnose(data: any, typedef: Type<any, UVD>): PathError[];
+export declare function validate<T>(data: any, typedef: Type<T, boer>): data is T;
+export declare function diagnose(data: any, typedef: Type<any, boer>): PathError[];
 
 // Pre-bound allocators
-export declare const object: ObjectFn<UVD>;
-export declare const array: ArrayFn<UVD>;
-export declare const union: UnionFn<UVD>;
-export declare const refine: RefineFn<UVD>;
-export declare const tuple: TupleFn<UVD>;
-export declare const record: RecordFn<UVD>;
-export declare const or: OrFn<UVD>;
-export declare const exclusive: ExclusiveFn<UVD>;
-export declare const intersect: IntersectFn<UVD>;
-export declare const not: NotFn<UVD>;
-export declare const when: WhenFn<UVD>;
-export declare const string: StringFn<UVD>;
-export declare const number: NumberFn<UVD>;
-export declare const boolean: BooleanFn<UVD>;
-export declare const nullable: NullableFn<UVD>;
-export declare const optional: OptionalFn<UVD>;
+export declare const object: ObjectFn<boer>;
+export declare const array: ArrayFn<boer>;
+export declare const union: UnionFn<boer>;
+export declare const refine: RefineFn<boer>;
+export declare const tuple: TupleFn<boer>;
+export declare const record: RecordFn<boer>;
+export declare const or: OrFn<boer>;
+export declare const exclusive: ExclusiveFn<boer>;
+export declare const intersect: IntersectFn<boer>;
+export declare const not: NotFn<boer>;
+export declare const when: WhenFn<boer>;
+export declare const string: StringFn<boer>;
+export declare const number: NumberFn<boer>;
+export declare const boolean: BooleanFn<boer>;
+export declare const nullable: NullableFn<boer>;
+export declare const optional: OptionalFn<boer>;
 
 // Re-exports
 export type { Value, Complex, Type, Infer, InferSchema, PathError, Schema, Catalog };

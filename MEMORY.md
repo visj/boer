@@ -1,11 +1,11 @@
-# MEMORY.md — uvd Project State Snapshot
+# MEMORY.md — boer Project State Snapshot
 > Last updated: 2026-03-27
 > Branch: `master` | Commit: `88a752e`
 > Test baseline: **5286 pass, 61 skip, 0 fail** across 5347 tests in 16 files
 
-## What is uvd?
+## What is boer?
 
-`uvd` is a zero-allocation type validation library (like Zod/Valibot/Ajv) that stores all type definitions as raw `Uint32Array` memory on managed heaps. Every typedef is a plain JavaScript number (a pointer into the heap). The user-facing API fakes TypeScript generics via JSDoc — the project is pure JS, no TS compilation.
+`boer` is a zero-allocation type validation library (like Zod/Valibot/Ajv) that stores all type definitions as raw `Uint32Array` memory on managed heaps. Every typedef is a plain JavaScript number (a pointer into the heap). The user-facing API fakes TypeScript generics via JSDoc — the project is pure JS, no TS compilation.
 
 ## The #1 Constraint: V8 Smi Safety
 

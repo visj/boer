@@ -19,7 +19,7 @@ const complexSchema = {
         "orderType": { "type": "string", "enum": ["B2B", "B2C", "WHOLESALE", "INTERNAL"] },
         "createdAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T" },
         "status": { "type": "string", "enum": ["draft", "processing", "shipped", "delivered", "cancelled", "on_hold"] },
-        
+
         "customer": {
             "type": "object",
             "required": ["id", "email"],
@@ -30,10 +30,10 @@ const complexSchema = {
                 "department": { "type": "string" },
                 "phone": { "type": "string", "maxLength": 30 },
                 "loyaltyTier": { "type": "string", "enum": ["none", "silver", "gold", "platinum", "diamond"] },
-                "tags": { 
-                    "type": "array", 
+                "tags": {
+                    "type": "array",
                     "maxItems": 50,
-                    "items": { "type": "string", "maxLength": 50 } 
+                    "items": { "type": "string", "maxLength": 50 }
                 }
             }
         },
@@ -45,7 +45,7 @@ const complexSchema = {
                 "addressLine1": { "type": "string", "maxLength": 150 },
                 "addressLine2": { "type": "string", "maxLength": 150 },
                 "city": { "type": "string", "maxLength": 100 },
-                "state": { "type": "string" }, 
+                "state": { "type": "string" },
                 "country": { "type": "string", "enum": ["US", "CA", "GB", "AU", "VN", "DE", "FR", "JP", "SG"] },
                 "zipCode": { "type": "string", "maxLength": 20 },
                 "isResidential": { "type": "boolean" },
@@ -79,8 +79,8 @@ const complexSchema = {
                 "required": ["sku", "name", "quantity", "unitPrice"],
                 "properties": {
                     "sku": { "type": "string", "pattern": "^[A-Z0-9-]+$" },
-                    "name": { "type": "string" }, 
-                    "description": { "type": "string" }, 
+                    "name": { "type": "string" },
+                    "description": { "type": "string" },
                     "quantity": { "type": "integer", "minimum": 1 },
                     "unitPrice": { "type": "number", "minimum": 0 },
                     "discount": { "type": "number", "minimum": 0 },
@@ -339,13 +339,13 @@ const jsonStr = JSON.stringify(rawData);
 // ────────────────────────────────────────────────────────────────────────────
 // 3. COMPILE AJV
 // ────────────────────────────────────────────────────────────────────────────
-const ajv = new Ajv({ 
+const ajv = new Ajv({
     coerceTypes: false,
 });
 const ajvValidate = ajv.compile(complexSchema);
 
 // ────────────────────────────────────────────────────────────────────────────
-// 4. COMPILE UVD
+// 4. COMPILE boer
 // ────────────────────────────────────────────────────────────────────────────
 const cat = catalog();
 const { validate } = cat;
@@ -354,7 +354,7 @@ const compound = new CompoundSchema("draft-07");
 const refIdx = compound.add(complexSchema);
 const ast = compound.bundle(refIdx);
 const compiled = compile(cat, ast);
-const uvdRootPtr = compiled[0].schema;
+const boerRootPtr = compiled[0].schema;
 
 // ────────────────────────────────────────────────────────────────────────────
 // 5. THE BENCHMARK
@@ -365,23 +365,23 @@ if (!ajvValidate(rawData)) {
     console.error("AJV failed validation!", ajvValidate.errors);
     process.exit(1);
 }
-if (!validate(rawData, uvdRootPtr)) {
-    console.error("UVD failed validation!");
+if (!validate(rawData, boerRootPtr)) {
+    console.error("boer failed validation!");
     process.exit(1);
 }
 
-if (!ZodOrder.safeParse(rawData).success) { 
-    console.error("ZOD failed!"); 
-    process.exit(1); 
+if (!ZodOrder.safeParse(rawData).success) {
+    console.error("ZOD failed!");
+    process.exit(1);
 }
 
 group('Massive B2B Logistics Payload (~15KB)', () => {
 
-    bench('uvd (In-Place Bitwise VM)', function* () {
+    bench('boer (In-Place Bitwise VM)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { 
-                return validate(data, uvdRootPtr);
+            bench(data) {
+                return validate(data, boerRootPtr);
             }
         };
     });
@@ -418,11 +418,11 @@ group('Massive B2B Logistics Payload (~15KB) - Reversed', () => {
         };
     });
 
-    bench('uvd (In-Place Bitwise VM)', function* () {
+    bench('boer (In-Place Bitwise VM)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { 
-                return validate(data, uvdRootPtr);
+            bench(data) {
+                return validate(data, boerRootPtr);
             }
         };
     });
@@ -431,11 +431,11 @@ group('Massive B2B Logistics Payload (~15KB) - Reversed', () => {
 
 group('Massive B2B Logistics Payload (~15KB) - Reversed', () => {
 
-    bench('uvd (In-Place Bitwise VM)', function* () {
+    bench('boer (In-Place Bitwise VM)', function* () {
         yield {
             [0]() { return JSON.parse(jsonStr); },
-            bench(data) { 
-                return validate(data, uvdRootPtr);
+            bench(data) {
+                return validate(data, boerRootPtr);
             }
         };
     });

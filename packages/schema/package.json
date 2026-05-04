@@ -1,5 +1,5 @@
 {
-  "name": "@luvd/schema",
+  "name": "@boer/schema",
   "version": "0.2.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -21,8 +21,8 @@
     "uri-js": "^4.4.1"
   },
   "devDependencies": {
-    "@luvd/core": "workspace:*",
-    "@luvd/compiler": "workspace:*"
+    "@boer/core": "workspace:*",
+    "@boer/compiler": "workspace:*"
   },
   "license": "Apache-2.0"
 }

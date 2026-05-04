@@ -1,7 +1,7 @@
 /**
- * UVD runtime parser — compiles a JSON Schema at runtime.
+ * boer runtime parser — compiles a JSON Schema at runtime.
  *
- * Usage: node bench/storage/parsers/runtime/uvd.js <schema-path>
+ * Usage: node bench/storage/parsers/runtime/boer.js <schema-path>
  *
  * Prints compile time and the compiled typedef pointer.
  */
@@ -11,7 +11,7 @@ import { catalog, CompoundSchema, compile } from '../../../../src/core.js';
 
 const schemaPath = process.argv[2];
 if (!schemaPath) {
-    console.error('Usage: node uvd.js <schema-path>');
+    console.error('Usage: node boer.js <schema-path>');
     process.exit(1);
 }
 
@@ -79,7 +79,7 @@ if (fs.existsSync(metaSchemaPath)) {
 
 let cat = catalog();
 
-console.log('Compiling with UVD...');
+console.log('Compiling with boer...');
 let t0 = performance.now();
 try {
     let compound = new CompoundSchema(draft);
