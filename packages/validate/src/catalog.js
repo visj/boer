@@ -58,7 +58,7 @@ function createHeap(cfg) {
 
 /**
  * @template {symbol} R
- * @param {*} [cfg]
+ * @param {boer.Config} [cfg]
  * @returns {boer.Catalog<R>}
  */
 function catalog(cfg) {

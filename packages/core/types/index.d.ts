@@ -252,9 +252,17 @@ export interface Catalog<R extends symbol> {
 }
 
 export interface Config {
-    slab?: number;
-    kinds?: number;
-    validators?: number;
+  HEAP: Heap;
+  keyseq: number;
+  slab: number;
+  kinds: number;
+  validators: number;
+  REGEX_CACHE: RegExp[];
+  CALLBACKS: Array<(...args: any[]) => any>;
+  CONSTANTS: Array<any>;
+  ENUMS: Array<Set<any>>;
+  KEY_DICT: Map<string, number>;
+  KEY_INDEX: string[];
 }
 
 // ────────────────────────────────────────────────────────────────────────────
