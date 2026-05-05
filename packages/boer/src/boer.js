@@ -11,7 +11,7 @@ import {
 import { allocators } from '@boer/builder';
 import { createDiagnose } from '@boer/diagnose';
 
-/** @type {import('@boer/core').Catalog<import('boer').boer>} */
+/** @type {boer.Catalog<boer.boer>} */
 const boer = catalog();
 
 const {

@@ -1,6 +1,6 @@
 {
   "name": "@boer/schema",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./types/index.d.ts",
@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "uri-js": "^4.4.1",
-    "@boer/core": "0.2.0"
+    "@boer/core": "0.2.1"
   },
   "devDependencies": {
     "@boer/core": "workspace:*",

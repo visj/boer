@@ -512,7 +512,13 @@ function createDiagnose(cat) {
                     errors.push({ path, message: 'value is not in the allowed enum' });
                 }
             } else {
-                if (CONSTANTS[idx] !== data) {
+                /**
+                 * Single-value const match. String constants store a keyId into
+                 * KEY_INDEX (reusing the global string dictionary), while non-string
+                 * constants (numbers, booleans) use the CONSTANTS arena.
+                 */
+                let expected = (primBits & VALUE) === STRING ? KEY_INDEX[idx] : CONSTANTS[idx];
+                if (expected !== data) {
                     errors.push({ path, message: 'value is not in the allowed enum' });
                 }
             }
@@ -792,6 +798,19 @@ function createDiagnose(cat) {
                 let key = KEY_INDEX[keyId];
                 if (key !== void 0) {
                     result.add(key);
+                }
+            }
+            /**
+             * K_STRICT means additionalProperties: false — all keys are evaluated
+             * (declared ones pass, undeclared ones are rejected).
+             */
+            if (header & K_STRICT) {
+                if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+                    for (let key in data) {
+                        if (hasOwnProperty.call(data, key)) {
+                            result.add(key);
+                        }
+                    }
                 }
             }
             /**
@@ -1454,6 +1473,21 @@ function createDiagnose(cat) {
                 /** Object validator (additionalProperties, patternProperties, etc.) */
                 if (header & K_VALIDATOR) {
                     _diagnoseObjectValidator(data, kinds[kindsIdx + 2], kinds[kindsIdx + 3], slabOffset, path, errors);
+                }
+                /**
+                 * K_STRICT: additionalProperties false without any other
+                 * object validators. Reject if data has more keys than
+                 * the declared property count.
+                 */
+                if (header & K_STRICT) {
+                    for (let k in data) {
+                        if (hasOwnProperty.call(data, k)) {
+                            let keyId = KEY_DICT.get(k);
+                            if (keyId === void 0 || binarySearchPair(slab, slabOffset + 1, length, keyId) < 0) {
+                                errors.push({ path: path + '/' + k, message: 'property is not allowed (additionalProperties: false)' });
+                            }
+                        }
+                    }
                 }
                 return;
             }

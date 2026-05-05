@@ -1,6 +1,6 @@
 {
   "name": "@boer/validate",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./types/index.d.ts",
@@ -18,7 +18,7 @@
     "make": "node scripts/build.js"
   },
   "dependencies": {
-      "@boer/core": "0.2.0"
+      "@boer/core": "0.2.1"
   },
   "devDependencies": {
     "@boer/core": "workspace:*",

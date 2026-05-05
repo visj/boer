@@ -23,3 +23,4 @@ export declare function whenAllocator<R extends symbol>(cat: Catalog<R>): WhenFn
 export declare function malloc(ctx: any, header: number, inline: number, slabData: any, shapeLen: number, vHeader: number, vPayloads: any): number;
 export declare function allocConstant(ctx: any, value: any): number;
 export declare function allocEnumSet(ctx: any, values: any): number;
+export declare function allocRegex(ctx: any, re: RegExp): number;
